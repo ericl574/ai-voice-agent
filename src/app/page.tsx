@@ -46,12 +46,20 @@ export default function LandingPage() {
             </div>
             <span className="font-semibold text-gray-900">Restaurant AI Agent</span>
           </div>
-          <Link
-            href="/dashboard"
-            className="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
-          >
-            Sign in →
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/login"
+              className="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
+            >
+              Sign in
+            </Link>
+            <Link
+              href="/signup"
+              className="text-sm font-semibold bg-orange-500 hover:bg-orange-600 text-white px-4 py-1.5 rounded-lg transition-colors"
+            >
+              Create account
+            </Link>
+          </div>
         </div>
       </header>
 

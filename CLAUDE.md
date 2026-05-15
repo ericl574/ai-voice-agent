@@ -40,6 +40,20 @@ Restaurant AI Voice Agent is a mock-data SaaS demo of an AI phone assistant for 
 - `/dashboard/knowledge` — Knowledge Base
 - `/dashboard/settings` — Settings
 
+## Phase 2 — Auth Foundation (added 2026-05-15)
+
+- `@supabase/supabase-js` + `@supabase/ssr` installed
+- `src/lib/supabase/client.ts` — browser client, exports `isSupabaseConfigured`
+- `src/lib/supabase/server.ts` — async server client using Next.js `cookies()`
+- `src/middleware.ts` — refreshes Supabase session on every request; skips gracefully if env vars missing
+- `src/app/login/page.tsx` + `src/app/signup/page.tsx` — email/password auth forms
+- Dashboard layout checks session server-side; shows `DemoBanner` when not signed in
+- Sidebar shows user email + sign-out button when signed in; shows "Sign in →" link otherwise
+- All auth flows guard with `isSupabaseConfigured` — app never crashes when `.env.local` is absent
+- Required env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (see `.env.example`)
+- Do NOT commit `.env.local` (already in `.gitignore` via `.env*`)
+- Mock data pages remain fully accessible without auth (demo mode)
+
 ## Status Colors
 - pending → amber
 - confirmed → green

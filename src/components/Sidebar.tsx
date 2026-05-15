@@ -1,8 +1,10 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { MOCK_RESTAURANT } from '@/lib/mock-data';
+import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 
 const NAV_ITEMS = [
   {
@@ -73,6 +75,25 @@ const NAV_ITEMS = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => {
+      setUserEmail(data.user?.email ?? null);
+    });
+  }, []);
+
+  async function handleSignOut() {
+    if (isSupabaseConfigured) {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+    }
+    router.push('/login');
+    router.refresh();
+  }
 
   return (
     <aside className="w-64 min-h-screen bg-slate-900 flex flex-col flex-shrink-0">
@@ -114,8 +135,30 @@ export default function Sidebar() {
       </nav>
 
       <div className="p-4 border-t border-slate-700">
-        <p className="text-xs text-slate-500 truncate">{MOCK_RESTAURANT.name}</p>
-        <p className="text-xs text-slate-600 truncate">{MOCK_RESTAURANT.phone}</p>
+        {userEmail ? (
+          <>
+            <p className="text-xs text-slate-400 truncate mb-2">{userEmail}</p>
+            <button
+              onClick={handleSignOut}
+              className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors w-full"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              Sign out
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="text-xs text-slate-500 truncate">{MOCK_RESTAURANT.name}</p>
+            <Link
+              href="/login"
+              className="text-xs text-slate-500 hover:text-slate-300 transition-colors mt-1 block"
+            >
+              Sign in →
+            </Link>
+          </>
+        )}
       </div>
     </aside>
   );
