@@ -1,5 +1,9 @@
 import Link from 'next/link';
 
+const VERTICALS = [
+  'Restaurants', 'Auto Repair', 'Salons & Spas', 'Clinics', 'Tutoring', 'Home Services',
+];
+
 const FEATURES = [
   {
     icon: (
@@ -19,7 +23,7 @@ const FEATURES = [
     ),
     title: 'Collects Requests',
     description:
-      'Reservation and order details are logged automatically and routed to staff for confirmation.',
+      'Appointment and service request details are logged automatically and routed to staff for confirmation.',
   },
   {
     icon: (
@@ -44,7 +48,7 @@ export default function LandingPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
               </svg>
             </div>
-            <span className="font-semibold text-gray-900">Restaurant AI Agent</span>
+            <span className="font-semibold text-gray-900">FrontDesk AI</span>
           </div>
           <div className="flex items-center gap-4">
             <Link
@@ -66,14 +70,23 @@ export default function LandingPage() {
       <main className="flex-1">
         <section className="max-w-6xl mx-auto px-4 sm:px-6 py-24 text-center">
           <span className="inline-block bg-orange-100 text-orange-700 text-xs font-semibold px-3 py-1 rounded-full mb-6 uppercase tracking-wide">
-            AI-Powered Phone Assistant
+            AI Voice Agents for Service Businesses
           </span>
           <h1 className="text-4xl sm:text-5xl font-bold text-gray-900 leading-tight mb-6">
-            Never Miss a Restaurant Call Again
+            Never Miss a Customer Call Again
           </h1>
-          <p className="text-lg text-gray-500 max-w-2xl mx-auto mb-10">
-            Your AI assistant answers every call, logs reservation and order requests, and keeps your
+          <p className="text-lg text-gray-500 max-w-2xl mx-auto mb-4">
+            FrontDesk AI answers every call, logs appointment and service requests, and keeps your
             staff in control — without missing a beat.
+          </p>
+          <p className="text-sm text-gray-400 max-w-xl mx-auto mb-10">
+            Built for{' '}
+            {VERTICALS.map((v, i) => (
+              <span key={v}>
+                <span className="text-gray-500">{v}</span>
+                {i < VERTICALS.length - 1 ? ', ' : '.'}
+              </span>
+            ))}
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link
@@ -97,7 +110,7 @@ export default function LandingPage() {
         <section className="bg-gray-50 py-20">
           <div className="max-w-6xl mx-auto px-4 sm:px-6">
             <h2 className="text-2xl font-bold text-gray-900 text-center mb-12">
-              Everything your restaurant needs
+              Everything your business needs
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
               {FEATURES.map((f) => (
@@ -129,7 +142,7 @@ export default function LandingPage() {
 
       <footer className="border-t border-gray-100 py-6">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 text-center text-xs text-gray-400">
-          Restaurant AI Agent — MVP Demo. Mock data only.
+          FrontDesk AI — MVP Demo. Mock data only.
         </div>
       </footer>
     </div>

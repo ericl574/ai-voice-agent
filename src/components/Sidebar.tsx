@@ -105,8 +105,8 @@ export default function Sidebar() {
             </svg>
           </div>
           <span className="text-white font-semibold text-sm leading-tight">
-            Restaurant<br />
-            <span className="text-orange-400">AI Agent</span>
+            FrontDesk<br />
+            <span className="text-orange-400">AI</span>
           </span>
         </div>
       </div>

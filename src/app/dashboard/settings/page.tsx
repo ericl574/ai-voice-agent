@@ -17,17 +17,17 @@ export default function SettingsPage() {
     <div className="p-6 max-w-2xl">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
-        <p className="text-sm text-gray-500 mt-1">Configure your restaurant and AI assistant settings.</p>
+        <p className="text-sm text-gray-500 mt-1">Configure your business and AI assistant settings.</p>
       </div>
 
       <form onSubmit={handleSave} className="space-y-6">
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-100">
-            <h2 className="font-semibold text-gray-900">Restaurant Information</h2>
+            <h2 className="font-semibold text-gray-900">Business Information</h2>
           </div>
           <div className="p-5 space-y-4">
             <Field
-              label="Restaurant Name"
+              label="Business Name"
               value={restaurant.name}
               onChange={(v) => setRestaurant((r) => ({ ...r, name: v }))}
             />

@@ -1,6 +1,8 @@
-# Restaurant AI Voice Agent
+# FrontDesk AI
 
-AI-powered phone assistant for restaurants. This is an MVP demo with mock data — no real calls, no real AI, no backend.
+AI voice agent platform for service businesses. An AI phone assistant answers every call, logs appointment and service requests, and gives staff a single dashboard to review and confirm them.
+
+This is an MVP demo with mock data — no real calls, no real AI, no backend. **Restaurants are the first demo vertical**; the platform is designed to support any service business (auto repair, salons, clinics, tutoring centers, home services, and more).
 
 ## Pages
 
@@ -10,15 +12,16 @@ AI-powered phone assistant for restaurants. This is an MVP demo with mock data �
 | `/dashboard` | Overview with stats and recent calls |
 | `/dashboard/simulator` | AI call simulator with step-by-step chat |
 | `/dashboard/calls` | Full call history table |
-| `/dashboard/reservations` | Reservation requests (Confirm / Decline) |
-| `/dashboard/orders` | Order requests (Confirm / Decline) |
+| `/dashboard/reservations` | Reservation/appointment requests (Confirm / Decline) |
+| `/dashboard/orders` | Order/service requests (Confirm / Decline) |
 | `/dashboard/knowledge` | Knowledge base editor |
-| `/dashboard/settings` | Restaurant & AI assistant settings |
+| `/dashboard/settings` | Business & AI assistant settings |
 
 ## Tech Stack
 
 - Next.js 15 (App Router, TypeScript)
 - Tailwind CSS v4
+- Supabase (auth foundation — Phase 2)
 - Mock data only (`src/lib/mock-data.ts`)
 
 ## Getting Started

@@ -1,3 +1,12 @@
+export type BusinessType =
+  | 'restaurant'
+  | 'auto_repair'
+  | 'salon'
+  | 'clinic'
+  | 'tutoring'
+  | 'home_services'
+  | 'other';
+
 export type CallType = 'reservation' | 'order' | 'inquiry' | 'complaint';
 export type CallStatus = 'resolved' | 'escalated' | 'missed';
 export type RequestStatus = 'pending' | 'confirmed' | 'declined';
@@ -53,6 +62,7 @@ export interface KnowledgeEntry {
 }
 
 export const MOCK_RESTAURANT = {
+  businessType: 'restaurant' as BusinessType,
   name: 'Bella Notte Ristorante',
   phone: '(555) 867-5309',
   address: '123 Oak Street, Springfield, IL 62701',

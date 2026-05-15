@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Restaurant AI Voice Agent',
-  description: 'AI phone assistant for restaurants — never miss a call again.',
+  title: 'FrontDesk AI',
+  description: 'AI voice agents for service businesses — never miss a call again.',
 };
 
 export default function RootLayout({

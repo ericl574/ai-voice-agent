@@ -5,7 +5,7 @@ export default function DemoBanner() {
     <div className="bg-amber-50 border-b border-amber-200 px-5 py-2 flex items-center justify-between flex-shrink-0">
       <span className="text-xs text-amber-800">
         Demo mode — you&apos;re viewing mock data.{' '}
-        <span className="hidden sm:inline">Sign in to save real restaurant data.</span>
+        <span className="hidden sm:inline">Sign in to save real business data.</span>
       </span>
       <div className="flex items-center gap-3 flex-shrink-0">
         <Link
