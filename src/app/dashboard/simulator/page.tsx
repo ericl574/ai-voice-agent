@@ -157,6 +157,31 @@ export default function SimulatorPage() {
       return;
     }
 
+    // Insert the linked appointment row
+    const { error: apptError } = await supabase.from('appointments').insert({
+      business_id: businessId,
+      call_id: callRow.id,
+      customer_name: SIM_CUSTOMER_NAME,
+      customer_phone: SIM_CUSTOMER_PHONE,
+      appointment_date: '2026-05-17',
+      appointment_time: '19:00',
+      party_size: 4,
+      service_type: 'Reservation request',
+      special_request: null,
+      status: 'pending',
+      staff_notes: 'Created from simulator call. Staff should confirm with customer.',
+    });
+
+    if (apptError) {
+      // Call and messages saved; only appointment failed.
+      setSaveError(
+        `Call and transcript were saved (id: ${callRow.id}) but the appointment record failed: ${apptError.message}`
+      );
+      setSavedCallId(callRow.id);
+      setSaveState('error');
+      return;
+    }
+
     setSavedCallId(callRow.id);
     setSaveState('saved');
   }
@@ -353,19 +378,25 @@ export default function SimulatorPage() {
             )}
 
             {saveState === 'saved' && (
-              <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-green-800">Saved to Call History</p>
-                  <p className="text-xs text-green-600 mt-0.5">
-                    This simulated call is now visible in your call log.
-                  </p>
+              <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3">
+                <p className="text-sm font-medium text-green-800 mb-0.5">Call and appointment request saved</p>
+                <p className="text-xs text-green-600 mb-3">
+                  The simulated call transcript is in your call log and a pending appointment request has been created for staff review.
+                </p>
+                <div className="flex gap-3">
+                  <Link
+                    href="/dashboard/calls"
+                    className="text-xs font-semibold text-green-700 hover:text-green-900 underline"
+                  >
+                    View Call History →
+                  </Link>
+                  <Link
+                    href="/dashboard/reservations"
+                    className="text-xs font-semibold text-green-700 hover:text-green-900 underline"
+                  >
+                    View Appointment Requests →
+                  </Link>
                 </div>
-                <Link
-                  href="/dashboard/calls"
-                  className="flex-shrink-0 text-xs font-semibold text-green-700 hover:text-green-900 underline ml-4"
-                >
-                  View History →
-                </Link>
               </div>
             )}
 
@@ -392,7 +423,7 @@ export default function SimulatorPage() {
             <Link href="/login" className="text-orange-600 hover:underline">
               Sign in
             </Link>{' '}
-            to save this call to your call history.
+            to save this call and create a linked appointment request.
           </p>
         )}
 
