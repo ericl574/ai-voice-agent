@@ -73,7 +73,7 @@ const NAV_ITEMS = [
   },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ businessName }: { businessName?: string }) {
   const pathname = usePathname();
   const router = useRouter();
   const [userEmail, setUserEmail] = useState<string | null>(null);
@@ -137,7 +137,10 @@ export default function Sidebar() {
       <div className="p-4 border-t border-slate-700">
         {userEmail ? (
           <>
-            <p className="text-xs text-slate-400 truncate mb-2">{userEmail}</p>
+            {businessName && (
+              <p className="text-xs font-medium text-slate-300 truncate mb-0.5">{businessName}</p>
+            )}
+            <p className="text-xs text-slate-500 truncate mb-2">{userEmail}</p>
             <button
               onClick={handleSignOut}
               className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors w-full"
@@ -150,7 +153,7 @@ export default function Sidebar() {
           </>
         ) : (
           <>
-            <p className="text-xs text-slate-500 truncate">{MOCK_RESTAURANT.name}</p>
+            <p className="text-xs text-slate-500 truncate">{businessName ?? MOCK_RESTAURANT.name}</p>
             <Link
               href="/login"
               className="text-xs text-slate-500 hover:text-slate-300 transition-colors mt-1 block"

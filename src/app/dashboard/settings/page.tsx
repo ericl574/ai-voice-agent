@@ -1,16 +1,64 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { MOCK_RESTAURANT } from '@/lib/mock-data';
+import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
+import { getActiveBusiness } from '@/lib/supabase/businesses';
 
 export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
-  const [restaurant, setRestaurant] = useState({ ...MOCK_RESTAURANT });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [businessId, setBusinessId] = useState<string | null>(null);
+  const [business, setBusiness] = useState({ ...MOCK_RESTAURANT });
 
-  function handleSave(e: React.FormEvent) {
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    const supabase = createClient();
+    getActiveBusiness(supabase).then((b) => {
+      if (!b) return;
+      setBusinessId(b.id);
+      setBusiness((prev) => ({
+        ...prev,
+        name: b.name,
+        phone: b.phone ?? prev.phone,
+        email: b.email ?? prev.email,
+        greetingMessage: b.greeting ?? prev.greetingMessage,
+        timezone: b.timezone ?? prev.timezone,
+      }));
+    });
+  }, []);
+
+  async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    setSaveError('');
+    setSaving(true);
+
+    try {
+      if (businessId && isSupabaseConfigured) {
+        const supabase = createClient();
+        const { error } = await supabase
+          .from('businesses')
+          .update({
+            name: business.name,
+            phone: business.phone || null,
+            email: business.email || null,
+            greeting: business.greetingMessage || null,
+            timezone: business.timezone,
+          })
+          .eq('id', businessId);
+
+        if (error) {
+          setSaveError(error.message);
+          return;
+        }
+      }
+
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -28,24 +76,24 @@ export default function SettingsPage() {
           <div className="p-5 space-y-4">
             <Field
               label="Business Name"
-              value={restaurant.name}
-              onChange={(v) => setRestaurant((r) => ({ ...r, name: v }))}
+              value={business.name}
+              onChange={(v) => setBusiness((r) => ({ ...r, name: v }))}
             />
             <Field
               label="Phone Number"
-              value={restaurant.phone}
-              onChange={(v) => setRestaurant((r) => ({ ...r, phone: v }))}
+              value={business.phone}
+              onChange={(v) => setBusiness((r) => ({ ...r, phone: v }))}
             />
             <Field
               label="Address"
-              value={restaurant.address}
-              onChange={(v) => setRestaurant((r) => ({ ...r, address: v }))}
+              value={business.address}
+              onChange={(v) => setBusiness((r) => ({ ...r, address: v }))}
             />
             <Field
               label="Email"
-              value={restaurant.email}
+              value={business.email}
               type="email"
-              onChange={(v) => setRestaurant((r) => ({ ...r, email: v }))}
+              onChange={(v) => setBusiness((r) => ({ ...r, email: v }))}
             />
           </div>
         </div>
@@ -60,8 +108,8 @@ export default function SettingsPage() {
                 AI Voice
               </label>
               <select
-                value={restaurant.aiVoice}
-                onChange={(e) => setRestaurant((r) => ({ ...r, aiVoice: e.target.value }))}
+                value={business.aiVoice}
+                onChange={(e) => setBusiness((r) => ({ ...r, aiVoice: e.target.value }))}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
               >
                 <option>Female – Warm</option>
@@ -76,19 +124,19 @@ export default function SettingsPage() {
               </label>
               <textarea
                 rows={3}
-                value={restaurant.greetingMessage}
-                onChange={(e) => setRestaurant((r) => ({ ...r, greetingMessage: e.target.value }))}
+                value={business.greetingMessage}
+                onChange={(e) => setBusiness((r) => ({ ...r, greetingMessage: e.target.value }))}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none"
               />
-              <p className="text-xs text-gray-400 mt-1">Use {'{restaurant_name}'} as a placeholder.</p>
+              <p className="text-xs text-gray-400 mt-1">Use {'{business_name}'} as a placeholder.</p>
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
                 Staff Callback Window
               </label>
               <select
-                value={restaurant.callbackWindow}
-                onChange={(e) => setRestaurant((r) => ({ ...r, callbackWindow: e.target.value }))}
+                value={business.callbackWindow}
+                onChange={(e) => setBusiness((r) => ({ ...r, callbackWindow: e.target.value }))}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
               >
                 <option>1 hour</option>
@@ -97,7 +145,7 @@ export default function SettingsPage() {
                 <option>Next business day</option>
               </select>
               <p className="text-xs text-gray-400 mt-1">
-                Told to callers when logging a reservation or order request.
+                Told to callers when logging a reservation or service request.
               </p>
             </div>
           </div>
@@ -111,8 +159,8 @@ export default function SettingsPage() {
             <label className="flex items-center gap-3 cursor-pointer">
               <input
                 type="checkbox"
-                checked={restaurant.notifyEmail}
-                onChange={(e) => setRestaurant((r) => ({ ...r, notifyEmail: e.target.checked }))}
+                checked={business.notifyEmail}
+                onChange={(e) => setBusiness((r) => ({ ...r, notifyEmail: e.target.checked }))}
                 className="w-4 h-4 accent-orange-500"
               />
               <span className="text-sm text-gray-700">Email notifications for new requests</span>
@@ -120,8 +168,8 @@ export default function SettingsPage() {
             <label className="flex items-center gap-3 cursor-pointer">
               <input
                 type="checkbox"
-                checked={restaurant.notifySms}
-                onChange={(e) => setRestaurant((r) => ({ ...r, notifySms: e.target.checked }))}
+                checked={business.notifySms}
+                onChange={(e) => setBusiness((r) => ({ ...r, notifySms: e.target.checked }))}
                 className="w-4 h-4 accent-orange-500"
               />
               <span className="text-sm text-gray-700">SMS notifications for new requests</span>
@@ -132,17 +180,25 @@ export default function SettingsPage() {
         <div className="flex items-center gap-4">
           <button
             type="submit"
-            className="bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
+            disabled={saving}
+            className="bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
           >
-            Save Changes
+            {saving ? 'Saving…' : 'Save Changes'}
           </button>
           {saved && (
-            <span className="text-sm text-green-600 font-medium">Settings saved!</span>
+            <span className="text-sm text-green-600 font-medium">
+              {businessId ? 'Saved to your account!' : 'Settings saved!'}
+            </span>
+          )}
+          {saveError && (
+            <span className="text-sm text-red-600">{saveError}</span>
           )}
         </div>
 
         <p className="text-xs text-gray-400">
-          This is a demo — settings are saved locally and reset on page refresh.
+          {businessId
+            ? 'Changes to name, phone, email, and greeting are saved to your account.'
+            : 'Demo mode — settings are saved locally and reset on page refresh.'}
         </p>
       </form>
     </div>

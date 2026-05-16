@@ -47,7 +47,7 @@ export default function SignupPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
             </svg>
           </div>
-          <span className="font-semibold text-gray-900">Restaurant AI Agent</span>
+          <span className="font-semibold text-gray-900">FrontDesk AI</span>
         </div>
 
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-8">
@@ -69,7 +69,7 @@ export default function SignupPage() {
           ) : (
             <>
               <h1 className="text-xl font-bold text-gray-900 mb-1">Create your account</h1>
-              <p className="text-sm text-gray-500 mb-6">Get started with Restaurant AI Agent.</p>
+              <p className="text-sm text-gray-500 mb-6">Get started with FrontDesk AI.</p>
 
               {!isSupabaseConfigured ? (
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
@@ -94,7 +94,7 @@ export default function SignupPage() {
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="you@restaurant.com"
+                      placeholder="you@yourbusiness.com"
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400"
                     />
                   </div>
