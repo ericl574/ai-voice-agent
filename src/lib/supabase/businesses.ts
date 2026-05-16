@@ -1,3 +1,14 @@
+export interface AgentConfig {
+  tone?: string;
+  staff_handoff_rule?: string;
+  booking_rule?: string;
+  callback_expectation?: string;
+  collect_name?: boolean;
+  collect_phone?: boolean;
+  collect_service?: boolean;
+  collect_notes?: boolean;
+}
+
 export interface Business {
   id: string;
   name: string;
@@ -9,6 +20,8 @@ export interface Business {
   timezone: string;
   ai_agent_name: string | null;
   greeting: string | null;
+  // Requires migration: ALTER TABLE businesses ADD COLUMN IF NOT EXISTS agent_config jsonb DEFAULT '{}'::jsonb;
+  agent_config: AgentConfig | null;
   created_by: string;
   created_at: string;
   updated_at: string;
