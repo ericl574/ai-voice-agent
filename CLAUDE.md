@@ -49,14 +49,16 @@ See `.env.example`. Never commit `.env.local` (covered by `.gitignore` via `.env
 - `/dashboard/knowledge` — Knowledge Base
 - `/dashboard/settings` — Settings
 
-## Current Project State (2026-05-17)
+## Current Project State (2026-05-18)
 
-- **Committed through Phase 4** — Supabase Auth + Postgres wired to all dashboard views.
-- **Phase 5 (uncommitted, in QA)** — Browser voice prototype using OpenAI Realtime API.
-  - `src/app/api/voice-session/route.ts` — issues ephemeral client secret (key stays server-side)
-  - `src/app/dashboard/voice/page.tsx` — voice UI; handles missing-key state gracefully
-  - `src/components/Sidebar.tsx` — modified to add voice nav link
-- **Do not commit Phase 5 until Eric explicitly approves.**
+- **Committed through Phase 5** — Browser voice prototype committed (f40c6d9).
+  - `src/app/api/voice-session/route.ts` — server-side ephemeral token endpoint
+  - `src/app/dashboard/voice/page.tsx` — voice UI with full lifecycle handling
+  - `src/components/Sidebar.tsx` — includes Voice Agent nav link
+- **Phase 6 in progress** — Professional voice agent hardening.
+  - Readiness checklist, connection timeout, WebRTC failure states, mic error UX, save clarity.
+  - Live voice QA is pending OpenAI API billing setup — page is polished without a key.
+- **Live voice QA blocked** — `OPENAI_API_KEY` billing not yet enabled. Do not test live voice.
 
 ---
 
