@@ -105,7 +105,7 @@ export default function Sidebar({ businessName }: { businessName?: string }) {
   }
 
   return (
-    <aside className="w-64 min-h-screen bg-slate-900 flex flex-col flex-shrink-0">
+    <aside className="w-64 h-full bg-slate-900 flex flex-col flex-shrink-0">
       <div className="p-5 border-b border-slate-700">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center">
