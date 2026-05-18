@@ -93,14 +93,14 @@ function DemoOrdersPage() {
   return (
     <div className="p-6 max-w-5xl">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Order Requests</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Service Requests</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Takeout and delivery orders collected by the AI assistant.
+          Service and order requests collected by the AI assistant.
         </p>
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800 mb-5">
-        <strong>Staff reminder:</strong> Orders are pending until confirmed. The AI never guarantees order fulfilment — always confirm with the customer.
+        <strong>Staff reminder:</strong> All requests are pending until confirmed. The AI never guarantees fulfilment — always confirm with the customer.
       </div>
 
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">

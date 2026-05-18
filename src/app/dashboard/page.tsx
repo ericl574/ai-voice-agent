@@ -88,8 +88,8 @@ const resolvedToday = todaysCalls.filter((c) => c.status === 'resolved');
 
 const DEMO_STATS = [
   { label: 'Calls Today', value: todaysCalls.length, color: 'text-blue-600', bg: 'bg-blue-50' },
-  { label: 'Pending Reservations', value: pendingReservations.length, color: 'text-amber-600', bg: 'bg-amber-50' },
-  { label: 'Pending Orders', value: pendingOrders.length, color: 'text-amber-600', bg: 'bg-amber-50' },
+  { label: 'Pending Appointments', value: pendingReservations.length, color: 'text-amber-600', bg: 'bg-amber-50' },
+  { label: 'Pending Requests', value: pendingOrders.length, color: 'text-amber-600', bg: 'bg-amber-50' },
   { label: 'Resolved Today', value: resolvedToday.length, color: 'text-green-600', bg: 'bg-green-50' },
 ];
 
@@ -108,6 +108,16 @@ function DemoDashboardPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
         <p className="text-sm text-gray-500 mt-1">Thursday, May 15, 2026</p>
+      </div>
+
+      <div className="mb-5 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800 flex items-center gap-2">
+        <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>
+          <strong>Demo mode</strong> — showing sample data.{' '}
+          <a href="/login" className="underline hover:text-amber-900">Sign in</a> to see your business&apos;s real data.
+        </span>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
@@ -149,13 +159,13 @@ function DemoDashboardPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold text-gray-900">Pending Reservations</h2>
+            <h2 className="font-semibold text-gray-900">Pending Appointments</h2>
             <Link href="/dashboard/reservations" className="text-xs text-orange-600 hover:underline font-medium">
               Manage →
             </Link>
           </div>
           {pendingReservations.length === 0 ? (
-            <p className="text-sm text-gray-400">No pending reservations.</p>
+            <p className="text-sm text-gray-400">No pending appointments.</p>
           ) : (
             <ul className="space-y-2">
               {pendingReservations.map((r) => (
@@ -173,13 +183,13 @@ function DemoDashboardPage() {
 
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold text-gray-900">Pending Orders</h2>
+            <h2 className="font-semibold text-gray-900">Pending Requests</h2>
             <Link href="/dashboard/orders" className="text-xs text-orange-600 hover:underline font-medium">
               Manage →
             </Link>
           </div>
           {pendingOrders.length === 0 ? (
-            <p className="text-sm text-gray-400">No pending orders.</p>
+            <p className="text-sm text-gray-400">No pending requests.</p>
           ) : (
             <ul className="space-y-2">
               {pendingOrders.map((o) => (

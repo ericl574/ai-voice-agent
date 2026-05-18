@@ -184,7 +184,7 @@ export default function SettingsPage() {
           <div className="px-5 py-4 border-b border-gray-100">
             <h2 className="font-semibold text-gray-900">AI Agent Configuration</h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              These settings are saved to your account and used to personalize the Call Simulator.
+              These settings are saved to your account and shape how the AI responds in the Call Simulator and voice agent.
             </p>
           </div>
           <div className="p-5 space-y-5">

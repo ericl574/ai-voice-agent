@@ -70,7 +70,7 @@ export const MOCK_RESTAURANT = {
   timezone: 'America/Chicago',
   aiVoice: 'Female – Warm',
   greetingMessage:
-    'Thank you for calling {restaurant_name}! I\'m the AI assistant. How can I help you today?',
+    "Thank you for calling {business_name}! I'm {agent_name}, your AI assistant. How can I help you today?",
   callbackWindow: '2 hours',
   notifyEmail: true,
   notifySms: false,
