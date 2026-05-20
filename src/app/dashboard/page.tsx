@@ -344,7 +344,7 @@ function OverviewLayout({
   loadError?: string | null;
 }) {
   return (
-    <div className="p-6 lg:p-8 max-w-4xl">
+    <div className="w-full max-w-[1120px] mx-auto px-8 py-8 sm:px-10 lg:px-12">
 
       {loadError && (
         <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-2.5 text-xs text-red-700">
@@ -443,12 +443,22 @@ function OverviewLayout({
           )}
         </div>
         <p className="px-5 pt-3 pb-1 text-xs text-gray-400">
-          The most urgent items captured by the front desk. Detailed history lives in Call history.
+          The most urgent items captured by the front desk.
         </p>
         {priorityActions.length === 0 ? (
-          <div className="px-5 py-8 text-center text-sm text-gray-400">
-            No pending items. All requests have been handled.
-          </div>
+          <div className="px-5 py-6">
+              <div className="mx-auto max-w-md rounded-xl border border-green-100 bg-green-50/50 px-5 py-4 text-center">
+                <div className="mx-auto mb-2 flex h-8 w-8 items-center justify-center rounded-full bg-green-100">
+                  <span className="h-2 w-2 rounded-full bg-green-500" />
+                </div>
+                <p className="text-sm font-semibold text-gray-900">
+                  All clear — no staff actions needed.
+                </p>
+                <p className="mt-1 text-xs text-gray-500">
+                  New appointment requests, service requests, and follow-ups will appear here.
+                </p>
+              </div>
+            </div>
         ) : (
           <div className="divide-y divide-gray-50">
             {priorityActions.map((action, index) => (
