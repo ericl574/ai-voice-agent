@@ -1,4 +1,7 @@
+import fs from 'fs';
+import path from 'path';
 import Link from 'next/link';
+import HeroVideoPlaylist from '@/components/HeroVideoPlaylist';
 
 // ── Feature cards ─────────────────────────────────────────────────────────────
 
@@ -198,25 +201,29 @@ const BENEFITS = [
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function LandingPage() {
+  // Read video playlist from public/videos/ at build time (server component)
+  // Eric controls playback order by renaming files: 01-name.mp4, 02-name.mp4, etc.
+  let videoSrcs: string[] = [];
+  try {
+    const videosDir = path.join(process.cwd(), 'public', 'videos');
+    videoSrcs = fs
+      .readdirSync(videosDir)
+      .filter((f) => !f.startsWith('.') && f.toLowerCase().endsWith('.mp4'))
+      .sort()
+      .map((f) => `/videos/${f}`);
+  } catch {
+    // public/videos missing or unreadable — hero shows dark fallback
+  }
+
   return (
     <div className="flex flex-col">
 
       {/* ── Cinematic hero — full viewport, video background ───────────────── */}
       <section className="relative min-h-screen flex flex-col bg-gray-950">
 
-        {/* Video background — place file at public/videos/frontdesk-hero.mp4 */}
-        {/* If the file is missing the browser silently shows the bg-gray-950 fallback */}
-        <video
-          className="absolute inset-0 w-full h-full object-cover"
-          autoPlay
-          muted
-          loop
-          playsInline
-          aria-hidden="true"
-          tabIndex={-1}
-        >
-          <source src="/videos/frontdesk-hero.mp4" type="video/mp4" />
-        </video>
+        {/* Video playlist — reads public/videos/*.mp4, sorted alphabetically */}
+        {/* Dark bg-gray-950 on the section is the fallback if no videos load */}
+        <HeroVideoPlaylist videos={videoSrcs} />
 
         {/* Dark gradient overlay — ensures text is readable over any video content */}
         <div
@@ -259,14 +266,13 @@ export default function LandingPage() {
         <div className="relative z-10 flex-1 flex items-center justify-center px-4 sm:px-6 py-20">
           <div className="text-center max-w-3xl mx-auto">
             <span className="inline-block bg-white/10 border border-white/20 text-white/90 text-xs font-semibold px-4 py-1.5 rounded-full mb-8 uppercase tracking-widest">
-              AI Front Desk for Service Businesses
+              For Service Businesses
             </span>
             <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold text-white leading-tight mb-6">
-              Never Miss a<br />Customer Call
+              Never Miss a<br />Customer
             </h1>
             <p className="text-lg sm:text-xl text-white/70 max-w-2xl mx-auto mb-12 leading-relaxed">
-              FrontDesk AI answers calls, captures appointments and service requests, and keeps your
-              team ready to follow up — 24/7.
+              Takes care of your business 24/7 — answering calls, capturing appointments, and organizing follow-ups for your team. So you can focus on what matters.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Link
@@ -460,7 +466,7 @@ export default function LandingPage() {
 
                     {/* AI summary */}
                     <div className="bg-orange-50 border border-orange-100 rounded-lg px-3 py-3">
-                      <p className="text-xs font-semibold text-orange-600 mb-1.5">AI Summary</p>
+                      <p className="text-xs font-semibold text-orange-600 mb-1.5">Summary</p>
                       <p className="text-xs text-gray-700 leading-relaxed">
                         Sarah called to schedule an oil change. She prefers tomorrow morning between
                         9 and 10 AM. Mentioned the vehicle is a 2018 Honda Civic.
