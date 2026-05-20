@@ -73,7 +73,7 @@ export default function LandingPage() {
             AI Voice Agents for Service Businesses
           </span>
           <h1 className="text-4xl sm:text-5xl font-bold text-gray-900 leading-tight mb-6">
-            Never Miss a Customer Call Again
+            Never Miss a Customer
           </h1>
           <p className="text-lg text-gray-500 max-w-2xl mx-auto mb-4">
             FrontDesk AI answers every call, logs appointment and service requests, and keeps your
