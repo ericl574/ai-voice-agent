@@ -283,7 +283,7 @@ function GlanceGrid({
   requestCount: number;
 }) {
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
       {GLANCE_ITEMS.map((item) => {
         const count =
           item.countKey === 'appointments'
@@ -295,18 +295,18 @@ function GlanceGrid({
           <Link
             key={item.href}
             href={item.href}
-            className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 hover:border-orange-200 hover:shadow-md transition-all group"
+            className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-5 hover:border-orange-200 hover:shadow-md transition-all group"
           >
-            <div className="flex items-start justify-between mb-1">
+            <div className="flex items-start justify-between mb-1.5">
               <span className="text-sm font-semibold text-gray-900 group-hover:text-orange-600 transition-colors leading-tight">
                 {item.label}
               </span>
               {count != null && count > 0 && (
-                <span className="text-xs font-bold text-orange-500 ml-2 flex-shrink-0">{count}</span>
+                <span className="ml-2 flex-shrink-0 text-[10px] font-bold bg-orange-50 text-orange-500 border border-orange-200 rounded-full w-5 h-5 flex items-center justify-center">{count}</span>
               )}
             </div>
-            <p className="text-xs text-gray-400 mb-2">{item.description}</p>
-            <span className="text-xs text-orange-400 group-hover:text-orange-600 transition-colors">
+            <p className="text-xs text-gray-400 mb-3">{item.description}</p>
+            <span className="text-xs font-medium text-orange-400 group-hover:text-orange-600 transition-colors">
               View →
             </span>
           </Link>
@@ -402,7 +402,7 @@ function OverviewLayout({
           )}
           <Link
             href="/dashboard/simulator"
-            className="flex items-center gap-1.5 text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 px-4 py-1.5 rounded-lg transition-colors"
+            className="flex items-center gap-1.5 text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 px-4 py-2 rounded-xl shadow-sm shadow-orange-500/20 transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
               <path d="M8 5v14l11-7z" />
@@ -485,12 +485,19 @@ function OverviewLayout({
 
 function DemoOverviewPage() {
   const [greeting, setGreeting] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     const h = new Date().getHours();
     const part = h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
     setGreeting(`Good ${part}, ${shortName(MOCK_RESTAURANT.name)}.`);
   }, []);
+
+  function handleDemoRefresh() {
+    if (refreshing) return;
+    setRefreshing(true);
+    setTimeout(() => setRefreshing(false), 700);
+  }
 
   const needsAttention = pendingReservations.length + pendingOrders.length;
 
@@ -511,7 +518,8 @@ function DemoOverviewPage() {
       appointmentCount={pendingReservations.length}
       serviceRequestCount={pendingOrders.length}
       priorityActions={DEMO_ACTIONS}
-      refreshing={false}
+      onRefresh={handleDemoRefresh}
+      refreshing={refreshing}
     />
   );
 }
@@ -669,7 +677,7 @@ export default function DashboardPage() {
 
   if (mode === 'loading') {
     return (
-      <div className="p-6 lg:p-8">
+      <div className="w-full max-w-[1120px] mx-auto px-8 py-8 sm:px-10 lg:px-12">
         <div className="w-32 h-6 bg-gray-100 rounded animate-pulse mb-3" />
         <div className="w-64 h-9 bg-gray-100 rounded animate-pulse mb-6" />
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
