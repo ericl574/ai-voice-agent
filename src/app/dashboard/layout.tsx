@@ -1,10 +1,14 @@
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import Sidebar from '@/components/Sidebar';
 import DemoBanner from '@/components/DemoBanner';
 import { createClient } from '@/lib/supabase/server';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const headersList = await headers();
+  const isDemoMode = headersList.get('x-demo-mode') === '1';
+
   const isConfigured = !!(
     process.env.NEXT_PUBLIC_SUPABASE_URL &&
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -18,19 +22,19 @@ export default async function DashboardLayout({ children }: { children: React.Re
     const { data } = await supabase.auth.getUser();
     if (data.user) {
       isSignedIn = true;
-      const business = await getActiveBusiness(supabase);
-      if (!business) {
-        redirect('/onboarding');
+      if (!isDemoMode) {
+        const business = await getActiveBusiness(supabase);
+        if (!business) redirect('/onboarding');
+        businessName = business.name;
       }
-      businessName = business.name;
     }
   }
 
   return (
     <div className="flex h-screen overflow-hidden bg-neutral-50">
-      <Sidebar businessName={businessName} />
+      <Sidebar businessName={businessName} forceDemo={isDemoMode} isSignedIn={isSignedIn} />
       <div className="flex-1 flex flex-col overflow-y-auto">
-        {!isSignedIn && <DemoBanner />}
+        {(isDemoMode || !isSignedIn) && <DemoBanner isSignedIn={isSignedIn} />}
         <main className="flex-1">{children}</main>
       </div>
     </div>

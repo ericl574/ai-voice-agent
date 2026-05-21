@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { MOCK_CALLS, MOCK_RESERVATIONS, MOCK_ORDERS, MOCK_RESTAURANT } from '@/lib/mock-data';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
@@ -588,16 +589,19 @@ const EMPTY_STATS: RealStats = {
   pendingRequests: [],
 };
 
-export default function DashboardPage() {
+function DashboardPageInner() {
+  const searchParams = useSearchParams();
+  const forceDemo = searchParams.get('demo') === '1';
+
   const [mode, setMode] = useState<'loading' | 'demo' | 'real'>(
-    isSupabaseConfigured ? 'loading' : 'demo',
+    !isSupabaseConfigured || forceDemo ? 'demo' : 'loading',
   );
   const [stats, setStats] = useState<RealStats>(EMPTY_STATS);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
-    if (!isSupabaseConfigured) return;
+    if (!isSupabaseConfigured || forceDemo) return;
     const supabase = createClient();
 
     const {
@@ -664,9 +668,9 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) return;
+    if (!isSupabaseConfigured || forceDemo) return;
     load();
-  }, [load]);
+  }, [load, forceDemo]);
 
   const handleRefresh = useCallback(async () => {
     if (refreshing) return;
@@ -698,5 +702,13 @@ export default function DashboardPage() {
       onRefresh={handleRefresh}
       refreshing={refreshing}
     />
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense>
+      <DashboardPageInner />
+    </Suspense>
   );
 }

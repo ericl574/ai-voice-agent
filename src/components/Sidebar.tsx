@@ -22,11 +22,21 @@ const NAV_ITEMS = [
   },
   {
     href: '/dashboard/simulator',
-    label: 'Try our service',
+    label: 'Simulator',
     demoCount: null as number | null,
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+      </svg>
+    ),
+  },
+  {
+    href: '/dashboard/voice',
+    label: 'Test the call',
+    demoCount: null as number | null,
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
       </svg>
     ),
   },
@@ -93,7 +103,15 @@ const BUSINESS_TYPE_LABELS: Record<string, string> = {
   other: 'Service business',
 };
 
-export default function Sidebar({ businessName }: { businessName?: string }) {
+export default function Sidebar({
+  businessName,
+  forceDemo = false,
+  isSignedIn = false,
+}: {
+  businessName?: string;
+  forceDemo?: boolean;
+  isSignedIn?: boolean;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const [userEmail, setUserEmail] = useState<string | null>(null);
@@ -111,12 +129,12 @@ export default function Sidebar({ businessName }: { businessName?: string }) {
       const supabase = createClient();
       await supabase.auth.signOut();
     }
-    router.push('/login');
+    router.push('/');
     router.refresh();
   }
 
-  const displayName = businessName ?? MOCK_RESTAURANT.name;
-  const isDemo = !userEmail;
+  const isDemo = forceDemo || !userEmail;
+  const displayName = isDemo ? MOCK_RESTAURANT.name : (businessName ?? MOCK_RESTAURANT.name);
 
   return (
     <aside className="w-64 h-full bg-[#111113] flex flex-col flex-shrink-0">
@@ -185,25 +203,41 @@ export default function Sidebar({ businessName }: { businessName?: string }) {
               <p className="text-xs text-neutral-400 truncate mt-0.5">
                 {BUSINESS_TYPE_LABELS[MOCK_RESTAURANT.businessType] ?? 'Service business'}
               </p>
-              <Link
-                href="/login"
-                className="mt-2.5 block text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
-              >
-                Sign in →
-              </Link>
+              <div className="mt-2.5 flex items-center gap-3">
+                <Link
+                  href="/"
+                  className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
+                >
+                  ← Home
+                </Link>
+                <Link
+                  href={isSignedIn ? '/dashboard' : '/login'}
+                  className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
+                >
+                  Sign in →
+                </Link>
+              </div>
             </>
           ) : (
             <>
               <p className="text-xs text-neutral-400 truncate mt-0.5">{userEmail}</p>
-              <button
-                onClick={handleSignOut}
-                className="mt-2.5 flex items-center gap-1 text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
-              >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                </svg>
-                Sign out
-              </button>
+              <div className="mt-2.5 flex items-center gap-3">
+                <Link
+                  href="/"
+                  className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
+                >
+                  ← Home
+                </Link>
+                <button
+                  onClick={handleSignOut}
+                  className="flex items-center gap-1 text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                  Sign out
+                </button>
+              </div>
             </>
           )}
         </div>

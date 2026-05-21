@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import Link from 'next/link';
 import HeroVideoPlaylist from '@/components/HeroVideoPlaylist';
+import { createClient } from '@/lib/supabase/server';
 
 // ── Feature cards ─────────────────────────────────────────────────────────────
 
@@ -200,9 +201,7 @@ const BENEFITS = [
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default function LandingPage() {
-  // Read video playlist from public/videos/ at build time (server component)
-  // Eric controls playback order by renaming files: 01-name.mp4, 02-name.mp4, etc.
+export default async function LandingPage() {
   let videoSrcs: string[] = [];
   try {
     const videosDir = path.join(process.cwd(), 'public', 'videos');
@@ -213,6 +212,17 @@ export default function LandingPage() {
       .map((f) => `/videos/${f}`);
   } catch {
     // public/videos missing or unreadable — hero shows dark fallback
+  }
+
+  // Sign in → go directly to dashboard if session is still valid, otherwise login page
+  let signInHref = '/login';
+  const isConfigured = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  if (isConfigured) {
+    try {
+      const supabase = await createClient();
+      const { data } = await supabase.auth.getUser();
+      if (data.user) signInHref = '/dashboard';
+    } catch { /* ignore — default to /login */ }
   }
 
   return (
@@ -247,7 +257,7 @@ export default function LandingPage() {
             </div>
             <div className="flex items-center gap-5">
               <Link
-                href="/login"
+                href={signInHref}
                 className="text-sm font-medium text-white/80 hover:text-white transition-colors"
               >
                 Sign in
@@ -276,7 +286,7 @@ export default function LandingPage() {
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Link
-                href="/dashboard"
+                href="/dashboard?demo=1"
                 className="inline-flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold px-8 py-3.5 rounded-lg transition-colors text-base"
               >
                 View Demo
@@ -622,7 +632,7 @@ export default function LandingPage() {
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <Link
-                href="/dashboard"
+                href="/dashboard?demo=1"
                 className="inline-flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold px-8 py-3 rounded-lg transition-colors"
               >
                 View Demo
