@@ -18,6 +18,7 @@ interface DbCall {
   customer_name?: string | null;
   customer_phone?: string | null;
   intent?: string | null;
+  transcript?: string | null;
   // Legacy / alternative column names kept as fallbacks
   caller_name?: string | null;
   caller_phone?: string | null;
@@ -98,7 +99,7 @@ function formatDateTime(iso: string | null | undefined): { date: string; time: s
 function roleLabel(role: string | null | undefined): string {
   if (!role) return 'Unknown';
   const r = role.toLowerCase();
-  if (r === 'ai' || r === 'agent' || r === 'assistant') return 'AI';
+  if (r === 'ai' || r === 'agent' || r === 'assistant') return 'Front desk';
   if (r === 'caller' || r === 'user' || r === 'customer') return 'Caller';
   return cap(role);
 }
@@ -188,7 +189,15 @@ function DemoCallHistoryPage() {
 
 // ─── Transcript panel ──────────────────────────────────────────────────────
 
-function TranscriptPanel({ state, isTestCall }: { state: TranscriptState | undefined; isTestCall?: boolean }) {
+function TranscriptPanel({
+  state,
+  isTestCall,
+  callTranscript,
+}: {
+  state: TranscriptState | undefined;
+  isTestCall?: boolean;
+  callTranscript?: string | null;
+}) {
   if (!state || state.status === 'loading') {
     return <p className="text-xs text-gray-400 py-2">Loading transcript…</p>;
   }
@@ -200,6 +209,22 @@ function TranscriptPanel({ state, isTestCall }: { state: TranscriptState | undef
     );
   }
   if (state.messages.length === 0) {
+    // Fall back to raw transcript text column if call_messages are empty
+    const raw = callTranscript?.trim();
+    const hasContent =
+      raw &&
+      raw.length > 0 &&
+      !raw.startsWith('(no transcript') &&
+      !raw.startsWith('No transcript') &&
+      !raw.startsWith('Call recorded');
+    if (hasContent) {
+      return (
+        <div className="max-w-2xl">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Transcript</p>
+          <pre className="text-xs text-gray-600 whitespace-pre-wrap font-sans leading-relaxed">{raw}</pre>
+        </div>
+      );
+    }
     return (
       <p className="text-xs text-gray-400 italic py-2">
         {isTestCall
@@ -213,7 +238,7 @@ function TranscriptPanel({ state, isTestCall }: { state: TranscriptState | undef
       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Transcript</p>
       {state.messages.map((msg) => {
         const label = roleLabel(msg.role);
-        const isAI = label === 'AI';
+        const isAI = label === 'Front desk';
         return (
           <div key={msg.id} className={`flex gap-2 ${isAI ? 'flex-row-reverse' : ''}`}>
             <span
@@ -416,7 +441,11 @@ function RealCallHistoryPage({
                   const expandedRow = (
                     <tr key={`${call.id}-transcript`} className="border-t border-gray-100">
                       <td colSpan={7} className="px-5 py-4 bg-gray-50">
-                        <TranscriptPanel state={transcripts[call.id]} isTestCall={call.customer_name === 'Test call'} />
+                        <TranscriptPanel
+                          state={transcripts[call.id]}
+                          isTestCall={call.customer_name === 'Test call'}
+                          callTranscript={call.transcript}
+                        />
                       </td>
                     </tr>
                   );

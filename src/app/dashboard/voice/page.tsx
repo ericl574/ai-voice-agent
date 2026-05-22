@@ -81,6 +81,17 @@ function ReadinessRow({
   );
 }
 
+// ── Post-call extraction result ────────────────────────────────────────────
+
+interface PostCallResult {
+  appointmentCreated: boolean;
+  serviceRequestCreated: boolean;
+  summary: string;
+  appointmentError?: string;
+  serviceRequestError?: string;
+}
+type ExtractionState = null | 'running' | PostCallResult | 'error';
+
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function VoicePage() {
@@ -98,6 +109,8 @@ export default function VoicePage() {
   const [savedCallId, setSavedCallId] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState<Date | null>(null);
   const [speechSupported, setSpeechSupported] = useState<boolean | null>(null);
+  const [extraction, setExtraction] = useState<ExtractionState>(null);
+  const [extractionErrorMsg, setExtractionErrorMsg] = useState<string | null>(null);
 
   // Refs
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -111,6 +124,11 @@ export default function VoicePage() {
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const srRef = useRef<any>(null);
+  const postCallGenRef = useRef(0);
+  // Tracks when the Realtime assistant is generating audio — used to gate SR to prevent
+  // assistant speech from being picked up by the mic and mis-attributed to the caller.
+  const assistantActiveRef = useRef(false);
+  const assistantCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep refs in sync with state
   useEffect(() => { transcriptRef.current = transcript; }, [transcript]);
@@ -182,6 +200,12 @@ export default function VoicePage() {
     }
 
     if (type === 'response.audio_transcript.delta') {
+      // Mark assistant as active so SR stops accepting mic input (prevents echo attribution)
+      assistantActiveRef.current = true;
+      if (assistantCooldownRef.current) {
+        clearTimeout(assistantCooldownRef.current);
+        assistantCooldownRef.current = null;
+      }
       const itemId = event.item_id as string;
       const delta = (event.delta as string) ?? '';
       if (!delta) return;
@@ -193,6 +217,12 @@ export default function VoicePage() {
     }
 
     if (type === 'response.audio_transcript.done') {
+      // Keep SR gated for 1.5s after assistant finishes — mic still picks up reverb/room echo
+      if (assistantCooldownRef.current) clearTimeout(assistantCooldownRef.current);
+      assistantCooldownRef.current = setTimeout(() => {
+        assistantActiveRef.current = false;
+        assistantCooldownRef.current = null;
+      }, 1500);
       const itemId = event.item_id as string;
       const text = ((event.transcript as string) ?? '').trim();
       if (!text) return;
@@ -239,6 +269,9 @@ export default function VoicePage() {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     sr.onresult = (event: any) => {
+      // Suppress results while the assistant is speaking or in its echo cooldown period.
+      // Without this, the mic picks up speaker output and labels it as caller speech.
+      if (assistantActiveRef.current) return;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
           const text = event.results[i][0].transcript.trim();
@@ -278,6 +311,11 @@ export default function VoicePage() {
 
   function cleanup() {
     clearConnectTimeout();
+    if (assistantCooldownRef.current) {
+      clearTimeout(assistantCooldownRef.current);
+      assistantCooldownRef.current = null;
+    }
+    assistantActiveRef.current = false;
     stopSpeechRecognition();
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
@@ -417,7 +455,6 @@ export default function VoicePage() {
 
   async function stopCall() {
     setStatus('stopping');
-    // Stop mic and local SR simultaneously
     streamRef.current?.getTracks().forEach((t) => t.stop());
     stopSpeechRecognition();
     // Brief pause: lets in-flight Realtime assistant transcript events arrive and React state settle
@@ -426,7 +463,13 @@ export default function VoicePage() {
     const callStart = startedAtRef.current;
     cleanup();
     if (businessId && isSupabaseConfigured) {
-      await saveCall(entries, callStart);
+      const transcriptText = entries.length > 0
+        ? entries.map((e) => `${e.role === 'assistant' ? 'Front desk' : 'Caller'}: ${e.text}`).join('\n')
+        : '(no transcript captured)';
+      const callId = await saveCall(entries, transcriptText, callStart);
+      if (callId) {
+        runPostCall(callId, transcriptText);
+      }
     } else {
       setStatus('idle');
     }
@@ -438,7 +481,11 @@ export default function VoicePage() {
     cleanup();
   }
 
-  async function saveCall(entries: TranscriptEntry[], callStart: Date | null) {
+  async function saveCall(
+    entries: TranscriptEntry[],
+    transcriptText: string,
+    callStart: Date | null,
+  ): Promise<string | null> {
     setStatus('saving');
     try {
       const supabase = createClient();
@@ -446,14 +493,6 @@ export default function VoicePage() {
       const durationSeconds = callStart
         ? Math.round((now.getTime() - callStart.getTime()) / 1000)
         : 0;
-
-      const transcriptText = entries.length > 0
-        ? entries.map((e) => `${e.role === 'assistant' ? 'AI' : 'Caller'}: ${e.text}`).join('\n')
-        : 'No transcript captured for this test call.';
-
-      const summary = entries.length > 0
-        ? entries.slice(0, 3).map((e) => e.text).join(' ').slice(0, 250)
-        : 'Test call — no transcript captured';
 
       const { data: callRow, error: callError } = await supabase
         .from('calls')
@@ -466,7 +505,9 @@ export default function VoicePage() {
           duration_seconds: durationSeconds,
           status: 'resolved',
           intent: 'other',
-          summary,
+          summary: entries.length > 0
+            ? 'Call recorded — analysis pending.'
+            : 'Test call — no transcript captured.',
           transcript: transcriptText,
           needs_staff_followup: false,
         })
@@ -475,14 +516,12 @@ export default function VoicePage() {
 
       if (callError || !callRow) throw new Error(callError?.message ?? 'Failed to save call');
 
-      const messageRows = entries.map((e, idx) => ({
-        call_id: callRow.id,
-        role: e.role === 'assistant' ? 'assistant' : 'customer',
-        content: e.text,
-        sequence: idx,
-      }));
-
-      if (messageRows.length > 0) {
+      if (entries.length > 0) {
+        const messageRows = entries.map((e) => ({
+          call_id: callRow.id,
+          role: e.role === 'assistant' ? 'assistant' : 'customer',
+          content: e.text,
+        }));
         const { error: msgError } = await supabase.from('call_messages').insert(messageRows);
         if (msgError) {
           setErrorMsg(`Call saved, but transcript messages failed: ${msgError.message}`);
@@ -491,10 +530,40 @@ export default function VoicePage() {
 
       setSavedCallId(callRow.id);
       setStatus('saved');
+      return callRow.id;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMsg(`Save failed: ${msg}`);
       setStatus('idle');
+      return null;
+    }
+  }
+
+  async function runPostCall(callId: string, transcript: string) {
+    const gen = ++postCallGenRef.current;
+    setExtraction('running');
+    setExtractionErrorMsg(null);
+    try {
+      const res = await fetch('/api/post-call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ call_id: callId, business_id: businessId, transcript }),
+      });
+      const data = await res.json();
+      if (gen !== postCallGenRef.current) return;
+      if (!res.ok) throw new Error(data.error ?? 'Post-call processing failed');
+      setExtraction({
+        appointmentCreated: !!data.appointmentCreated,
+        serviceRequestCreated: !!data.serviceRequestCreated,
+        summary: data.extraction?.summary ?? '',
+        appointmentError: data.appointmentError,
+        serviceRequestError: data.serviceRequestError,
+      });
+    } catch (err: unknown) {
+      if (gen !== postCallGenRef.current) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      setExtractionErrorMsg(msg);
+      setExtraction('error');
     }
   }
 
@@ -505,6 +574,9 @@ export default function VoicePage() {
     setSavedCallId(null);
     setStartedAt(null);
     setIsSpeaking(false);
+    setExtraction(null);
+    setExtractionErrorMsg(null);
+    postCallGenRef.current++; // invalidate any in-flight post-call response
   }
 
   // ── Derived UI flags ─────────────────────────────────────────────────────
@@ -740,14 +812,65 @@ export default function VoicePage() {
 
               {/* Save outcome */}
               {status === 'saved' && savedCallId ? (
-                <div className="bg-green-50 border border-green-100 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
-                  <span className="text-sm text-green-700 font-medium">Call transcript saved</span>
-                  <Link
-                    href="/dashboard/calls"
-                    className="text-sm font-semibold text-green-700 hover:text-green-800 underline whitespace-nowrap"
-                  >
-                    View in Call History →
-                  </Link>
+                <div className="bg-green-50 border border-green-100 rounded-lg px-4 py-3 space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm text-green-700 font-medium">Call saved</span>
+                    <Link
+                      href="/dashboard/calls"
+                      className="text-sm font-semibold text-green-700 hover:text-green-800 underline whitespace-nowrap"
+                    >
+                      View in Call History →
+                    </Link>
+                  </div>
+                  {extraction === 'running' && (
+                    <p className="text-xs text-gray-400">Analyzing transcript…</p>
+                  )}
+                  {extraction === 'error' && (
+                    <p className="text-xs text-amber-700 bg-amber-50 rounded px-2 py-1.5">
+                      Transcript analysis failed{extractionErrorMsg ? `: ${extractionErrorMsg}` : ''}.
+                    </p>
+                  )}
+                  {extraction !== null && typeof extraction === 'object' && (
+                    <div className="space-y-1.5">
+                      {extraction.appointmentCreated && (
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-xs text-green-600">Appointment request created</span>
+                          <Link
+                            href="/dashboard/reservations"
+                            className="text-xs font-semibold text-green-700 hover:text-green-800 underline whitespace-nowrap"
+                          >
+                            View Appointments →
+                          </Link>
+                        </div>
+                      )}
+                      {extraction.appointmentError && (
+                        <p className="text-xs text-red-600">
+                          Appointment save failed: {extraction.appointmentError}
+                        </p>
+                      )}
+                      {extraction.serviceRequestCreated && (
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-xs text-green-600">Service request created</span>
+                          <Link
+                            href="/dashboard/orders"
+                            className="text-xs font-semibold text-green-700 hover:text-green-800 underline whitespace-nowrap"
+                          >
+                            View Service Requests →
+                          </Link>
+                        </div>
+                      )}
+                      {extraction.serviceRequestError && (
+                        <p className="text-xs text-red-600">
+                          Service request save failed: {extraction.serviceRequestError}
+                        </p>
+                      )}
+                      {!extraction.appointmentCreated && !extraction.serviceRequestCreated &&
+                       !extraction.appointmentError && !extraction.serviceRequestError &&
+                       extraction.summary && (
+                        <p className="text-xs text-gray-500 leading-relaxed">{extraction.summary}</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="text-xs text-gray-400">
@@ -797,7 +920,7 @@ export default function VoicePage() {
                       }`}
                     >
                       <span className="block text-xs font-semibold mb-1 opacity-60">
-                        {entry.role === 'user' ? 'You' : 'AI Agent'}
+                        {entry.role === 'user' ? 'Caller' : 'Front desk'}
                       </span>
                       {entry.text}
                     </div>
