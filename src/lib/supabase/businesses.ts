@@ -1,4 +1,5 @@
 export interface AgentConfig {
+  // Existing fields (Settings page)
   tone?: string;
   staff_handoff_rule?: string;
   booking_rule?: string;
@@ -7,6 +8,15 @@ export interface AgentConfig {
   collect_phone?: boolean;
   collect_service?: boolean;
   collect_notes?: boolean;
+  collect_urgency?: boolean;
+  // Layer 1 — call behavior profile (stored in JSONB, no migration needed)
+  tone_tags?: string[];           // multi-select: ['friendly','calm','direct','efficient']
+  business_hours?: string;        // free-form text, e.g. "Mon–Fri 9am–6pm, Sat 10am–4pm"
+  walk_in_allowed?: boolean;
+  appointments_require_confirmation?: boolean;
+  main_request_types?: string[];  // e.g. ['appointments','service_requests','inquiries']
+  // Layer 3 — custom instructions (stored in JSONB, no migration needed)
+  custom_instructions?: string;
 }
 
 export interface Business {

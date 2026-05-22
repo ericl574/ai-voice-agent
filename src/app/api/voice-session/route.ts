@@ -1,16 +1,80 @@
 import { NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
+import { getActiveBusiness } from '@/lib/supabase/businesses';
+import type { AgentConfig, Business } from '@/lib/supabase/businesses';
 
 const MODEL = 'gpt-realtime-mini';
 
-const SYSTEM_INSTRUCTIONS = `You are a professional AI front desk agent for a service business. Your job is to:
-- Greet callers warmly and ask how you can help
-- Answer general questions about the business (hours, services, location)
-- Collect appointment or service request information: caller's name, phone number, service needed, and preferred date/time
-- Always be concise and polite
-- NEVER confirm bookings yourself — always say that staff will follow up to confirm
-- If a caller is upset or the issue is complex, offer to have a staff member call them back
+// Global FrontDesk behavior rules — always injected regardless of business data
+const GLOBAL_RULES = `BEHAVIOR RULES (FrontDesk):
+- Fast, direct, natural front desk style. Keep replies short.
+- Ask one question at a time.
+- Never invent pricing, availability, services, or policies.
+- Only collect caller details (name, phone, service, notes) when action is needed — appointment, callback, service request, or staff follow-up. Do NOT collect details for general questions.
+- If unsure, say staff will confirm and offer to take a message.
+- You are a front desk assistant — never claim to be human.
+- Do not overuse the word "AI".`;
 
-When taking down an appointment request, confirm back the key details (name, service, date/time) and remind the caller it is pending staff confirmation.`;
+interface KnowledgeRow {
+  id: string;
+  category: string;
+  question: string;
+  answer: string;
+}
+
+function buildSystemPrompt(
+  business: Business | null,
+  agentConfig: AgentConfig | null,
+  knowledge: KnowledgeRow[],
+): string {
+  if (!business) {
+    return `You are a professional front desk voice assistant for a service business.\n\n${GLOBAL_RULES}`;
+  }
+
+  const name = business.name;
+  const tone =
+    agentConfig?.tone_tags?.join(', ') ||
+    agentConfig?.tone ||
+    'friendly, calm';
+  const hours = agentConfig?.business_hours || 'not specified — let the caller know staff can confirm';
+  const walkin = agentConfig?.walk_in_allowed ?? false;
+  const requiresConfirmation = agentConfig?.appointments_require_confirmation ?? true;
+  const callbackExp = agentConfig?.callback_expectation || 'staff will follow up during business hours';
+  const handoffRule = agentConfig?.staff_handoff_rule || 'Escalate urgent, angry, or complex calls to staff.';
+
+  const knowledgeLines =
+    knowledge.length > 0
+      ? knowledge.map((k) => `- [${k.category}] ${k.question}: ${k.answer}`).join('\n')
+      : '(none provided — do not invent answers; offer to have staff follow up)';
+
+  const customSection = agentConfig?.custom_instructions?.trim()
+    ? `\nCUSTOM INSTRUCTIONS:\n${agentConfig.custom_instructions}`
+    : '';
+
+  return `You are the front desk voice assistant for ${name}${business.business_type ? `, a ${business.business_type.replace('_', ' ')} business` : ''}.
+
+${GLOBAL_RULES}
+Tone: ${tone}.
+
+BUSINESS INFO:
+Name: ${name}
+${business.phone ? `Phone: ${business.phone}` : ''}
+${business.city ? `Location: ${business.city}${business.region ? ', ' + business.region : ''}` : ''}
+Timezone: ${business.timezone}
+Hours: ${hours}
+${walkin ? 'Walk-ins: Welcome.' : 'Appointments: Preferred. Walk-ins subject to availability.'}
+
+APPOINTMENTS:
+${requiresConfirmation ? 'NEVER confirm appointments yourself. Always say staff will confirm and provide the callback expectation.' : 'You may acknowledge appointment requests.'}
+Callback expectation: ${callbackExp}
+
+ESCALATION:
+${handoffRule}
+
+KNOWLEDGE BASE (Layer 2 — Q&A):
+${knowledgeLines}
+${customSection}`.trim();
+}
 
 export async function GET() {
   return NextResponse.json({ configured: !!process.env.OPENAI_API_KEY });
@@ -25,9 +89,35 @@ export async function POST() {
     );
   }
 
+  // Try to build a personalized prompt from the authenticated user's business data
+  let systemInstructions = `You are a professional front desk voice assistant.\n\n${GLOBAL_RULES}`;
   try {
-    // GA endpoint: POST /v1/realtime/client_secrets
-    // The session config is nested under "session"; the response top-level "value" is the ephemeral token.
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (user) {
+      const business = await getActiveBusiness(supabase);
+      if (business) {
+        const { data: knowledgeRows } = await supabase
+          .from('business_knowledge')
+          .select('id, category, question, answer')
+          .eq('business_id', business.id)
+          .order('category', { ascending: true });
+
+        systemInstructions = buildSystemPrompt(
+          business,
+          business.agent_config as AgentConfig | null,
+          (knowledgeRows as KnowledgeRow[]) ?? [],
+        );
+      }
+    }
+  } catch {
+    // Fall through to generic instructions — never block a voice session due to a DB error
+  }
+
+  try {
     const res = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
       method: 'POST',
       headers: {
@@ -39,12 +129,7 @@ export async function POST() {
         session: {
           type: 'realtime',
           model: MODEL,
-          audio: {
-            output: { voice: 'alloy' },
-          },
-          instructions: SYSTEM_INSTRUCTIONS,
-          input_audio_transcription: { model: 'whisper-1' },
-          turn_detection: { type: 'server_vad' },
+          instructions: systemInstructions,
         },
       }),
     });
@@ -58,10 +143,7 @@ export async function POST() {
     }
 
     const data = await res.json();
-    // GA response: { value: "ek_...", expires_at: ..., ... }
-    return NextResponse.json({
-      clientSecret: data.value,
-    });
+    return NextResponse.json({ clientSecret: data.value });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: msg }, { status: 500 });

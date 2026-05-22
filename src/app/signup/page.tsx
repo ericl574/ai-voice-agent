@@ -9,6 +9,7 @@ export default function SignupPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [businessName, setBusinessName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [checkEmail, setCheckEmail] = useState(false);
@@ -24,8 +25,8 @@ export default function SignupPage() {
       if (authError) {
         setError(authError.message);
       } else if (data.session) {
-        // Email confirmation disabled — user is immediately signed in
-        router.push('/dashboard');
+        // Email confirmation disabled — user is immediately signed in, go to business setup
+        router.push('/onboarding?name=' + encodeURIComponent(businessName));
         router.refresh();
       } else {
         // Email confirmation required
@@ -47,7 +48,7 @@ export default function SignupPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
             </svg>
           </div>
-          <span className="font-semibold text-gray-900">FrontDesk AI</span>
+          <span className="font-semibold text-gray-900">FrontDesk</span>
         </div>
 
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-8">
@@ -68,8 +69,13 @@ export default function SignupPage() {
             </div>
           ) : (
             <>
-              <h1 className="text-xl font-bold text-gray-900 mb-1">Create your account</h1>
-              <p className="text-sm text-gray-500 mb-6">Get started with FrontDesk AI.</p>
+              <div className="flex items-center justify-between mb-1">
+                <h1 className="text-xl font-bold text-gray-900">Create your account</h1>
+                <span className="text-xs text-gray-400 font-medium">Step 1 of 2</span>
+              </div>
+              <p className="text-sm text-gray-500 mb-6">
+                Start with the essentials. You can finish business setup next.
+              </p>
 
               {!isSupabaseConfigured ? (
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
@@ -109,6 +115,19 @@ export default function SignupPage() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="At least 6 characters"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
+                      Business name
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={businessName}
+                      onChange={(e) => setBusinessName(e.target.value)}
+                      placeholder="e.g. Sunrise Auto Repair"
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400"
                     />
                   </div>

@@ -1,3 +1,5 @@
+import type { AgentConfig } from '@/lib/supabase/businesses';
+
 export type BusinessType =
   | 'restaurant'
   | 'auto_repair'
@@ -355,6 +357,28 @@ export const MOCK_KNOWLEDGE: KnowledgeEntry[] = [
       'We offer takeout orders. Please call or use our online ordering system. Delivery is available within a 3-mile radius via DoorDash and Uber Eats.',
   },
 ];
+
+export const MOCK_AGENT_CONFIG: AgentConfig = {
+  tone: 'friendly',
+  tone_tags: ['friendly', 'calm'],
+  business_hours: 'Tuesday–Sunday. Lunch: 11:30 AM–2:30 PM. Dinner: 5:00 PM–10:00 PM. Closed Mondays.',
+  walk_in_allowed: false,
+  appointments_require_confirmation: true,
+  main_request_types: ['appointments', 'service_requests', 'inquiries'],
+  staff_handoff_rule: 'Escalate urgent, angry, or complex calls to staff immediately.',
+  booking_rule: 'Never confirm appointments automatically. Mark as pending until staff confirms.',
+  callback_expectation: 'Staff will follow up within 2 hours during business hours.',
+  collect_name: true,
+  collect_phone: true,
+  collect_service: true,
+  collect_notes: true,
+  custom_instructions: '',
+};
+
+export const MOCK_CUSTOM_INSTRUCTIONS =
+  'If a caller mentions a food allergy, note it prominently and remind them to inform the server on arrival.\n' +
+  'For large party requests (6+), let the caller know a deposit may be required — staff will confirm.\n' +
+  'Do not quote exact wait times. Say "staff will confirm availability shortly."';
 
 export const SIMULATOR_SCRIPT = [
   {

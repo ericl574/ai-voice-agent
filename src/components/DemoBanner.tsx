@@ -23,12 +23,29 @@ export default function DemoBanner({ isSignedIn = false }: { isSignedIn?: boolea
           </svg>
           Home
         </Link>
-        <Link
-          href={isSignedIn ? '/dashboard' : '/login'}
-          className="text-sm font-semibold bg-black hover:bg-orange-600 text-white px-4 py-1 rounded-lg transition-colors"
-        >
-          Sign in →
-        </Link>
+        {isSignedIn ? (
+          <a
+            href="/dashboard"
+            className="text-sm font-semibold bg-black hover:bg-orange-600 text-white px-4 py-1 rounded-lg transition-colors"
+          >
+            My dashboard →
+          </a>
+        ) : (
+          <>
+            <Link
+              href="/login"
+              className="text-sm text-gray-600 hover:text-gray-900 font-medium transition-colors px-2"
+            >
+              Sign in
+            </Link>
+            <Link
+              href="/signup"
+              className="text-sm font-semibold bg-black hover:bg-orange-600 text-white px-4 py-1 rounded-lg transition-colors"
+            >
+              Create account
+            </Link>
+          </>
+        )}
       </div>
 
     </div>

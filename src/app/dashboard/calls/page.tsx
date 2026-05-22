@@ -188,7 +188,7 @@ function DemoCallHistoryPage() {
 
 // ─── Transcript panel ──────────────────────────────────────────────────────
 
-function TranscriptPanel({ state }: { state: TranscriptState | undefined }) {
+function TranscriptPanel({ state, isTestCall }: { state: TranscriptState | undefined; isTestCall?: boolean }) {
   if (!state || state.status === 'loading') {
     return <p className="text-xs text-gray-400 py-2">Loading transcript…</p>;
   }
@@ -201,7 +201,11 @@ function TranscriptPanel({ state }: { state: TranscriptState | undefined }) {
   }
   if (state.messages.length === 0) {
     return (
-      <p className="text-xs text-gray-400 italic py-2">No transcript available for this call.</p>
+      <p className="text-xs text-gray-400 italic py-2">
+        {isTestCall
+          ? 'No transcript captured for this test call.'
+          : 'No transcript available for this call.'}
+      </p>
     );
   }
   return (
@@ -412,7 +416,7 @@ function RealCallHistoryPage({
                   const expandedRow = (
                     <tr key={`${call.id}-transcript`} className="border-t border-gray-100">
                       <td colSpan={7} className="px-5 py-4 bg-gray-50">
-                        <TranscriptPanel state={transcripts[call.id]} />
+                        <TranscriptPanel state={transcripts[call.id]} isTestCall={call.customer_name === 'Test call'} />
                       </td>
                     </tr>
                   );

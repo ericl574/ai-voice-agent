@@ -210,12 +210,21 @@ export default function Sidebar({
                 >
                   ← Home
                 </Link>
-                <Link
-                  href={isSignedIn ? '/dashboard' : '/login'}
-                  className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
-                >
-                  Sign in →
-                </Link>
+                {isSignedIn ? (
+                  <a
+                    href="/dashboard"
+                    className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
+                  >
+                    My dashboard →
+                  </a>
+                ) : (
+                  <Link
+                    href="/login"
+                    className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
+                  >
+                    Sign in →
+                  </Link>
+                )}
               </div>
             </>
           ) : (

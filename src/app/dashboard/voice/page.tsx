@@ -97,6 +97,7 @@ export default function VoicePage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [savedCallId, setSavedCallId] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState<Date | null>(null);
+  const [speechSupported, setSpeechSupported] = useState<boolean | null>(null);
 
   // Refs
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -108,6 +109,8 @@ export default function VoicePage() {
   const statusRef = useRef<CallStatus>('idle');
   const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const srRef = useRef<any>(null);
 
   // Keep refs in sync with state
   useEffect(() => { transcriptRef.current = transcript; }, [transcript]);
@@ -122,6 +125,14 @@ export default function VoicePage() {
   // Browser mic API support (sync, client-side only)
   useEffect(() => {
     setMicSupported(typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia);
+  }, []);
+
+  // Web Speech API support check (caller transcript fallback)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    setSpeechSupported(!!(w.SpeechRecognition || w.webkitSpeechRecognition));
   }, []);
 
   // Check whether OPENAI_API_KEY is configured server-side
@@ -209,8 +220,65 @@ export default function VoicePage() {
     }
   }
 
+  // ── Web Speech API — browser-side caller transcript fallback ─────────────
+  // TODO: Replace with a working Realtime API transcription config once the correct
+  // field name/shape for input_audio_transcription is accepted by the current
+  // /v1/realtime/client_secrets or session.update flow. This fallback works only in
+  // Chrome and Edge. Real phone calls require server-side audio transcription.
+  function startSpeechRecognition() {
+    if (typeof window === 'undefined') return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRec = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sr = new SpeechRec() as any;
+    sr.continuous = true;
+    sr.interimResults = false;
+    sr.lang = 'en-US';
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    sr.onresult = (event: any) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          const text = event.results[i][0].transcript.trim();
+          if (!text) continue;
+          const id = `user-${Date.now()}-${i}`;
+          setTranscript((prev) => [...prev, { id, role: 'user', text }]);
+        }
+      }
+    };
+
+    sr.onerror = () => {
+      // Non-blocking — voice call continues even if local transcription errors
+    };
+
+    sr.onend = () => {
+      // SpeechRecognition auto-stops after silence; restart while the call is live
+      if (statusRef.current === 'connected' && srRef.current === sr) {
+        try { sr.start(); } catch {}
+      }
+    };
+
+    try {
+      sr.start();
+      srRef.current = sr;
+    } catch {
+      // Non-blocking — failing to start SR does not block the call
+    }
+  }
+
+  function stopSpeechRecognition() {
+    if (srRef.current) {
+      srRef.current.onend = null; // prevent auto-restart
+      try { srRef.current.stop(); } catch {}
+      srRef.current = null;
+    }
+  }
+
   function cleanup() {
     clearConnectTimeout();
+    stopSpeechRecognition();
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     dcRef.current = null;
@@ -266,6 +334,7 @@ export default function VoicePage() {
       }
       const { clientSecret } = await tokenRes.json();
       if (!clientSecret) throw new Error('Server returned an empty session token. Check OPENAI_API_KEY.');
+      setErrorMsg(''); // session token received — clear any prior error
 
       // 4. WebRTC peer connection
       const pc = new RTCPeerConnection();
@@ -298,6 +367,8 @@ export default function VoicePage() {
 
       dc.onopen = () => {
         clearConnectTimeout();
+        setErrorMsg(''); // data channel open — clear any prior error
+        startSpeechRecognition(); // begin browser-side caller transcript capture
         setStatus('connected');
         setStartedAt(new Date());
       };
@@ -346,11 +417,15 @@ export default function VoicePage() {
 
   async function stopCall() {
     setStatus('stopping');
+    // Stop mic and local SR simultaneously
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    stopSpeechRecognition();
+    // Brief pause: lets in-flight Realtime assistant transcript events arrive and React state settle
+    await new Promise<void>((resolve) => setTimeout(resolve, 500));
     const entries = transcriptRef.current;
     const callStart = startedAtRef.current;
     cleanup();
-
-    if (entries.length > 0 && businessId && isSupabaseConfigured) {
+    if (businessId && isSupabaseConfigured) {
       await saveCall(entries, callStart);
     } else {
       setStatus('idle');
@@ -372,21 +447,19 @@ export default function VoicePage() {
         ? Math.round((now.getTime() - callStart.getTime()) / 1000)
         : 0;
 
-      const transcriptText = entries
-        .map((e) => `${e.role === 'assistant' ? 'AI' : 'Customer'}: ${e.text}`)
-        .join('\n');
+      const transcriptText = entries.length > 0
+        ? entries.map((e) => `${e.role === 'assistant' ? 'AI' : 'Caller'}: ${e.text}`).join('\n')
+        : 'No transcript captured for this test call.';
 
-      const summary = entries
-        .slice(0, 3)
-        .map((e) => e.text)
-        .join(' ')
-        .slice(0, 250);
+      const summary = entries.length > 0
+        ? entries.slice(0, 3).map((e) => e.text).join(' ').slice(0, 250)
+        : 'Test call — no transcript captured';
 
       const { data: callRow, error: callError } = await supabase
         .from('calls')
         .insert({
           business_id: businessId,
-          customer_name: 'Voice Agent Call',
+          customer_name: 'Test call',
           customer_phone: null,
           started_at: (callStart ?? now).toISOString(),
           ended_at: now.toISOString(),
@@ -473,9 +546,9 @@ export default function VoicePage() {
 
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Voice Agent</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Test the call</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Talk directly with the AI front desk agent using your browser microphone.
+          Test how your front desk handles a live browser call.
         </p>
       </div>
 
@@ -688,11 +761,15 @@ export default function VoicePage() {
 
           {/* Transcript */}
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
               <h2 className="font-semibold text-gray-900">Transcript</h2>
-              {transcript.length > 0 && (
+              {speechSupported === false ? (
+                <span className="text-xs text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded">
+                  Caller transcript not supported in this browser
+                </span>
+              ) : transcript.length > 0 ? (
                 <span className="text-xs text-gray-400">{transcript.length} message{transcript.length !== 1 ? 's' : ''}</span>
-              )}
+              ) : null}
             </div>
             <div className="p-5 min-h-[240px] max-h-[480px] overflow-y-auto space-y-3">
               {transcript.length === 0 ? (
@@ -739,7 +816,8 @@ export default function VoicePage() {
             <ul className="text-xs text-gray-500 space-y-1">
               <li>• Your browser connects directly to OpenAI Realtime via WebRTC</li>
               <li>• Your OpenAI API key stays on the server — it is never sent to your browser</li>
-              <li>• Audio is streamed end-to-end; transcripts are generated by Whisper</li>
+              <li>• Assistant responses are transcribed from the Realtime audio stream</li>
+              <li>• Your speech is captured locally via browser speech recognition (Chrome/Edge)</li>
               <li>• Calls are saved to your account when you click End Call (if signed in)</li>
             </ul>
           </div>
