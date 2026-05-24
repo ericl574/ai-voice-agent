@@ -1,41 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-
-interface ExtractionResult {
-  summary: string;
-  intent: string;
-  caller_name: string | null;
-  caller_phone: string | null;
-  appointment: {
-    should_create: boolean;
-    requested_date: string | null;
-    requested_time: string | null;
-    service: string | null;
-    notes: string | null;
-  } | null;
-  service_request: {
-    should_create: boolean;
-    title: string | null;
-    description: string | null;
-    urgency: 'normal' | 'urgent' | null;
-  } | null;
-  next_action: string;
-}
+import {
+  callerLinesOnly,
+  applyKeywordFallbacks,
+  type ExtractionResult,
+} from '@/lib/call-pipeline/extraction';
 
 // ── Extraction prompt ────────────────────────────────────────────────────────
 
 function buildPrompt(today: string): string {
   return `You are analyzing a phone call transcript from a service business. Today's date is ${today}.
 
-The transcript uses these speaker labels:
-- "Front desk:" = what the AI front desk assistant said
-- "Caller:" = what the human caller said
+The transcript may be in any language (English, Chinese, mixed, etc.). You must reason semantically about the caller's intent — do not rely on explicit keywords.
 
-IMPORTANT: Extract intent and requests ONLY from the CALLER's lines. The front desk lines provide context but are not the source of the caller's request.
+Speaker labels:
+- "Front desk:" = the AI front desk assistant
+- "Caller:" = the human caller
 
-Return ONLY valid JSON — no explanation, no markdown fences — matching this exact schema:
+Analyze ONLY the CALLER's lines. The front desk lines give context but are not the source of the caller's intent.
+
+LANGUAGE RULES:
+- summary and next_action: ALWAYS in English (business owner's dashboard language).
+- caller_name and caller_phone: preserve exactly as the caller said them.
+- Work with the transcript in its original language — do not translate it.
+
+Return ONLY valid JSON — no explanation, no markdown fences:
 {
-  "summary": "concise 1-2 sentence summary: what the caller wanted + what staff must do",
+  "summary": "concise 1-2 sentence summary in English: what the caller wanted + what staff must do",
   "intent": "appointment_request" | "service_request" | "quote_request" | "general_question" | "complaint" | "other",
   "caller_name": string | null,
   "caller_phone": string | null,
@@ -52,34 +43,31 @@ Return ONLY valid JSON — no explanation, no markdown fences — matching this 
     "description": string | null,
     "urgency": "normal" | "urgent" | null
   } | null,
-  "next_action": "one sentence on what staff should do next"
+  "next_action": "one sentence in English on what staff should do next"
 }
 
-Rules:
-- Extract caller_name / caller_phone ONLY if the caller explicitly said them
-- Set appointment.should_create=true any time the caller asked to book, schedule, reserve, or come in for an appointment — when in doubt, create it; a pending request reviewed by staff is always better than a missed booking
-- Set service_request.should_create=true if the caller asked for service, repair, quote, estimate, follow-up, or help — but NOT when an appointment is already being created (don't create both for the same call)
-- Convert relative dates (tomorrow, Saturday, next week) to YYYY-MM-DD using today's date; null if genuinely ambiguous
-- Convert times to 24h HH:MM; null if ambiguous
-- Do NOT invent data not stated by the caller
+SEMANTIC INTENT RULES:
+
+appointment.should_create — set true when the caller expresses any intent to visit, come in, or be seen at the business, even without explicit booking words. Examples across languages:
+  English (implicit): "Can I come by tomorrow around five?", "Do you have time Friday afternoon?", "I need to see someone next week.", "Are you free Saturday?", "Can I stop by at 3?"
+  Chinese (implicit): "我明天能过去吗？", "明天五点可以吗？", "帮我约一下明天五点。", "明天下午有空吗？"
+  Explicit (any language): "I want an appointment", "预约", "réserver", "reservar"
+  Rule: if the caller mentions visiting + a day/time, treat it as appointment_request. A pending appointment reviewed by staff is always better than a missed booking.
+
+intent = appointment_request — use when appointment.should_create is true. Appointment intent wins over service_request when both time+visit signals exist. Do not classify an implicit visit request as general_question.
+
+intent = general_question — use ONLY when the caller is asking a factual question with no visit/booking intent. Examples: "What time are you open?", "你们几点开门？", "Where are you located?"
+
+intent = service_request — use only when the caller wants a callback, quote, repair, or follow-up with no appointment/visit intent.
+
+Additional rules:
+- Extract caller_name / caller_phone ONLY if explicitly stated
+- Set service_request.should_create=true only when the caller explicitly requests service/repair/callback AND appointment.should_create is false
+- Convert relative dates (tomorrow/明天, Saturday, next week/下周) → YYYY-MM-DD; null if ambiguous
+- Convert times → 24h HH:MM (e.g. 下午五点 → 17:00, "around five" → 17:00); null if ambiguous
+- Do NOT invent data
 - If transcript has no meaningful caller content: intent="other", summary="Test call — no substantive conversation recorded.", both should_create=false
-- summary tells staff what ACTION to take, not just what was said`;
-}
-
-// ── Deterministic keyword fallbacks ──────────────────────────────────────────
-// Applied when OpenAI extraction misses an obvious request. Checks the full
-// transcript text regardless of role labels, so even a partially polluted
-// transcript triggers the correct record creation.
-
-function hasAppointmentKeywords(text: string): boolean {
-  const lower = text.toLowerCase();
-  const apptWord = /\b(appointment|book(?:ing)?|schedule|reserve|reservation|come in|slot|available)\b/.test(lower);
-  const timeRef = /\b(tomorrow|today|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week|\d+\s*(?:am|pm|o'clock)|at\s+\d+)\b/.test(lower);
-  return apptWord && timeRef;
-}
-
-function hasServiceKeywords(text: string): boolean {
-  return /\b(service|repair|fix(?:ing)?|help|quote|estimate|issue|problem|call\s*back|callback|follow.?up|complaint|need someone)\b/i.test(text);
+- summary describes what ACTION staff must take, not just what was said`;
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -125,6 +113,7 @@ export async function POST(req: NextRequest) {
 
   const today = new Date().toISOString().split('T')[0];
   const transcriptText = transcript.trim() || '(no transcript captured)';
+  const callerText = callerLinesOnly(transcriptText);
 
   // ── OpenAI extraction ─────────────────────────────────────────────────────
 
@@ -174,47 +163,7 @@ export async function POST(req: NextRequest) {
 
   // ── Keyword fallback — override extraction when obvious signals missed ─────
 
-  if (!extraction.appointment?.should_create && hasAppointmentKeywords(transcriptText)) {
-    if (!extraction.appointment) {
-      extraction.appointment = {
-        should_create: true,
-        requested_date: null,
-        requested_time: null,
-        service: null,
-        notes: null,
-      };
-    } else {
-      extraction.appointment.should_create = true;
-    }
-    if (extraction.intent === 'other' || extraction.intent === 'general_question') {
-      extraction.intent = 'appointment_request';
-    }
-    if (extractionSource === 'fallback') {
-      extraction.summary = 'Caller requested an appointment. Staff must confirm date, time, and availability.';
-      extraction.next_action = 'Contact caller to confirm appointment details.';
-    }
-  }
-
-  // Only consider service request fallback when no appointment is being created
-  if (
-    !extraction.appointment?.should_create &&
-    !extraction.service_request?.should_create &&
-    hasServiceKeywords(transcriptText)
-  ) {
-    if (!extraction.service_request) {
-      extraction.service_request = {
-        should_create: true,
-        title: 'Service inquiry',
-        description: null,
-        urgency: 'normal',
-      };
-    } else {
-      extraction.service_request.should_create = true;
-    }
-    if (extraction.intent === 'other') {
-      extraction.intent = 'service_request';
-    }
-  }
+  extraction = applyKeywordFallbacks(extraction, callerText, extractionSource);
 
   // ── Update call row ───────────────────────────────────────────────────────
 

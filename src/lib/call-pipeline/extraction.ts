@@ -1,0 +1,123 @@
+// Pure call-pipeline extraction logic.
+// No browser, no Supabase, no OpenAI — safe to import in tests and server routes.
+//
+// ARCHITECTURE:
+//   PRIMARY   → semantic extraction by the model in /api/post-call.
+//               The model handles all languages, implicit intent, and context.
+//               This is the right tool for intent detection.
+//   FALLBACK  → the keyword guardrails below. They are a safety net only — triggered when the
+//               model clearly misses an unambiguous explicit signal (e.g. model returns
+//               "service_request" for a call that contained the word "appointment").
+//               Do NOT turn this into a comprehensive NLU system. Only add a keyword when:
+//               (1) it is unambiguous in context, (2) it covers a real AI failure mode,
+//               (3) false-positive risk is very low.
+
+export interface ExtractionResult {
+  summary: string;
+  intent: string;
+  caller_name: string | null;
+  caller_phone: string | null;
+  appointment: {
+    should_create: boolean;
+    requested_date: string | null;
+    requested_time: string | null;
+    service: string | null;
+    notes: string | null;
+  } | null;
+  service_request: {
+    should_create: boolean;
+    title: string | null;
+    description: string | null;
+    urgency: 'normal' | 'urgent' | null;
+  } | null;
+  next_action: string;
+}
+
+export function callerLinesOnly(transcript: string): string {
+  return transcript
+    .split('\n')
+    .filter((line) => /^Caller:/i.test(line.trim()))
+    .map((line) => line.replace(/^Caller:\s*/i, ''))
+    .join(' ');
+}
+
+// GUARDRAIL: explicit booking-intent words the model might miss when overloaded or hallucinating.
+// This is NOT the primary detection layer — semantic extraction by the model comes first.
+// "come by" / "stop by" are included because they unambiguously mean a visit in business context.
+export function hasAppointmentKeywords(callerText: string): boolean {
+  const enMatch = /\b(appointment|book(?:ing)?|schedule|reserve|reservation|come in|come by|stop by|slot|available)\b/i.test(callerText);
+  // Chinese: 预约/预订/预定 (appointment/reservation), 来一下 (come in a moment)
+  const zhMatch = /预约|预订|预定|来一下/.test(callerText);
+  return enMatch || zhMatch;
+}
+
+// GUARDRAIL: explicit service/follow-up signals the model might miss.
+export function hasServiceKeywords(callerText: string): boolean {
+  const enMatch = /\b(service|repair|fix(?:ing)?|help|quote|estimate|issue|problem|call\s*back|callback|follow.?up|complaint|need someone)\b/i.test(callerText);
+  // Chinese: 维修/修理 (repair), 报价 (quote), 投诉 (complaint), 回电 (callback)
+  const zhMatch = /维修|修理|报价|投诉|回电/.test(callerText);
+  return enMatch || zhMatch;
+}
+
+// Applies deterministic keyword GUARDRAILS on top of a model extraction result.
+// This is the FALLBACK layer — it corrects clear model misclassifications using explicit signals.
+// It must NOT replace semantic reasoning. Only checks caller lines (pre-filtered by callerLinesOnly).
+// When extractionSource='fallback' (no model available), also rewrites summary/next_action.
+export function applyKeywordFallbacks(
+  extraction: ExtractionResult,
+  callerText: string,
+  extractionSource: 'openai' | 'fallback' = 'openai',
+): ExtractionResult {
+  const result: ExtractionResult = {
+    ...extraction,
+    appointment: extraction.appointment ? { ...extraction.appointment } : null,
+    service_request: extraction.service_request ? { ...extraction.service_request } : null,
+  };
+
+  if (!result.appointment?.should_create && hasAppointmentKeywords(callerText)) {
+    if (!result.appointment) {
+      result.appointment = {
+        should_create: true,
+        requested_date: null,
+        requested_time: null,
+        service: null,
+        notes: null,
+      };
+    } else {
+      result.appointment.should_create = true;
+    }
+    // Keyword confirms appointment — always override intent, even if AI said service_request
+    result.intent = 'appointment_request';
+    // Clear any AI-set service_request that conflicts with the confirmed appointment
+    if (result.service_request?.should_create) {
+      result.service_request = { ...result.service_request, should_create: false };
+    }
+    if (extractionSource === 'fallback') {
+      result.summary = 'Caller requested an appointment. Staff must confirm date, time, and availability.';
+      result.next_action = 'Contact caller to confirm appointment details.';
+    }
+  }
+
+  // Only consider service request when no appointment is being created
+  if (
+    !result.appointment?.should_create &&
+    !result.service_request?.should_create &&
+    hasServiceKeywords(callerText)
+  ) {
+    if (!result.service_request) {
+      result.service_request = {
+        should_create: true,
+        title: 'Service inquiry',
+        description: null,
+        urgency: 'normal',
+      };
+    } else {
+      result.service_request.should_create = true;
+    }
+    if (result.intent === 'other') {
+      result.intent = 'service_request';
+    }
+  }
+
+  return result;
+}

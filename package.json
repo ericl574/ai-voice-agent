@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "qa:call-pipeline": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/qa-call-pipeline.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",

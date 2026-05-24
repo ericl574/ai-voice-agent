@@ -47,11 +47,15 @@ type TranscriptState =
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 const TYPE_COLORS: Record<string, string> = {
-  reservation:  'bg-blue-100 text-blue-700',
-  appointment:  'bg-blue-100 text-blue-700',
-  order:        'bg-purple-100 text-purple-700',
-  inquiry:      'bg-gray-100 text-gray-600',
-  complaint:    'bg-red-100 text-red-700',
+  reservation:         'bg-blue-100 text-blue-700',
+  appointment:         'bg-blue-100 text-blue-700',
+  appointment_request: 'bg-blue-100 text-blue-700',
+  order:               'bg-purple-100 text-purple-700',
+  service_request:     'bg-purple-100 text-purple-700',
+  quote_request:       'bg-purple-100 text-purple-700',
+  inquiry:             'bg-gray-100 text-gray-600',
+  general_question:    'bg-gray-100 text-gray-600',
+  complaint:           'bg-red-100 text-red-700',
 };
 
 const STATUS_STYLES: Record<string, string> = {
@@ -99,7 +103,7 @@ function formatDateTime(iso: string | null | undefined): { date: string; time: s
 function roleLabel(role: string | null | undefined): string {
   if (!role) return 'Unknown';
   const r = role.toLowerCase();
-  if (r === 'ai' || r === 'agent' || r === 'assistant') return 'Front desk';
+  if (r === 'ai' || r === 'agent' || r === 'assistant' || r === 'front_desk') return 'Front desk';
   if (r === 'caller' || r === 'user' || r === 'customer') return 'Caller';
   return cap(role);
 }
@@ -218,6 +222,39 @@ function TranscriptPanel({
       !raw.startsWith('No transcript') &&
       !raw.startsWith('Call recorded');
     if (hasContent) {
+      // Parse "Front desk:" / "Caller:" prefixed lines into role-aware bubbles
+      const parsedLines = raw!.split('\n').map((line) => {
+        const fdMatch = line.match(/^(Front desk|AI|Assistant):\s*/i);
+        const callerMatch = line.match(/^(Caller|Customer|User):\s*/i);
+        if (fdMatch) return { role: 'assistant' as const, text: line.slice(fdMatch[0].length).trim() };
+        if (callerMatch) return { role: 'user' as const, text: line.slice(callerMatch[0].length).trim() };
+        return null;
+      }).filter((l): l is { role: 'assistant' | 'user'; text: string } => l !== null && l.text.length > 0);
+
+      if (parsedLines.length > 0) {
+        return (
+          <div className="space-y-2 max-w-2xl">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Transcript</p>
+            {parsedLines.map((line, idx) => {
+              const label = line.role === 'assistant' ? 'Front desk' : 'Caller';
+              const isAI = line.role === 'assistant';
+              return (
+                <div key={idx} className={`flex gap-2 ${isAI ? 'flex-row-reverse' : ''}`}>
+                  <span className={`text-xs font-semibold whitespace-nowrap mt-1.5 ${isAI ? 'text-orange-500' : 'text-gray-500'}`}>
+                    {label}
+                  </span>
+                  <div className={`text-xs px-3 py-2 rounded-lg max-w-prose leading-relaxed ${
+                    isAI ? 'bg-orange-50 text-gray-800' : 'bg-white border border-gray-200 text-gray-700'
+                  }`}>
+                    {line.text}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      }
+
       return (
         <div className="max-w-2xl">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Transcript</p>
@@ -393,7 +430,7 @@ function RealCallHistoryPage({
                           <span
                             className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${typeClass(call.intent ?? call.call_type)}`}
                           >
-                            {cap(call.intent ?? call.call_type ?? '')}
+                            {cap((call.intent ?? call.call_type ?? '').replace(/_/g, ' '))}
                           </span>
                         ) : (
                           <span className="text-gray-400 text-xs">—</span>

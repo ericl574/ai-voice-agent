@@ -11,8 +11,9 @@ type CallStatus =
   | 'connecting'   // WebRTC handshake in progress
   | 'connected'    // live call
   | 'stopping'     // tearing down
-  | 'saving'       // writing to DB
-  | 'saved'        // call record written
+  | 'saving'       // writing call record to DB
+  | 'transcribing' // uploading caller audio + Whisper transcription
+  | 'saved'        // call record + official transcript written
   | 'error';       // something failed
 
 interface TranscriptEntry {
@@ -125,10 +126,17 @@ export default function VoicePage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const srRef = useRef<any>(null);
   const postCallGenRef = useRef(0);
+  // True while a call is live — used by SR onend to decide whether to restart.
+  // Separate from statusRef so SR can check it synchronously without stale closure issues.
+  const callActiveRef = useRef(false);
   // Tracks when the Realtime assistant is generating audio — used to gate SR to prevent
   // assistant speech from being picked up by the mic and mis-attributed to the caller.
   const assistantActiveRef = useRef(false);
   const assistantCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Caller mic recording — MediaRecorder is the source of truth for post-call transcription.
+  // Browser SpeechRecognition (srRef) is kept for live captions only, not for extraction.
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   // Keep refs in sync with state
   useEffect(() => { transcriptRef.current = transcript; }, [transcript]);
@@ -184,8 +192,28 @@ export default function VoicePage() {
   function handleRealtimeEvent(event: Record<string, unknown>) {
     const type = event.type as string;
 
-    if (type === 'input_audio_buffer.speech_started') setIsSpeaking(true);
+    if (type === 'input_audio_buffer.speech_started') {
+      setIsSpeaking(true);
+      // OpenAI VAD confirmed user is speaking — immediately ungate SR.
+      // Without this, the response.created for the assistant's reply (which fires after
+      // the user speaks) would cancel the 1500ms cooldown and permanently block SR.
+      if (assistantCooldownRef.current) {
+        clearTimeout(assistantCooldownRef.current);
+        assistantCooldownRef.current = null;
+      }
+      assistantActiveRef.current = false;
+      console.log('[FD debug] SR UNGATED — input_audio_buffer.speech_started');
+    }
     if (type === 'input_audio_buffer.speech_stopped') setIsSpeaking(false);
+
+    // Gate SR before assistant audio plays — response.created fires before any delta events
+    if (type === 'response.created') {
+      assistantActiveRef.current = true;
+      // DO NOT cancel assistantCooldownRef here — it is the user's speaking window
+      // after the previous response. Cancelling it was the root cause of SR getting
+      // permanently gated when the user speaks quickly after the greeting.
+      console.log('[FD debug] SR gated — response.created');
+    }
 
     if (type === 'conversation.item.input_audio_transcription.completed') {
       setIsSpeaking(false);
@@ -202,10 +230,6 @@ export default function VoicePage() {
     if (type === 'response.audio_transcript.delta') {
       // Mark assistant as active so SR stops accepting mic input (prevents echo attribution)
       assistantActiveRef.current = true;
-      if (assistantCooldownRef.current) {
-        clearTimeout(assistantCooldownRef.current);
-        assistantCooldownRef.current = null;
-      }
       const itemId = event.item_id as string;
       const delta = (event.delta as string) ?? '';
       if (!delta) return;
@@ -219,9 +243,11 @@ export default function VoicePage() {
     if (type === 'response.audio_transcript.done') {
       // Keep SR gated for 1.5s after assistant finishes — mic still picks up reverb/room echo
       if (assistantCooldownRef.current) clearTimeout(assistantCooldownRef.current);
+      console.log('[FD debug] assistant done — cooldown started (1500ms)');
       assistantCooldownRef.current = setTimeout(() => {
         assistantActiveRef.current = false;
         assistantCooldownRef.current = null;
+        console.log('[FD debug] cooldown ended — SR ungated');
       }, 1500);
       const itemId = event.item_id as string;
       const text = ((event.transcript as string) ?? '').trim();
@@ -231,6 +257,40 @@ export default function VoicePage() {
           ? prev.map((e) => (e.id === itemId ? { ...e, text } : e))
           : [...prev, { id: itemId, role: 'assistant', text }]
       );
+    }
+
+    // Backup assistant transcript — fires when output item is complete
+    // Fills in assistant text if delta stream didn't fire (e.g. audio-only items)
+    if (type === 'response.output_item.done') {
+      const item = event.item as Record<string, unknown> | undefined;
+      const itemId = item?.id as string | undefined;
+      const content = item?.content as Array<Record<string, unknown>> | undefined;
+      if (itemId && content) {
+        const audioContent = content.find((c) => c.type === 'audio');
+        const backupText = ((audioContent?.transcript as string) ?? '').trim();
+        if (backupText) {
+          setTranscript((prev) => {
+            const existing = prev.find((e) => e.id === itemId);
+            // Only use backup if delta stream didn't already populate it
+            if (existing?.text.trim()) return prev;
+            return existing
+              ? prev.map((e) => (e.id === itemId ? { ...e, text: backupText } : e))
+              : [...prev, { id: itemId, role: 'assistant', text: backupText }];
+          });
+        }
+      }
+    }
+
+    // Backup cooldown — fires after full response turn; covers audio-only responses with no transcript events
+    if (type === 'response.done') {
+      if (!assistantCooldownRef.current) {
+        console.log('[FD debug] response.done — starting backup cooldown (no transcript cooldown active)');
+        assistantCooldownRef.current = setTimeout(() => {
+          assistantActiveRef.current = false;
+          assistantCooldownRef.current = null;
+          console.log('[FD debug] backup cooldown ended — SR ungated');
+        }, 1500);
+      }
     }
 
     if (type === 'error') {
@@ -271,33 +331,53 @@ export default function VoicePage() {
     sr.onresult = (event: any) => {
       // Suppress results while the assistant is speaking or in its echo cooldown period.
       // Without this, the mic picks up speaker output and labels it as caller speech.
-      if (assistantActiveRef.current) return;
+      if (assistantActiveRef.current) {
+        console.log('[FD debug] SR result suppressed — assistant active (echo guard)');
+        return;
+      }
       for (let i = event.resultIndex; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
           const text = event.results[i][0].transcript.trim();
           if (!text) continue;
+          console.log('[FD debug] SR caller text captured:', text);
           const id = `user-${Date.now()}-${i}`;
           setTranscript((prev) => [...prev, { id, role: 'user', text }]);
         }
       }
     };
 
-    sr.onerror = () => {
-      // Non-blocking — voice call continues even if local transcription errors
+    sr.onerror = (event: Event & { error?: string }) => {
+      console.log('[FD debug] SR error:', event?.error ?? event);
     };
 
     sr.onend = () => {
-      // SpeechRecognition auto-stops after silence; restart while the call is live
-      if (statusRef.current === 'connected' && srRef.current === sr) {
-        try { sr.start(); } catch {}
+      console.log('[FD debug] SR ended — callActive:', callActiveRef.current);
+      if (!callActiveRef.current || srRef.current !== sr) {
+        console.log('[FD debug] SR ended — not restarting (call stopped or SR replaced)');
+        return;
       }
+      // Chrome can throw InvalidStateError if sr.start() is called immediately in onend.
+      // A short delay lets the browser fully release the SR instance before restarting.
+      setTimeout(() => {
+        if (!callActiveRef.current || srRef.current !== sr) return;
+        try {
+          sr.start();
+          console.log('[FD debug] SR restarted (same instance)');
+        } catch (err) {
+          // Same-instance restart failed — create a fresh SR instance instead
+          console.log('[FD debug] SR restart failed, creating new instance:', err);
+          srRef.current = null;
+          startSpeechRecognition();
+        }
+      }, 150);
     };
 
     try {
       sr.start();
       srRef.current = sr;
-    } catch {
-      // Non-blocking — failing to start SR does not block the call
+      console.log('[FD debug] SR started successfully; speechSupported=true');
+    } catch (err) {
+      console.log('[FD debug] SR start failed:', err);
     }
   }
 
@@ -309,7 +389,46 @@ export default function VoicePage() {
     }
   }
 
+  // Stops MediaRecorder and returns a Blob of the recorded caller audio.
+  // Must be called BEFORE stopping mic tracks so the final audio chunk is captured.
+  async function stopMediaRecorder(): Promise<Blob | null> {
+    return new Promise((resolve) => {
+      const mr = mediaRecorderRef.current;
+      if (!mr) { resolve(null); return; }
+      if (mr.state === 'inactive') {
+        const blob = audioChunksRef.current.length > 0
+          ? new Blob(audioChunksRef.current, { type: mr.mimeType || 'audio/webm' })
+          : null;
+        audioChunksRef.current = [];
+        mediaRecorderRef.current = null;
+        resolve(blob);
+        return;
+      }
+      mr.onstop = () => {
+        const blob = audioChunksRef.current.length > 0
+          ? new Blob(audioChunksRef.current, { type: mr.mimeType || 'audio/webm' })
+          : null;
+        audioChunksRef.current = [];
+        mediaRecorderRef.current = null;
+        resolve(blob);
+      };
+      mr.onerror = () => {
+        audioChunksRef.current = [];
+        mediaRecorderRef.current = null;
+        resolve(null);
+      };
+      try {
+        mr.stop(); // triggers ondataavailable with any remaining data, then onstop
+      } catch {
+        audioChunksRef.current = [];
+        mediaRecorderRef.current = null;
+        resolve(null);
+      }
+    });
+  }
+
   function cleanup() {
+    callActiveRef.current = false;
     clearConnectTimeout();
     if (assistantCooldownRef.current) {
       clearTimeout(assistantCooldownRef.current);
@@ -317,6 +436,12 @@ export default function VoicePage() {
     }
     assistantActiveRef.current = false;
     stopSpeechRecognition();
+    // On error paths (connection drop etc.), force-stop MediaRecorder to release mic
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try { mediaRecorderRef.current.stop(); } catch {}
+    }
+    mediaRecorderRef.current = null;
+    audioChunksRef.current = [];
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     dcRef.current = null;
@@ -406,7 +531,23 @@ export default function VoicePage() {
       dc.onopen = () => {
         clearConnectTimeout();
         setErrorMsg(''); // data channel open — clear any prior error
-        startSpeechRecognition(); // begin browser-side caller transcript capture
+        callActiveRef.current = true;
+        startSpeechRecognition(); // live captions only — NOT the source of truth for extraction
+        // Record caller mic audio — source of truth for post-call Whisper transcription
+        if (streamRef.current && typeof MediaRecorder !== 'undefined') {
+          const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+            ? 'audio/webm;codecs=opus'
+            : '';
+          try {
+            const mr = new MediaRecorder(streamRef.current, mimeType ? { mimeType } : undefined);
+            mr.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+            mr.start(1000); // emit a chunk every 1s for memory safety on long calls
+            mediaRecorderRef.current = mr;
+            console.log('[FD debug] MediaRecorder started, mimeType:', mr.mimeType);
+          } catch (err) {
+            console.warn('[FD debug] MediaRecorder failed to start:', err);
+          }
+        }
         setStatus('connected');
         setStartedAt(new Date());
       };
@@ -455,23 +596,82 @@ export default function VoicePage() {
 
   async function stopCall() {
     setStatus('stopping');
-    streamRef.current?.getTracks().forEach((t) => t.stop());
+    callActiveRef.current = false;
     stopSpeechRecognition();
-    // Brief pause: lets in-flight Realtime assistant transcript events arrive and React state settle
-    await new Promise<void>((resolve) => setTimeout(resolve, 500));
+    // Collect caller audio BEFORE stopping mic tracks — keeps final chunk in recorder
+    const callerAudioBlob = await stopMediaRecorder();
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    // Brief pause for in-flight Realtime assistant transcript events to arrive
+    await new Promise<void>((resolve) => setTimeout(resolve, 800));
+
     const entries = transcriptRef.current;
     const callStart = startedAtRef.current;
+    const assistantEntries = entries.filter((e) => e.role === 'assistant');
+
+    console.log('[FD debug] stopCall — assistant entries:', assistantEntries.length);
+    console.log('[FD debug] stopCall — caller audio blob size:', callerAudioBlob?.size ?? 0, 'bytes');
+
     cleanup();
-    if (businessId && isSupabaseConfigured) {
-      const transcriptText = entries.length > 0
-        ? entries.map((e) => `${e.role === 'assistant' ? 'Front desk' : 'Caller'}: ${e.text}`).join('\n')
-        : '(no transcript captured)';
-      const callId = await saveCall(entries, transcriptText, callStart);
-      if (callId) {
-        runPostCall(callId, transcriptText);
-      }
-    } else {
+
+    if (!businessId || !isSupabaseConfigured) {
       setStatus('idle');
+      return;
+    }
+
+    // Preliminary transcript: assistant-only (caller added after Whisper transcription)
+    const assistantTranscript = assistantEntries
+      .map((e) => `Front desk: ${e.text}`)
+      .join('\n');
+
+    const callId = await saveCall(entries, assistantTranscript || '(no transcript captured)', callStart, 'transcribing');
+    if (!callId) return;
+
+    // Upload caller audio for official Whisper transcription
+    if (callerAudioBlob && callerAudioBlob.size > 500) {
+      await uploadAndTranscribe(callId, callerAudioBlob, assistantTranscript);
+    } else {
+      console.warn('[FD debug] stopCall — no caller audio (blob missing or empty)');
+      setErrorMsg('No caller audio was recorded. Appointment extraction could not run. Ensure microphone access is granted and try Chrome or Edge.');
+      setStatus('saved');
+    }
+  }
+
+  async function uploadAndTranscribe(
+    callId: string,
+    audioBlob: Blob,
+    assistantTranscript: string,
+  ): Promise<void> {
+    const gen = ++postCallGenRef.current;
+    setExtraction('running');
+    setExtractionErrorMsg(null);
+    try {
+      const form = new FormData();
+      form.append('audio', audioBlob, 'caller-audio.webm');
+      form.append('call_id', callId);
+      form.append('business_id', businessId!);
+      form.append('assistant_transcript', assistantTranscript);
+
+      console.log('[FD debug] uploading caller audio —', audioBlob.size, 'bytes');
+      const transRes = await fetch('/api/transcribe-call', { method: 'POST', body: form });
+      const transData = await transRes.json();
+      console.log('[FD debug] transcription result:', JSON.stringify(transData).substring(0, 400));
+
+      if (!transRes.ok) throw new Error(transData.error ?? 'Transcription failed');
+      if (gen !== postCallGenRef.current) return; // stale — user already reset
+
+      const officialTranscript: string = transData.transcript ?? '';
+      console.log('[FD debug] official transcript (first 400):', officialTranscript.substring(0, 400));
+
+      setStatus('saved');
+      runPostCall(callId, officialTranscript); // manages its own extraction state
+    } catch (err: unknown) {
+      if (gen !== postCallGenRef.current) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[FD debug] transcription failed:', msg);
+      setExtractionErrorMsg(msg);
+      setExtraction('error');
+      setErrorMsg(`Call saved, but caller transcription failed: ${msg}. Appointment extraction could not run.`);
+      setStatus('saved');
     }
   }
 
@@ -485,6 +685,7 @@ export default function VoicePage() {
     entries: TranscriptEntry[],
     transcriptText: string,
     callStart: Date | null,
+    finalStatus: CallStatus = 'saved',
   ): Promise<string | null> {
     setStatus('saving');
     try {
@@ -493,6 +694,8 @@ export default function VoicePage() {
       const durationSeconds = callStart
         ? Math.round((now.getTime() - callStart.getTime()) / 1000)
         : 0;
+
+      const assistantEntries = entries.filter((e) => e.role === 'assistant');
 
       const { data: callRow, error: callError } = await supabase
         .from('calls')
@@ -505,8 +708,8 @@ export default function VoicePage() {
           duration_seconds: durationSeconds,
           status: 'resolved',
           intent: 'other',
-          summary: entries.length > 0
-            ? 'Call recorded — analysis pending.'
+          summary: assistantEntries.length > 0
+            ? 'Call recorded — transcription pending.'
             : 'Test call — no transcript captured.',
           transcript: transcriptText,
           needs_staff_followup: false,
@@ -516,20 +719,21 @@ export default function VoicePage() {
 
       if (callError || !callRow) throw new Error(callError?.message ?? 'Failed to save call');
 
-      if (entries.length > 0) {
-        const messageRows = entries.map((e) => ({
+      // Save assistant turns immediately — caller message added after Whisper transcription
+      if (assistantEntries.length > 0) {
+        const messageRows = assistantEntries.map((e) => ({
           call_id: callRow.id,
-          role: e.role === 'assistant' ? 'assistant' : 'customer',
+          role: 'assistant',
           content: e.text,
         }));
         const { error: msgError } = await supabase.from('call_messages').insert(messageRows);
         if (msgError) {
-          setErrorMsg(`Call saved, but transcript messages failed: ${msgError.message}`);
+          setErrorMsg(`Call saved, but assistant messages failed: ${msgError.message}`);
         }
       }
 
       setSavedCallId(callRow.id);
-      setStatus('saved');
+      setStatus(finalStatus);
       return callRow.id;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -550,6 +754,7 @@ export default function VoicePage() {
         body: JSON.stringify({ call_id: callId, business_id: businessId, transcript }),
       });
       const data = await res.json();
+      console.log('[FD debug] post-call response — status:', res.status, '| data:', JSON.stringify(data).substring(0, 500));
       if (gen !== postCallGenRef.current) return;
       if (!res.ok) throw new Error(data.error ?? 'Post-call processing failed');
       setExtraction({
@@ -583,7 +788,7 @@ export default function VoicePage() {
 
   const isLive = status === 'connected';
   const isConnecting = status === 'requesting' || status === 'connecting';
-  const isBusy = status === 'stopping' || status === 'saving';
+  const isBusy = status === 'stopping' || status === 'saving' || status === 'transcribing';
   const canSave = !!businessId && isSupabaseConfigured;
 
   const statusLabel: Record<CallStatus, string> = {
@@ -593,6 +798,7 @@ export default function VoicePage() {
     connected: 'Live',
     stopping: 'Ending call…',
     saving: 'Saving…',
+    transcribing: 'Transcribing…',
     saved: 'Saved',
     error: 'Error',
   };
@@ -604,6 +810,7 @@ export default function VoicePage() {
     connected: 'bg-green-100 text-green-700',
     stopping: 'bg-amber-100 text-amber-700',
     saving: 'bg-amber-100 text-amber-700',
+    transcribing: 'bg-amber-100 text-amber-700',
     saved: 'bg-green-100 text-green-700',
     error: 'bg-red-100 text-red-700',
   };
