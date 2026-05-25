@@ -30,6 +30,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Guard against empty/near-empty recordings — Whisper will reject them anyway
+  if (audioFile.size < 100) {
+    return NextResponse.json(
+      { error: 'Audio recording is empty or too short. No audio was captured from the microphone.' },
+      { status: 400 },
+    );
+  }
+
   // Auth + ownership check — rejects requests without a valid session
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();

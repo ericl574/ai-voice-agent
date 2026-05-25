@@ -1017,6 +1017,19 @@ export default function VoicePage() {
                 </div>
               )}
 
+              {/* Transcribing status — shown while caller audio is being uploaded and processed */}
+              {status === 'transcribing' && (
+                <div className="bg-amber-50 border border-amber-100 rounded-lg px-4 py-3 flex items-center gap-2">
+                  <svg className="w-3.5 h-3.5 animate-spin text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                  </svg>
+                  <p className="text-xs text-amber-700">
+                    Transcribing caller audio via Whisper — this usually takes a few seconds…
+                  </p>
+                </div>
+              )}
+
               {/* Save outcome */}
               {status === 'saved' && savedCallId ? (
                 <div className="bg-green-50 border border-green-100 rounded-lg px-4 py-3 space-y-2">
@@ -1147,7 +1160,8 @@ export default function VoicePage() {
               <li>• Your browser connects directly to OpenAI Realtime via WebRTC</li>
               <li>• Your OpenAI API key stays on the server — it is never sent to your browser</li>
               <li>• Assistant responses are transcribed from the Realtime audio stream</li>
-              <li>• Your speech is captured locally via browser speech recognition (Chrome/Edge)</li>
+              <li>• Your mic audio is recorded during the call and sent to Whisper after you hang up for official transcription</li>
+              <li>• Live captions during the call are a preview only — the Whisper transcript is the official record used for appointments</li>
               <li>• Calls are saved to your account when you click End Call (if signed in)</li>
             </ul>
           </div>
