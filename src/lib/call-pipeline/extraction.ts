@@ -33,6 +33,18 @@ export interface ExtractionResult {
   next_action: string;
 }
 
+// True when a caller turn is predominantly a phone number (≥7 digits, mostly digits).
+// Used to locate the caller turn whose lossy transcription should be replaced with the
+// phone number the Front Desk confirmed. Time/date turns ("8 PM", "tomorrow at 5") have
+// too few digits to match.
+export function looksLikePhone(text: string): boolean {
+  const compact = text.replace(/\s/g, '');
+  if (compact.length === 0) return false;
+  const digits = compact.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 15) return false;
+  return digits.length / compact.length > 0.5;
+}
+
 export function callerLinesOnly(transcript: string): string {
   return transcript
     .split('\n')

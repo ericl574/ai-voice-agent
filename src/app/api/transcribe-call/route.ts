@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { BATCH_TRANSCRIPTION_MODEL, TRANSCRIPTION_LANGUAGE_HINT } from '@/lib/call-pipeline/constants';
 
 // Transcribes caller mic audio using OpenAI Whisper, then assembles the official
 // combined transcript (assistant lines + caller block) and persists it to the call record.
@@ -51,7 +52,9 @@ export async function POST(req: NextRequest) {
 
   const whisperForm = new FormData();
   whisperForm.append('file', audioFile, audioFile.name || 'caller-audio.webm');
-  whisperForm.append('model', 'whisper-1');
+  whisperForm.append('model', BATCH_TRANSCRIPTION_MODEL);
+  // Soft language hint — default English, but other languages still transcribe in their own language.
+  whisperForm.append('language', TRANSCRIPTION_LANGUAGE_HINT);
   // verbose_json gives word-level timestamps; json gives {text} — json is sufficient for now
   whisperForm.append('response_format', 'json');
 

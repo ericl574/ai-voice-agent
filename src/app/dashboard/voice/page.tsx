@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
+import { looksLikePhone } from '@/lib/call-pipeline/extraction';
 
 type CallStatus =
   | 'idle'
@@ -109,7 +110,6 @@ export default function VoicePage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [savedCallId, setSavedCallId] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState<Date | null>(null);
-  const [speechSupported, setSpeechSupported] = useState<boolean | null>(null);
   const [extraction, setExtraction] = useState<ExtractionState>(null);
   const [extractionErrorMsg, setExtractionErrorMsg] = useState<string | null>(null);
 
@@ -123,18 +123,8 @@ export default function VoicePage() {
   const statusRef = useRef<CallStatus>('idle');
   const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const srRef = useRef<any>(null);
   const postCallGenRef = useRef(0);
-  // True while a call is live — used by SR onend to decide whether to restart.
-  // Separate from statusRef so SR can check it synchronously without stale closure issues.
-  const callActiveRef = useRef(false);
-  // Tracks when the Realtime assistant is generating audio — used to gate SR to prevent
-  // assistant speech from being picked up by the mic and mis-attributed to the caller.
-  const assistantActiveRef = useRef(false);
-  const assistantCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Caller mic recording — MediaRecorder is the source of truth for post-call transcription.
-  // Browser SpeechRecognition (srRef) is kept for live captions only, not for extraction.
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
@@ -151,14 +141,6 @@ export default function VoicePage() {
   // Browser mic API support (sync, client-side only)
   useEffect(() => {
     setMicSupported(typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia);
-  }, []);
-
-  // Web Speech API support check (caller transcript fallback)
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const w = window as any;
-    setSpeechSupported(!!(w.SpeechRecognition || w.webkitSpeechRecognition));
   }, []);
 
   // Check whether OPENAI_API_KEY is configured server-side
@@ -198,28 +180,8 @@ export default function VoicePage() {
       console.log('[FD debug] event:', type);
     }
 
-    if (type === 'input_audio_buffer.speech_started') {
-      setIsSpeaking(true);
-      // OpenAI VAD confirmed user is speaking — immediately ungate SR.
-      // Without this, the response.created for the assistant's reply (which fires after
-      // the user speaks) would cancel the 1500ms cooldown and permanently block SR.
-      if (assistantCooldownRef.current) {
-        clearTimeout(assistantCooldownRef.current);
-        assistantCooldownRef.current = null;
-      }
-      assistantActiveRef.current = false;
-      console.log('[FD debug] SR UNGATED — input_audio_buffer.speech_started');
-    }
+    if (type === 'input_audio_buffer.speech_started') setIsSpeaking(true);
     if (type === 'input_audio_buffer.speech_stopped') setIsSpeaking(false);
-
-    // Gate SR before assistant audio plays — response.created fires before any delta events
-    if (type === 'response.created') {
-      assistantActiveRef.current = true;
-      // DO NOT cancel assistantCooldownRef here — it is the user's speaking window
-      // after the previous response. Cancelling it was the root cause of SR getting
-      // permanently gated when the user speaks quickly after the greeting.
-      console.log('[FD debug] SR gated — response.created');
-    }
 
     if (type === 'conversation.item.input_audio_transcription.completed') {
       setIsSpeaking(false);
@@ -241,8 +203,6 @@ export default function VoicePage() {
       type === 'response.audio_transcript.delta' ||
       type === 'response.output_audio_transcript.delta'
     ) {
-      // Mark assistant as active so SR stops accepting mic input (prevents echo attribution)
-      assistantActiveRef.current = true;
       const itemId = event.item_id as string;
       const delta = (event.delta as string) ?? '';
       if (!delta) return;
@@ -257,14 +217,6 @@ export default function VoicePage() {
       type === 'response.audio_transcript.done' ||
       type === 'response.output_audio_transcript.done'
     ) {
-      // Keep SR gated for 1.5s after assistant finishes — mic still picks up reverb/room echo
-      if (assistantCooldownRef.current) clearTimeout(assistantCooldownRef.current);
-      console.log('[FD debug] assistant done — cooldown started (1500ms)');
-      assistantCooldownRef.current = setTimeout(() => {
-        assistantActiveRef.current = false;
-        assistantCooldownRef.current = null;
-        console.log('[FD debug] cooldown ended — SR ungated');
-      }, 1500);
       const itemId = event.item_id as string;
       const text = ((event.transcript as string) ?? '').trim();
       if (!text) return;
@@ -332,18 +284,19 @@ export default function VoicePage() {
             });
           }
         }
-      }
-    }
 
-    // Backup cooldown — fires after full response turn; covers audio-only responses with no transcript events
-    if (type === 'response.done') {
-      if (!assistantCooldownRef.current) {
-        console.log('[FD debug] response.done — starting backup cooldown (no transcript cooldown active)');
-        assistantCooldownRef.current = setTimeout(() => {
-          assistantActiveRef.current = false;
-          assistantCooldownRef.current = null;
-          console.log('[FD debug] backup cooldown ended — SR ungated');
-        }, 1500);
+        // Anchor caller turns at conversation order. A user item joins the conversation
+        // BEFORE the assistant responds, but its transcription lands ~1-2s later. Reserve
+        // the slot now with an empty placeholder keyed by item_id; the later
+        // input_audio_transcription.completed handler fills it in place — keeping the caller
+        // turn ahead of the reply instead of appending it after.
+        if (itemId && role === 'user') {
+          setTranscript((prev) =>
+            prev.find((e) => e.id === itemId)
+              ? prev
+              : [...prev, { id: itemId, role: 'user', text: '' }]
+          );
+        }
       }
     }
 
@@ -361,85 +314,6 @@ export default function VoicePage() {
     if (connectTimeoutRef.current) {
       clearTimeout(connectTimeoutRef.current);
       connectTimeoutRef.current = null;
-    }
-  }
-
-  // ── Web Speech API — browser-side caller transcript fallback ─────────────
-  // TODO: Replace with a working Realtime API transcription config once the correct
-  // field name/shape for input_audio_transcription is accepted by the current
-  // /v1/realtime/client_secrets or session.update flow. This fallback works only in
-  // Chrome and Edge. Real phone calls require server-side audio transcription.
-  function startSpeechRecognition() {
-    if (typeof window === 'undefined') return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SpeechRec = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
-    if (!SpeechRec) return;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sr = new SpeechRec() as any;
-    sr.continuous = true;
-    sr.interimResults = false;
-    sr.lang = 'en-US';
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    sr.onresult = (event: any) => {
-      // Suppress results while the assistant is speaking or in its echo cooldown period.
-      // Without this, the mic picks up speaker output and labels it as caller speech.
-      if (assistantActiveRef.current) {
-        console.log('[FD debug] SR result suppressed — assistant active (echo guard)');
-        return;
-      }
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          const text = event.results[i][0].transcript.trim();
-          if (!text) continue;
-          console.log('[FD debug] SR caller text captured:', text);
-          const id = `user-${Date.now()}-${i}`;
-          setTranscript((prev) => [...prev, { id, role: 'user', text }]);
-        }
-      }
-    };
-
-    sr.onerror = (event: Event & { error?: string }) => {
-      console.log('[FD debug] SR error:', event?.error ?? event);
-    };
-
-    sr.onend = () => {
-      console.log('[FD debug] SR ended — callActive:', callActiveRef.current);
-      if (!callActiveRef.current || srRef.current !== sr) {
-        console.log('[FD debug] SR ended — not restarting (call stopped or SR replaced)');
-        return;
-      }
-      // Chrome can throw InvalidStateError if sr.start() is called immediately in onend.
-      // A short delay lets the browser fully release the SR instance before restarting.
-      setTimeout(() => {
-        if (!callActiveRef.current || srRef.current !== sr) return;
-        try {
-          sr.start();
-          console.log('[FD debug] SR restarted (same instance)');
-        } catch (err) {
-          // Same-instance restart failed — create a fresh SR instance instead
-          console.log('[FD debug] SR restart failed, creating new instance:', err);
-          srRef.current = null;
-          startSpeechRecognition();
-        }
-      }, 150);
-    };
-
-    try {
-      sr.start();
-      srRef.current = sr;
-      console.log('[FD debug] SR started successfully; speechSupported=true');
-    } catch (err) {
-      console.log('[FD debug] SR start failed:', err);
-    }
-  }
-
-  function stopSpeechRecognition() {
-    if (srRef.current) {
-      srRef.current.onend = null; // prevent auto-restart
-      try { srRef.current.stop(); } catch {}
-      srRef.current = null;
     }
   }
 
@@ -482,14 +356,7 @@ export default function VoicePage() {
   }
 
   function cleanup() {
-    callActiveRef.current = false;
     clearConnectTimeout();
-    if (assistantCooldownRef.current) {
-      clearTimeout(assistantCooldownRef.current);
-      assistantCooldownRef.current = null;
-    }
-    assistantActiveRef.current = false;
-    stopSpeechRecognition();
     // On error paths (connection drop etc.), force-stop MediaRecorder to release mic
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       try { mediaRecorderRef.current.stop(); } catch {}
@@ -585,8 +452,6 @@ export default function VoicePage() {
       dc.onopen = () => {
         clearConnectTimeout();
         setErrorMsg(''); // data channel open — clear any prior error
-        callActiveRef.current = true;
-        startSpeechRecognition(); // live captions only — NOT the source of truth for extraction
         // Record caller mic audio — source of truth for post-call Whisper transcription
         if (streamRef.current && typeof MediaRecorder !== 'undefined') {
           const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
@@ -650,8 +515,6 @@ export default function VoicePage() {
 
   async function stopCall() {
     setStatus('stopping');
-    callActiveRef.current = false;
-    stopSpeechRecognition();
     // Collect caller audio BEFORE stopping mic tracks — keeps final chunk in recorder
     const callerAudioBlob = await stopMediaRecorder();
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -828,6 +691,19 @@ export default function VoicePage() {
         appointmentError: data.appointmentError,
         serviceRequestError: data.serviceRequestError,
       });
+
+      // The per-turn transcription is lossy on digits; the Front Desk confirmation (what the
+      // model actually understood) is accurate. Replace the phone-number caller turn in the
+      // live transcript with the confirmed number. The server applies the same fix to the saved
+      // call_messages so Call History matches.
+      const confirmedPhone: string | undefined = data.extraction?.caller_phone ?? undefined;
+      if (confirmedPhone) {
+        setTranscript((prev) =>
+          prev.map((e) =>
+            e.role === 'user' && looksLikePhone(e.text) ? { ...e, text: confirmedPhone } : e
+          )
+        );
+      }
     } catch (err: unknown) {
       if (gen !== postCallGenRef.current) return;
       const msg = err instanceof Error ? err.message : String(err);
@@ -854,6 +730,10 @@ export default function VoicePage() {
   const isConnecting = status === 'requesting' || status === 'connecting';
   const isBusy = status === 'stopping' || status === 'saving' || status === 'transcribing';
   const canSave = !!businessId && isSupabaseConfigured;
+
+  // Caller turns are inserted as empty placeholders the moment the item joins the conversation
+  // (for correct ordering) and filled when transcription lands — hide the not-yet-filled ones.
+  const visibleTranscript = transcript.filter((e) => e.text.trim().length > 0);
 
   const statusLabel: Record<CallStatus, string> = {
     idle: 'Ready',
@@ -1129,18 +1009,14 @@ export default function VoicePage() {
           <div className="fd-card overflow-hidden">
             <div className="px-5 py-4 flex items-center justify-between gap-3" style={{ borderBottom: '1px solid var(--hairline)' }}>
               <span className="fd-eyebrow" style={{ color: 'var(--ink)' }}>Transcript</span>
-              {speechSupported === false ? (
-                <span className="fd-pill fd-pill-warn">
-                  Caller transcript unsupported
-                </span>
-              ) : transcript.length > 0 ? (
+              {visibleTranscript.length > 0 ? (
                 <span className="fd-eyebrow fd-numeric" style={{ color: 'var(--ink-muted)' }}>
-                  {transcript.length} message{transcript.length !== 1 ? 's' : ''}
+                  {visibleTranscript.length} message{visibleTranscript.length !== 1 ? 's' : ''}
                 </span>
               ) : null}
             </div>
             <div className="p-5 min-h-[240px] max-h-[480px] overflow-y-auto space-y-3">
-              {transcript.length === 0 ? (
+              {visibleTranscript.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-32 text-center gap-2">
                   <svg className="w-8 h-8 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
@@ -1152,7 +1028,7 @@ export default function VoicePage() {
                   </p>
                 </div>
               ) : (
-                transcript.map((entry) => (
+                visibleTranscript.map((entry) => (
                   <div
                     key={entry.id}
                     className={`flex ${entry.role === 'user' ? 'justify-end' : 'justify-start'}`}
@@ -1189,8 +1065,7 @@ export default function VoicePage() {
             <ul className="text-[12px] space-y-1.5" style={{ color: 'var(--ink-soft)' }}>
               <li>· Your browser connects directly to OpenAI Realtime via WebRTC.</li>
               <li>· Your OpenAI API key stays on the server — never sent to your browser.</li>
-              <li>· Assistant responses are transcribed from the Realtime audio stream.</li>
-              <li>· Your speech is captured locally via browser speech recognition (Chrome/Edge).</li>
+              <li>· Both sides are transcribed server-side from the Realtime audio stream.</li>
               <li>· Calls are saved to your account when you end the call (if signed in).</li>
             </ul>
           </div>

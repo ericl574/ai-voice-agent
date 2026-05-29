@@ -8,6 +8,7 @@ import {
   hasAppointmentKeywords,
   hasServiceKeywords,
   applyKeywordFallbacks,
+  looksLikePhone,
   type ExtractionResult,
 } from '../src/lib/call-pipeline/extraction.ts';
 
@@ -441,6 +442,34 @@ test('General question (no visit/service intent) — model result produces no re
   );
   assert(!r.appointment?.should_create, 'appointment.should_create must be false');
   assert(!r.service_request?.should_create, 'service_request.should_create must be false');
+});
+
+// ── Suite 9: looksLikePhone — phone-turn detection for display correction ─────
+//
+// looksLikePhone identifies the caller turn that is a phone number, so its lossy
+// transcription can be replaced with the front-desk-confirmed number. It must match
+// digit-dominant turns and reject time/date/word turns.
+
+console.log('\nSuite 9: looksLikePhone — phone-turn detection');
+
+test('phone numbers (various formats) → true', () => {
+  assert(looksLikePhone('7070 798 5201'), 'spaced digits must match');
+  assert(looksLikePhone('778-798-5201'), 'dashed phone must match');
+  assert(looksLikePhone('(778) 798-5201'), 'parens/dashes phone must match');
+  assert(looksLikePhone('7787985201'), 'bare 10-digit must match');
+});
+
+test('time/date/word turns → false', () => {
+  assert(!looksLikePhone('8 PM'), '"8 PM" must NOT match');
+  assert(!looksLikePhone('tomorrow at 5'), '"tomorrow at 5" must NOT match');
+  assert(!looksLikePhone('My name is Eric'), 'name turn must NOT match');
+  assert(!looksLikePhone('All good.'), 'plain sentence must NOT match');
+  assert(!looksLikePhone(''), 'empty string must NOT match');
+});
+
+test('too-short / too-long digit runs → false', () => {
+  assert(!looksLikePhone('12345'), '5 digits is below phone length');
+  assert(!looksLikePhone('1234567890123456'), '16 digits is above phone length');
 });
 
 // ── Results ───────────────────────────────────────────────────────────────────

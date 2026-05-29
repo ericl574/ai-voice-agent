@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import {
   callerLinesOnly,
   applyKeywordFallbacks,
+  looksLikePhone,
   type ExtractionResult,
 } from '@/lib/call-pipeline/extraction';
 
@@ -17,11 +18,16 @@ Speaker labels:
 - "Front desk:" = the AI front desk assistant
 - "Caller:" = the human caller
 
-Analyze ONLY the CALLER's lines. The front desk lines give context but are not the source of the caller's intent.
+Determine the caller's INTENT only from the CALLER's lines (the front desk lines give context but are not the source of intent).
+
+CONTACT & APPOINTMENT DETAILS — caller_name, caller_phone, appointment.requested_date, appointment.requested_time:
+- The front desk reads these details back to confirm them. The caller's own speech is transcribed by a lossy speech-to-text and may be garbled (e.g. a phone number heard as "7070 798 5201"), but the front desk's confirmation reflects what was actually understood.
+- When the front desk explicitly confirms or reads back one of these details, use the FRONT-DESK-CONFIRMED value.
+- Otherwise, fall back to the value the caller stated.
+- Never invent a detail that was not stated or confirmed.
 
 LANGUAGE RULES:
 - summary and next_action: ALWAYS in English (business owner's dashboard language).
-- caller_name and caller_phone: preserve exactly as the caller said them.
 - Work with the transcript in its original language — do not translate it.
 
 Return ONLY valid JSON — no explanation, no markdown fences:
@@ -61,7 +67,7 @@ intent = general_question — use ONLY when the caller is asking a factual quest
 intent = service_request — use only when the caller wants a callback, quote, repair, or follow-up with no appointment/visit intent.
 
 Additional rules:
-- Extract caller_name / caller_phone ONLY if explicitly stated
+- Extract caller_name / caller_phone only if stated or confirmed (see CONTACT & APPOINTMENT DETAILS above)
 - Set service_request.should_create=true only when the caller explicitly requests service/repair/callback AND appointment.should_create is false
 - Convert relative dates (tomorrow/明天, Saturday, next week/下周) → YYYY-MM-DD; null if ambiguous
 - Convert times → 24h HH:MM (e.g. 下午五点 → 17:00, "around five" → 17:00); null if ambiguous
@@ -177,6 +183,26 @@ export async function POST(req: NextRequest) {
   if (extraction.caller_phone) callUpdate.customer_phone = extraction.caller_phone;
 
   await supabase.from('calls').update(callUpdate).eq('id', call_id);
+
+  // The per-turn caller transcription is lossy on digits; the front-desk confirmation (what the
+  // model actually understood) is the accurate number. Overwrite the saved phone-number caller
+  // turn(s) so Call History matches the confirmed value.
+  if (extraction.caller_phone) {
+    const { data: msgRows } = await supabase
+      .from('call_messages')
+      .select('id, content')
+      .eq('call_id', call_id)
+      .eq('role', 'customer');
+    const phoneRowIds = (msgRows ?? [])
+      .filter((m) => looksLikePhone((m.content as string) ?? ''))
+      .map((m) => m.id);
+    if (phoneRowIds.length > 0) {
+      await supabase
+        .from('call_messages')
+        .update({ content: extraction.caller_phone })
+        .in('id', phoneRowIds);
+    }
+  }
 
   // ── Duplicate prevention: check existing linked records ───────────────────
 

@@ -35,11 +35,15 @@ patterns or raw hexes. **Full conventions: `docs/design-system.md`.**
 
 ### Call Pipeline
 - Session (`/api/voice-session`) sets conservative server VAD (`threshold 0.65`,
-  `silence_duration_ms 1000`) + per-turn caller transcription (`audio.input.transcription`).
+  `silence_duration_ms 1000`) + per-turn caller transcription (`audio.input.transcription`) using
+  `gpt-realtime-whisper` with a soft `language: 'en'` hint. Transcription model + language
+  constants live in `src/lib/call-pipeline/constants.ts`.
 - Realtime events → per-turn `TranscriptEntry`s; `saveCall` writes one `call_messages` row per
-  turn (caller + assistant).
-- Whisper (`/api/transcribe-call`) writes `calls.transcript` — the source of truth for
-  extraction; it does NOT insert a caller row (avoids duplicating per-turn rows).
+  turn (caller + assistant). Caller turns are **single-source** (OpenAI server-side transcription
+  only — browser SpeechRecognition was removed; it duplicated turns and mislabeled assistant echo).
+- `/api/transcribe-call` transcribes the caller recording with `gpt-4o-transcribe` (+ `en` hint)
+  and writes `calls.transcript` — the source of truth for extraction; it does NOT insert a caller
+  row (avoids duplicating per-turn rows).
 - `/api/post-call` extracts intent (appointment wins over service request; phone optional;
   appointments default pending). **Full architecture: `docs/call-pipeline.md`.**
 

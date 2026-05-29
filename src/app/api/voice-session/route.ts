@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
 import type { AgentConfig, Business } from '@/lib/supabase/businesses';
+import { REALTIME_TRANSCRIPTION_MODEL, TRANSCRIPTION_LANGUAGE_HINT } from '@/lib/call-pipeline/constants';
 
 const MODEL = 'gpt-realtime-mini';
 
@@ -157,6 +158,7 @@ export async function POST() {
           // Per-turn caller transcription is enabled so each caller utterance arrives as its
           // own `conversation.item.input_audio_transcription.completed` event — needed so
           // Call History shows multiple Caller rows instead of one combined blob.
+          // `language` is a soft hint (default English, auto-switches on clearly non-English speech).
           audio: {
             input: {
               turn_detection: {
@@ -166,7 +168,10 @@ export async function POST() {
                 silence_duration_ms: 1000,
                 create_response: true,
               },
-              transcription: { model: 'whisper-1' },
+              transcription: {
+                model: REALTIME_TRANSCRIPTION_MODEL,
+                language: TRANSCRIPTION_LANGUAGE_HINT,
+              },
             },
           },
         },
