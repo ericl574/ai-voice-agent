@@ -192,6 +192,12 @@ export default function VoicePage() {
   function handleRealtimeEvent(event: Record<string, unknown>) {
     const type = event.type as string;
 
+    // Catch-all diagnostic — every Realtime event type fires through here.
+    // Lets us tell at a glance which events the connected model actually emits.
+    if (type && !type.startsWith('input_audio_buffer.') && type !== 'response.audio.delta') {
+      console.log('[FD debug] event:', type);
+    }
+
     if (type === 'input_audio_buffer.speech_started') {
       setIsSpeaking(true);
       // OpenAI VAD confirmed user is speaking — immediately ungate SR.
@@ -227,7 +233,14 @@ export default function VoicePage() {
       );
     }
 
-    if (type === 'response.audio_transcript.delta') {
+    // OpenAI Realtime emits assistant transcript events under two name patterns depending
+    // on model/API version: the preview-era `response.audio_transcript.*` and the GA-era
+    // `response.output_audio_transcript.*` (used by gpt-realtime-mini). Handle both so the
+    // assistant turns are captured regardless of which one the connected model emits.
+    if (
+      type === 'response.audio_transcript.delta' ||
+      type === 'response.output_audio_transcript.delta'
+    ) {
       // Mark assistant as active so SR stops accepting mic input (prevents echo attribution)
       assistantActiveRef.current = true;
       const itemId = event.item_id as string;
@@ -240,7 +253,10 @@ export default function VoicePage() {
       );
     }
 
-    if (type === 'response.audio_transcript.done') {
+    if (
+      type === 'response.audio_transcript.done' ||
+      type === 'response.output_audio_transcript.done'
+    ) {
       // Keep SR gated for 1.5s after assistant finishes — mic still picks up reverb/room echo
       if (assistantCooldownRef.current) clearTimeout(assistantCooldownRef.current);
       console.log('[FD debug] assistant done — cooldown started (1500ms)');
@@ -260,13 +276,17 @@ export default function VoicePage() {
     }
 
     // Backup assistant transcript — fires when output item is complete
-    // Fills in assistant text if delta stream didn't fire (e.g. audio-only items)
+    // Fills in assistant text if delta stream didn't fire (e.g. audio-only items).
+    // Realtime GA renamed the audio content type from "audio" → "output_audio";
+    // accept both so this backup works on preview AND GA models (e.g. gpt-realtime-mini).
     if (type === 'response.output_item.done') {
       const item = event.item as Record<string, unknown> | undefined;
       const itemId = item?.id as string | undefined;
       const content = item?.content as Array<Record<string, unknown>> | undefined;
       if (itemId && content) {
-        const audioContent = content.find((c) => c.type === 'audio');
+        const audioContent = content.find(
+          (c) => c.type === 'audio' || c.type === 'output_audio',
+        );
         const backupText = ((audioContent?.transcript as string) ?? '').trim();
         if (backupText) {
           setTranscript((prev) => {
@@ -277,6 +297,40 @@ export default function VoicePage() {
               ? prev.map((e) => (e.id === itemId ? { ...e, text: backupText } : e))
               : [...prev, { id: itemId, role: 'assistant', text: backupText }];
           });
+        }
+      }
+    }
+
+    // Authoritative catch — fires when ANY item joins the conversation history (user OR assistant).
+    // The event payload always carries role + content, even when transcript-delta events don't fire
+    // for this model. Captures both `conversation.item.added` (GA) and `conversation.item.created`
+    // (preview-era). Extracts assistant text from any audio/text content variant.
+    if (type === 'conversation.item.added' || type === 'conversation.item.created') {
+      const item = event.item as Record<string, unknown> | undefined;
+      if (item) {
+        const itemId = item.id as string | undefined;
+        const role = item.role as string | undefined;
+        const content = item.content as Array<Record<string, unknown>> | undefined;
+        if (itemId && role === 'assistant' && content) {
+          let collected = '';
+          for (const c of content) {
+            const ct = c.type as string;
+            if (ct === 'audio' || ct === 'output_audio') {
+              collected += (c.transcript as string) ?? '';
+            } else if (ct === 'text' || ct === 'output_text' || ct === 'input_text') {
+              collected += (c.text as string) ?? '';
+            }
+          }
+          const text = collected.trim();
+          if (text) {
+            setTranscript((prev) => {
+              const existing = prev.find((e) => e.id === itemId);
+              if (existing?.text.trim()) return prev; // delta stream already populated
+              return existing
+                ? prev.map((e) => (e.id === itemId ? { ...e, text } : e))
+                : [...prev, { id: itemId, role: 'assistant', text }];
+            });
+          }
         }
       }
     }
@@ -608,7 +662,12 @@ export default function VoicePage() {
     const callStart = startedAtRef.current;
     const assistantEntries = entries.filter((e) => e.role === 'assistant');
 
-    console.log('[FD debug] stopCall — assistant entries:', assistantEntries.length);
+    console.log('[FD debug] stopCall — total entries:', entries.length, '| assistants:', assistantEntries.length);
+    if (assistantEntries.length === 0 && entries.length > 0) {
+      console.log('[FD debug] stopCall — entries by role:', entries.map((e) => `${e.role}:"${e.text.slice(0, 30)}"`));
+    } else if (assistantEntries.length > 0) {
+      console.log('[FD debug] stopCall — assistant samples:', assistantEntries.slice(0, 3).map((e) => `"${e.text.slice(0, 40)}"`));
+    }
     console.log('[FD debug] stopCall — caller audio blob size:', callerAudioBlob?.size ?? 0, 'bytes');
 
     cleanup();
@@ -719,16 +778,21 @@ export default function VoicePage() {
 
       if (callError || !callRow) throw new Error(callError?.message ?? 'Failed to save call');
 
-      // Save assistant turns immediately — caller message added after Whisper transcription
-      if (assistantEntries.length > 0) {
-        const messageRows = assistantEntries.map((e) => ({
+      // Save every captured turn — caller AND assistant. The session enables
+      // input_audio_transcription server-side, so each caller utterance arrives as its own
+      // entry in `transcript` state via `conversation.item.input_audio_transcription.completed`.
+      // Insert in the order they were captured so created_at reflects conversation order.
+      const turnRows = entries
+        .filter((e) => e.text.trim().length > 0)
+        .map((e) => ({
           call_id: callRow.id,
-          role: 'assistant',
+          role: e.role === 'assistant' ? 'assistant' : 'customer',
           content: e.text,
         }));
-        const { error: msgError } = await supabase.from('call_messages').insert(messageRows);
+      if (turnRows.length > 0) {
+        const { error: msgError } = await supabase.from('call_messages').insert(turnRows);
         if (msgError) {
-          setErrorMsg(`Call saved, but assistant messages failed: ${msgError.message}`);
+          setErrorMsg(`Call saved, but transcript rows failed: ${msgError.message}`);
         }
       }
 
@@ -803,40 +867,43 @@ export default function VoicePage() {
     error: 'Error',
   };
 
-  const statusColor: Record<CallStatus, string> = {
-    idle: 'bg-gray-100 text-gray-500',
-    requesting: 'bg-amber-100 text-amber-700',
-    connecting: 'bg-amber-100 text-amber-700',
-    connected: 'bg-green-100 text-green-700',
-    stopping: 'bg-amber-100 text-amber-700',
-    saving: 'bg-amber-100 text-amber-700',
-    transcribing: 'bg-amber-100 text-amber-700',
-    saved: 'bg-green-100 text-green-700',
-    error: 'bg-red-100 text-red-700',
+  const statusPill: Record<CallStatus, string> = {
+    idle:         'fd-pill-muted',
+    requesting:   'fd-pill-warn',
+    connecting:   'fd-pill-warn',
+    connected:    'fd-pill-ok',
+    stopping:     'fd-pill-warn',
+    saving:       'fd-pill-warn',
+    transcribing: 'fd-pill-warn',
+    saved:        'fd-pill-ok',
+    error:        'fd-pill-danger',
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-6 max-w-2xl space-y-5">
+    <div className="w-full max-w-2xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16 space-y-6">
       {/* Hidden audio element — AI voice plays here */}
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <audio ref={audioRef} autoPlay />
 
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Test the call</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Test how your front desk handles a live browser call.
+      <header>
+        <h1 className="fd-display text-4xl sm:text-5xl mb-2" style={{ color: 'var(--ink)' }}>
+          Test the call
+        </h1>
+        <p className="text-[15px] max-w-xl leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
+          Connect your microphone and speak with the front desk to see how it handles a live call.
         </p>
-      </div>
+      </header>
 
       {/* ── Setup status checklist ──────────────────────────────────────── */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-800">Setup Status</h2>
+      <div className="fd-card overflow-hidden">
+        <div className="px-5 py-3.5" style={{ borderBottom: '1px solid var(--hairline)' }}>
+          <span className="fd-eyebrow" style={{ color: 'var(--ink)' }}>Setup status</span>
         </div>
-        <div className="divide-y divide-gray-50">
+        <div>
+          <style>{`.fd-card > div > div + div { border-top: 1px solid var(--hairline); }`}</style>
           <ReadinessRow
             label="OpenAI API key"
             state={configured === null ? 'loading' : configured ? 'ok' : 'error'}
@@ -879,44 +946,36 @@ export default function VoicePage() {
 
       {/* ── Missing API key panel ───────────────────────────────────────── */}
       {configured === false && (
-        <div className="bg-white rounded-xl border border-amber-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-amber-100 bg-amber-50 flex items-center gap-2">
-            <svg className="w-4 h-4 text-amber-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-            </svg>
-            <h2 className="font-semibold text-amber-900">Live voice not yet enabled</h2>
+        <div className="fd-card overflow-hidden" style={{ borderColor: 'var(--warn)' }}>
+          <div className="px-5 py-4 flex items-center gap-3" style={{ borderBottom: '1px solid var(--warn-soft)', backgroundColor: 'var(--warn-soft)' }}>
+            <span className="fd-eyebrow" style={{ color: 'var(--warn)' }}>Setup needed</span>
+            <h2 className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>Live voice not yet enabled</h2>
           </div>
           <div className="p-5 space-y-3">
-            <p className="text-sm text-gray-700">
+            <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
               The voice agent is built and ready. To activate live calls, add your OpenAI API key
               (Realtime API access required) to your environment and restart the dev server.
             </p>
-            <div className="bg-gray-900 rounded-lg px-4 py-3 font-mono text-sm text-green-400 select-all">
+            <div className="px-4 py-3 font-mono text-sm select-all" style={{ backgroundColor: 'var(--ink)', color: '#a7f3d0' }}>
               OPENAI_API_KEY=sk-…
             </div>
-            <p className="text-xs text-gray-400">
+            <p className="text-xs" style={{ color: 'var(--ink-muted)' }}>
               Add this to{' '}
-              <code className="bg-gray-100 px-1 rounded">.env.local</code>
-              {' '}— already in <code className="bg-gray-100 px-1 rounded">.gitignore</code> and safe from commits.
+              <code className="px-1" style={{ backgroundColor: 'var(--paper-dim)' }}>.env.local</code>
+              {' '}— already in <code className="px-1" style={{ backgroundColor: 'var(--paper-dim)' }}>.gitignore</code> and safe from commits.
             </p>
-            <div className="pt-2 border-t border-gray-100 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-amber-400 inline-block flex-shrink-0" />
-              <p className="text-xs text-gray-500">
-                Live QA pending — all other systems are ready.
-              </p>
-            </div>
           </div>
         </div>
       )}
 
       {/* ── Live call panel ─────────────────────────────────────────────── */}
       {configured === true && (
-        <div className="space-y-4">
+        <div className="space-y-5">
           {/* Controls card */}
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-              <h2 className="font-semibold text-gray-900">Live Call</h2>
-              <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${statusColor[status]}`}>
+          <div className="fd-card overflow-hidden">
+            <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--hairline)' }}>
+              <span className="fd-eyebrow" style={{ color: 'var(--ink)' }}>Live call</span>
+              <span className={`fd-pill ${statusPill[status]}`}>
                 {statusLabel[status]}
               </span>
             </div>
@@ -950,61 +1009,38 @@ export default function VoicePage() {
                 {(status === 'idle' || status === 'error' || status === 'saved') && (
                   <button
                     onClick={status === 'saved' ? resetForNewCall : startCall}
-                    className="bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors flex items-center gap-2"
+                    className="fd-btn fd-btn-accent"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                    </svg>
-                    {status === 'saved' ? 'Start New Call' : 'Start Voice Call'}
+                    {status === 'saved' ? 'Start new call' : 'Start voice call'} →
                   </button>
                 )}
 
-                {/* Connecting: spinner + Cancel */}
                 {isConnecting && (
                   <>
-                    <button
-                      disabled
-                      className="bg-gray-100 text-gray-400 text-sm font-semibold px-5 py-2.5 rounded-lg flex items-center gap-2 cursor-not-allowed"
-                    >
-                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                      </svg>
+                    <button disabled className="fd-btn fd-btn-ghost">
+                      <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
                       {statusLabel[status]}
                     </button>
-                    <button
-                      onClick={cancelConnecting}
-                      className="text-sm text-gray-500 hover:text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors"
-                    >
+                    <button onClick={cancelConnecting} className="fd-btn fd-btn-quiet">
                       Cancel
                     </button>
                   </>
                 )}
 
-                {/* Busy (stopping / saving) */}
                 {isBusy && (
-                  <button
-                    disabled
-                    className="bg-gray-100 text-gray-400 text-sm font-semibold px-5 py-2.5 rounded-lg flex items-center gap-2 cursor-not-allowed"
-                  >
-                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                    </svg>
+                  <button disabled className="fd-btn fd-btn-ghost">
+                    <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
                     {statusLabel[status]}
                   </button>
                 )}
 
-                {/* End Call */}
                 {isLive && (
                   <button
                     onClick={stopCall}
-                    className="bg-red-500 hover:bg-red-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors flex items-center gap-2"
+                    className="fd-btn"
+                    style={{ backgroundColor: 'var(--danger)', color: 'var(--surface)' }}
                   >
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                      <rect x="6" y="6" width="12" height="12" rx="2" />
-                    </svg>
-                    End Call
+                    ■ End call
                   </button>
                 )}
               </div>
@@ -1090,15 +1126,17 @@ export default function VoicePage() {
           </div>
 
           {/* Transcript */}
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
-              <h2 className="font-semibold text-gray-900">Transcript</h2>
+          <div className="fd-card overflow-hidden">
+            <div className="px-5 py-4 flex items-center justify-between gap-3" style={{ borderBottom: '1px solid var(--hairline)' }}>
+              <span className="fd-eyebrow" style={{ color: 'var(--ink)' }}>Transcript</span>
               {speechSupported === false ? (
-                <span className="text-xs text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded">
-                  Caller transcript not supported in this browser
+                <span className="fd-pill fd-pill-warn">
+                  Caller transcript unsupported
                 </span>
               ) : transcript.length > 0 ? (
-                <span className="text-xs text-gray-400">{transcript.length} message{transcript.length !== 1 ? 's' : ''}</span>
+                <span className="fd-eyebrow fd-numeric" style={{ color: 'var(--ink-muted)' }}>
+                  {transcript.length} message{transcript.length !== 1 ? 's' : ''}
+                </span>
               ) : null}
             </div>
             <div className="p-5 min-h-[240px] max-h-[480px] overflow-y-auto space-y-3">
@@ -1120,13 +1158,20 @@ export default function VoicePage() {
                     className={`flex ${entry.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
-                      className={`max-w-[80%] rounded-xl px-4 py-2.5 text-sm ${
-                        entry.role === 'user'
-                          ? 'bg-slate-700 text-white'
-                          : 'bg-orange-50 border border-orange-100 text-gray-900'
-                      }`}
+                      className="max-w-[80%] px-4 py-2.5 text-sm rounded"
+                      style={{
+                        backgroundColor: entry.role === 'user' ? 'var(--ink)' : 'var(--accent-soft)',
+                        color: entry.role === 'user' ? 'var(--surface)' : 'var(--ink)',
+                        border: entry.role === 'user' ? 'none' : '1px solid var(--hairline)',
+                      }}
                     >
-                      <span className="block text-xs font-semibold mb-1 opacity-60">
+                      <span
+                        className="block fd-eyebrow mb-1"
+                        style={{
+                          color: entry.role === 'user' ? 'rgba(255,255,255,0.6)' : 'var(--accent)',
+                          fontSize: '9px',
+                        }}
+                      >
                         {entry.role === 'user' ? 'Caller' : 'Front desk'}
                       </span>
                       {entry.text}
@@ -1139,16 +1184,14 @@ export default function VoicePage() {
           </div>
 
           {/* How it works */}
-          <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-              How it works
-            </p>
-            <ul className="text-xs text-gray-500 space-y-1">
-              <li>• Your browser connects directly to OpenAI Realtime via WebRTC</li>
-              <li>• Your OpenAI API key stays on the server — it is never sent to your browser</li>
-              <li>• Assistant responses are transcribed from the Realtime audio stream</li>
-              <li>• Your speech is captured locally via browser speech recognition (Chrome/Edge)</li>
-              <li>• Calls are saved to your account when you click End Call (if signed in)</li>
+          <div className="px-5 py-4" style={{ backgroundColor: 'var(--surface-soft)', border: '1px solid var(--hairline)' }}>
+            <p className="fd-eyebrow mb-3" style={{ color: 'var(--ink-muted)' }}>How it works</p>
+            <ul className="text-[12px] space-y-1.5" style={{ color: 'var(--ink-soft)' }}>
+              <li>· Your browser connects directly to OpenAI Realtime via WebRTC.</li>
+              <li>· Your OpenAI API key stays on the server — never sent to your browser.</li>
+              <li>· Assistant responses are transcribed from the Realtime audio stream.</li>
+              <li>· Your speech is captured locally via browser speech recognition (Chrome/Edge).</li>
+              <li>· Calls are saved to your account when you end the call (if signed in).</li>
             </ul>
           </div>
         </div>

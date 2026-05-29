@@ -31,11 +31,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-neutral-50">
+    <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'var(--paper)' }}>
       <Sidebar businessName={businessName} forceDemo={isDemoMode} isSignedIn={isSignedIn} />
       <div className="flex-1 flex flex-col overflow-y-auto">
         {(isDemoMode || !isSignedIn) && <DemoBanner isSignedIn={isSignedIn} />}
-        <main className="flex-1">{children}</main>
+        <main className="flex-1 fd-canvas">{children}</main>
       </div>
     </div>
   );

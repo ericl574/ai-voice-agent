@@ -15,11 +15,17 @@ const GLOBAL_RULES = `BEHAVIOR RULES (FrontDesk):
 - Do not overuse the word "AI".
 
 LANGUAGE:
-- Detect the caller's language from their very first message.
-- Reply in the same language the caller is using — do NOT default to English.
-- If the caller switches language mid-call, switch with them immediately.
-- Do not translate the caller's words or the conversation.
+- Default language is English. Open and reply in English unless the caller clearly prefers another language.
+- If the caller speaks another language clearly (a full sentence or an obvious greeting), switch to that language and continue in it.
+- Once you have switched, stay in that language until the caller clearly switches again.
+- Do not translate the caller's words. Match their language.
 - Keep responses short, natural, and professional in any language.
+
+SILENCE & UNCLEAR AUDIO:
+- If the caller is silent, do NOT prompt them again. Wait quietly.
+- If you only hear noise, a partial word, or audio you cannot understand clearly, do NOT respond. Wait for the caller to speak again.
+- Never repeat "take your time" or chain follow-up prompts. One brief check-in is enough; then stay silent until you hear a clear sentence.
+- Only respond when the caller's speech is clear enough that you understand the intent.
 
 COLLECTING DETAILS:
 - Only collect caller details when an appointment, callback, or service request is needed. Do NOT collect for general questions.
@@ -142,6 +148,27 @@ export async function POST() {
           type: 'realtime',
           model: MODEL,
           instructions: systemInstructions,
+          // Conservative server VAD so background noise / breathing / partial words
+          // do NOT chain-trigger redundant assistant responses.
+          //   threshold: 0.50 (default) → 0.65 — caller must speak more clearly to be heard
+          //   silence_duration_ms: 500 (default) → 1000 — wait a full second of silence
+          //                                              before closing the turn
+          //   prefix_padding_ms: 300 — include 0.3s before speech for natural starts
+          // Per-turn caller transcription is enabled so each caller utterance arrives as its
+          // own `conversation.item.input_audio_transcription.completed` event — needed so
+          // Call History shows multiple Caller rows instead of one combined blob.
+          audio: {
+            input: {
+              turn_detection: {
+                type: 'server_vad',
+                threshold: 0.65,
+                prefix_padding_ms: 300,
+                silence_duration_ms: 1000,
+                create_response: true,
+              },
+              transcription: { model: 'whisper-1' },
+            },
+          },
         },
       }),
     });

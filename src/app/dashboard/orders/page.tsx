@@ -7,9 +7,6 @@ import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
 
 // ─── DB types ──────────────────────────────────────────────────────────────
-// Flexible optional fields so any schema mismatch shows as a visible error
-// rather than a silent crash. Multiple column name guesses are kept as
-// fallbacks until the real schema is confirmed.
 
 interface DbServiceRequest {
   id: string;
@@ -17,18 +14,15 @@ interface DbServiceRequest {
   customer_id?: string | null;
   customer_name?: string | null;
   customer_phone?: string | null;
-  // Real schema columns
   request_type?: string | null;
   request_details?: string | null;
   preferred_time?: string | null;
   staff_notes?: string | null;
-  // Backwards-compatible fallbacks from initial implementation
   service_type?: string | null;
   description?: string | null;
   details?: string | null;
   notes?: string | null;
   total_amount?: number | null;
-  // Relations
   call_id?: string | null;
   status: string;
   created_at: string;
@@ -52,13 +46,18 @@ function formatCreatedAt(iso: string): string {
     return d.toLocaleString('en-US', {
       month: 'short',
       day: 'numeric',
-      year: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
     });
   } catch {
     return iso;
   }
+}
+
+function prettyType(raw: string): string {
+  return raw
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function requestType(req: DbServiceRequest): string {
@@ -74,16 +73,256 @@ function notesText(req: DbServiceRequest): string {
   return parts.join(' · ');
 }
 
+function customerInitial(name: string | null | undefined): string {
+  if (!name) return '·';
+  return name.trim()[0]?.toUpperCase() ?? '·';
+}
+
+// Apple Contacts-style soft avatar palette
+const AVATAR_PALETTE: Array<{ bg: string; fg: string }> = [
+  { bg: '#E8F0FE', fg: '#1E40AF' },
+  { bg: '#E6F4EA', fg: '#166534' },
+  { bg: '#FCE7E6', fg: '#9F1239' },
+  { bg: '#FEF3C7', fg: '#92400E' },
+  { bg: '#EDE9FE', fg: '#5B21B6' },
+  { bg: '#E0F2FE', fg: '#075985' },
+  { bg: '#FCE7F3', fg: '#9D174D' },
+  { bg: '#D1FAE5', fg: '#065F46' },
+];
+
+function avatarFor(name: string | null | undefined): { bg: string; fg: string } {
+  const safe = (name ?? '').trim();
+  let hash = 0;
+  for (let i = 0; i < safe.length; i++) hash = (hash * 31 + safe.charCodeAt(i)) >>> 0;
+  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
+}
+
+// ─── Page header ───────────────────────────────────────────────────────────
+
+function PageHeader({ subtitle, count }: { subtitle: string; count?: number | null }) {
+  return (
+    <header className="mb-8">
+      <h1 className="fd-display text-4xl sm:text-5xl mb-2" style={{ color: 'var(--ink)' }}>
+        Service requests
+      </h1>
+      <p className="text-[15px] max-w-2xl leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
+        {subtitle}
+        {count != null && (
+          <span style={{ color: 'var(--ink-muted)' }}> · {count} total</span>
+        )}
+      </p>
+    </header>
+  );
+}
+
+// ─── Reminder strip ────────────────────────────────────────────────────────
+
+function StaffReminderStrip() {
+  return (
+    <div
+      className="mb-6 px-4 py-3 flex items-center gap-3 rounded-[10px]"
+      style={{
+        backgroundColor: 'var(--warn-soft)',
+        border: '1px solid #F3D7A0',
+      }}
+    >
+      <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--warn)' }}>
+        Staff reminder
+      </span>
+      <span className="text-[13px]" style={{ color: 'var(--ink-2)' }}>
+        Requests stay pending until you confirm. The front desk never guarantees fulfilment — always confirm with the customer.
+      </span>
+    </div>
+  );
+}
+
+// ─── Filter bar ────────────────────────────────────────────────────────────
+
+function FilterBar({
+  filter,
+  setFilter,
+  countLabel,
+}: {
+  filter: Filter;
+  setFilter: (f: Filter) => void;
+  countLabel: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 mb-6 flex-wrap">
+      <div className="flex items-center gap-1.5">
+        {FILTERS.map((f) => (
+          <button
+            key={f.value}
+            onClick={() => setFilter(f.value)}
+            className={`fd-tab ${filter === f.value ? 'fd-tab-active' : ''}`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+      <span className="ml-auto text-[12px]" style={{ color: 'var(--ink-muted)' }}>
+        {countLabel}
+      </span>
+    </div>
+  );
+}
+
+// ─── Request card ──────────────────────────────────────────────────────────
+
+function RequestCard({
+  customerName,
+  customerPhone,
+  typeLabel,
+  receivedAt,
+  preferredTime,
+  details,
+  notes,
+  totalLabel,
+  status,
+  onConfirm,
+  onDecline,
+  onReopen,
+}: {
+  customerName: string | null;
+  customerPhone: string | null;
+  typeLabel: string;
+  receivedAt: string;
+  preferredTime?: string | null;
+  details: string;
+  notes: string;
+  totalLabel?: string | null;
+  status: RequestStatus;
+  onConfirm?: () => void;
+  onDecline?: () => void;
+  onReopen?: () => void;
+}) {
+  const isPending = status === 'pending';
+  const av = avatarFor(customerName);
+  return (
+    <article className="fd-card overflow-hidden">
+      {/* Top metadata band */}
+      <div
+        className="px-5 py-3 flex items-center justify-between gap-4"
+        style={{ borderBottom: '1px solid var(--hairline)', backgroundColor: 'var(--surface-soft)' }}
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--ink-muted)' }}>
+            Received
+          </span>
+          <span className="text-[13px] fd-numeric" style={{ color: 'var(--ink-2)' }}>{receivedAt}</span>
+        </div>
+        <StatusBadge status={status} />
+      </div>
+
+      {/* Main row */}
+      <div className="px-5 py-5 grid grid-cols-12 gap-x-5 gap-y-4 items-start">
+        {/* Customer */}
+        <div className="col-span-12 md:col-span-4 flex items-center gap-3">
+          <div
+            className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0 text-[15px] font-semibold"
+            style={{ backgroundColor: av.bg, color: av.fg }}
+          >
+            {customerInitial(customerName)}
+          </div>
+          <div className="min-w-0">
+            <p className="text-[15px] font-semibold leading-tight truncate" style={{ color: 'var(--ink)' }}>
+              {customerName ?? 'Unknown caller'}
+            </p>
+            <p className="text-[12px] mt-0.5 fd-numeric" style={{ color: 'var(--ink-muted)' }}>
+              {customerPhone ?? 'No phone provided'}
+            </p>
+          </div>
+        </div>
+
+        {/* Type + (optional) total */}
+        <div className="col-span-6 md:col-span-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'var(--ink-muted)' }}>
+            Type
+          </p>
+          <p className="text-[14px] leading-snug" style={{ color: 'var(--ink)' }}>{typeLabel}</p>
+          {totalLabel && (
+            <p className="text-[12px] mt-1 fd-numeric font-medium" style={{ color: 'var(--ink-2)' }}>
+              {totalLabel}
+            </p>
+          )}
+        </div>
+
+        {/* Preferred time / quick info */}
+        <div className="col-span-6 md:col-span-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'var(--ink-muted)' }}>
+            Preferred
+          </p>
+          {preferredTime ? (
+            <p className="text-[14px] leading-snug" style={{ color: 'var(--ink)' }}>{preferredTime}</p>
+          ) : (
+            <p className="text-[14px]" style={{ color: 'var(--ink-faint)' }}>
+              Not specified
+            </p>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="col-span-12 md:col-span-2 flex flex-row md:flex-col gap-2 md:items-stretch">
+          {isPending ? (
+            <>
+              <button onClick={onConfirm} className="fd-btn fd-btn-accent flex-1 md:flex-none">
+                Confirm
+              </button>
+              <button onClick={onDecline} className="fd-btn fd-btn-ghost flex-1 md:flex-none">
+                Decline
+              </button>
+            </>
+          ) : (
+            <button onClick={onReopen} className="fd-btn fd-btn-quiet flex-1 md:flex-none">
+              Reopen
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Details block (full width, larger leading) */}
+      {details && (
+        <div
+          className="px-5 py-4 flex items-start gap-4"
+          style={{ borderTop: '1px solid var(--hairline)' }}
+        >
+          <span className="text-[11px] font-semibold uppercase tracking-wide flex-shrink-0 pt-0.5" style={{ color: 'var(--ink-muted)' }}>
+            Details
+          </span>
+          <p className="text-[13px] leading-relaxed flex-1" style={{ color: 'var(--ink-2)' }}>
+            {details}
+          </p>
+        </div>
+      )}
+
+      {/* Notes block */}
+      {notes && (
+        <div
+          className="px-5 py-4 flex items-start gap-4"
+          style={{ borderTop: '1px solid var(--hairline)', backgroundColor: 'var(--surface-soft)' }}
+        >
+          <span className="text-[11px] font-semibold uppercase tracking-wide flex-shrink-0 pt-0.5" style={{ color: 'var(--ink-muted)' }}>
+            Notes
+          </span>
+          <p className="text-[13px] leading-relaxed flex-1" style={{ color: 'var(--ink-2)' }}>
+            {notes}
+          </p>
+        </div>
+      )}
+    </article>
+  );
+}
+
 // ─── Demo mode ─────────────────────────────────────────────────────────────
 
 function DemoOrdersPage() {
   const [filter, setFilter] = useState<Filter>('all');
   const [statuses, setStatuses] = useState<Record<string, RequestStatus>>(
-    () => Object.fromEntries(MOCK_ORDERS.map((o) => [o.id, o.status]))
+    () => Object.fromEntries(MOCK_ORDERS.map((o) => [o.id, o.status])),
   );
 
   const filtered = MOCK_ORDERS.filter(
-    (o) => filter === 'all' || statuses[o.id] === filter
+    (o) => filter === 'all' || statuses[o.id] === filter,
   );
 
   function updateStatus(id: string, status: RequestStatus) {
@@ -91,118 +330,49 @@ function DemoOrdersPage() {
   }
 
   return (
-    <div className="p-6 max-w-5xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Service Requests</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Service and order requests collected by the AI assistant.
-        </p>
-      </div>
-
-      <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800 mb-5">
-        <strong>Staff reminder:</strong> All requests are pending until confirmed. The AI never guarantees fulfilment — always confirm with the customer.
-      </div>
-
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2">
-          {FILTERS.map((f) => (
-            <button
-              key={f.value}
-              onClick={() => setFilter(f.value)}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                filter === f.value
-                  ? 'bg-orange-500 text-white'
-                  : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
-          <span className="ml-auto text-xs text-amber-700 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded">
-            Demo mode
-          </span>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50 text-left">
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Received</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Items</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Total</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {filtered.map((order) => {
-                const status = statuses[order.id];
-                return (
-                  <tr key={order.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-5 py-3 text-xs text-gray-500 whitespace-nowrap">{order.requestedAt}</td>
-                    <td className="px-5 py-3">
-                      <div className="font-medium text-gray-900">{order.customerName}</div>
-                      <div className="text-xs text-gray-400">{order.phone}</div>
-                    </td>
-                    <td className="px-5 py-3 text-gray-700">
-                      <ul className="space-y-0.5">
-                        {order.items.map((item, i) => (
-                          <li key={i} className="text-xs">
-                            {item.quantity}× {item.name}{' '}
-                            <span className="text-gray-400">(${item.price.toFixed(2)})</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </td>
-                    <td className="px-5 py-3 text-gray-700 whitespace-nowrap font-medium">
-                      ${order.total.toFixed(2)}
-                    </td>
-                    <td className="px-5 py-3 whitespace-nowrap">
-                      <StatusBadge status={status} />
-                    </td>
-                    <td className="px-5 py-3 text-gray-500 max-w-xs text-xs">
-                      {order.notes || <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className="px-5 py-3 whitespace-nowrap">
-                      {status === 'pending' ? (
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => updateStatus(order.id, 'confirmed')}
-                            className="text-xs font-medium px-2.5 py-1 rounded bg-green-100 text-green-700 hover:bg-green-200 transition-colors"
-                          >
-                            Confirm
-                          </button>
-                          <button
-                            onClick={() => updateStatus(order.id, 'declined')}
-                            className="text-xs font-medium px-2.5 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200 transition-colors"
-                          >
-                            Decline
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => updateStatus(order.id, 'pending')}
-                          className="text-xs font-medium px-2.5 py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
-                        >
-                          Reopen
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-5 py-8 text-center text-sm text-gray-400">
-                    No orders match this filter.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+    <div className="w-full max-w-5xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
+      <PageHeader
+        count={MOCK_ORDERS.length}
+        subtitle="Service and order requests collected by your front desk. Every one starts pending until your team confirms."
+      />
+      <StaffReminderStrip />
+      <FilterBar
+        filter={filter}
+        setFilter={setFilter}
+        countLabel={`${filtered.length} of ${MOCK_ORDERS.length} · demo`}
+      />
+      <div className="space-y-4 fd-stagger">
+        {filtered.map((order) => {
+          const status = statuses[order.id];
+          const items = order.items
+            .map((i) => `${i.quantity}× ${i.name}`)
+            .join(', ');
+          return (
+            <RequestCard
+              key={order.id}
+              customerName={order.customerName}
+              customerPhone={order.phone}
+              typeLabel="Order"
+              receivedAt={order.requestedAt}
+              preferredTime={null}
+              details={items}
+              notes={order.notes ?? ''}
+              totalLabel={`$${order.total.toFixed(2)}`}
+              status={status}
+              onConfirm={() => updateStatus(order.id, 'confirmed')}
+              onDecline={() => updateStatus(order.id, 'declined')}
+              onReopen={() => updateStatus(order.id, 'pending')}
+            />
+          );
+        })}
+        {filtered.length === 0 && (
+          <div className="fd-card px-6 py-14 text-center">
+            <p className="text-2xl font-semibold mb-1" style={{ color: 'var(--ink)' }}>Nothing here</p>
+            <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>
+              No orders match this filter.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -221,7 +391,7 @@ function RealServiceRequestsPage({
 }) {
   const [filter, setFilter] = useState<Filter>('all');
   const [statuses, setStatuses] = useState<Record<string, string>>(
-    () => Object.fromEntries(initial.map((r) => [r.id, r.status]))
+    () => Object.fromEntries(initial.map((r) => [r.id, r.status])),
   );
   const [updateError, setUpdateError] = useState<string | null>(null);
 
@@ -251,160 +421,71 @@ function RealServiceRequestsPage({
   }
 
   return (
-    <div className="p-6 max-w-5xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Service Requests</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Service and order requests collected by the AI assistant.
-        </p>
-      </div>
-
-      <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800 mb-5">
-        <strong>Staff reminder:</strong> Requests are pending until confirmed. The AI never guarantees fulfilment — always confirm with the customer.
-      </div>
+    <div className="w-full max-w-5xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
+      <PageHeader
+        count={initial.length}
+        subtitle="Service and order requests collected by your front desk. Every one starts pending until your team confirms."
+      />
+      <StaffReminderStrip />
 
       {loadError && (
-        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+        <div className="mb-6 px-4 py-3 text-sm rounded-[10px]" style={{ border: '1px solid var(--danger)', backgroundColor: 'var(--danger-soft)', color: 'var(--danger)' }}>
           <strong>Failed to load requests:</strong> {loadError}
         </div>
       )}
-
       {updateError && (
-        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+        <div className="mb-6 px-4 py-3 text-sm rounded-[10px]" style={{ border: '1px solid var(--danger)', backgroundColor: 'var(--danger-soft)', color: 'var(--danger)' }}>
           {updateError}
         </div>
       )}
 
       {initial.length === 0 && !loadError ? (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-6 py-16 text-center">
-          <svg
-            className="w-10 h-10 text-gray-300 mx-auto mb-3"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-            />
-          </svg>
-          <p className="text-gray-400 text-sm font-medium">No service requests yet</p>
-          <p className="text-gray-400 text-xs mt-1">
-            Service and order requests from AI-handled calls will appear here.
+        <div className="fd-card px-6 py-16 text-center">
+          <p className="fd-display text-3xl mb-2" style={{ color: 'var(--ink)' }}>No requests yet</p>
+          <p className="text-[15px]" style={{ color: 'var(--ink-soft)' }}>
+            Service and order requests captured by your front desk will appear here.
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2">
-            {FILTERS.map((f) => (
-              <button
-                key={f.value}
-                onClick={() => setFilter(f.value)}
-                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                  filter === f.value
-                    ? 'bg-orange-500 text-white'
-                    : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-            <span className="ml-auto text-sm text-gray-500">
-              {initial.length} request{initial.length !== 1 ? 's' : ''}
-            </span>
+        <>
+          <FilterBar
+            filter={filter}
+            setFilter={setFilter}
+            countLabel={`${filtered.length} of ${initial.length}`}
+          />
+          <div className="space-y-4 fd-stagger">
+            {filtered.map((req) => {
+              const status = (statuses[req.id] ?? req.status) as RequestStatus;
+              const rawType = requestType(req);
+              const typeLabel = rawType ? prettyType(rawType) : 'Service request';
+              return (
+                <RequestCard
+                  key={req.id}
+                  customerName={req.customer_name ?? null}
+                  customerPhone={req.customer_phone ?? null}
+                  typeLabel={typeLabel}
+                  receivedAt={formatCreatedAt(req.created_at)}
+                  preferredTime={req.preferred_time ?? null}
+                  details={detailsText(req)}
+                  notes={notesText(req)}
+                  totalLabel={req.total_amount != null ? `$${req.total_amount.toFixed(2)}` : null}
+                  status={status}
+                  onConfirm={() => updateStatus(req.id, 'confirmed')}
+                  onDecline={() => updateStatus(req.id, 'declined')}
+                  onReopen={() => updateStatus(req.id, 'pending')}
+                />
+              );
+            })}
+            {filtered.length === 0 && (
+              <div className="fd-card px-6 py-14 text-center">
+                <p className="text-2xl font-semibold mb-1" style={{ color: 'var(--ink)' }}>Nothing here</p>
+                <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>
+                  No requests match this filter.
+                </p>
+              </div>
+            )}
           </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50 text-left">
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Received</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Service Type</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Details</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filtered.map((req) => {
-                  const status = (statuses[req.id] ?? req.status) as RequestStatus;
-                  const details = detailsText(req);
-                  const notes = notesText(req);
-                  return (
-                    <tr key={req.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-5 py-3 text-xs text-gray-500 whitespace-nowrap">
-                        {formatCreatedAt(req.created_at)}
-                      </td>
-                      <td className="px-5 py-3">
-                        <div className="font-medium text-gray-900">
-                          {req.customer_name ?? <span className="text-gray-400">Unknown</span>}
-                        </div>
-                        <div className="text-xs text-gray-400">{req.customer_phone ?? ''}</div>
-                      </td>
-                      <td className="px-5 py-3 text-gray-700 whitespace-nowrap">
-                        {requestType(req) ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700">
-                            {requestType(req)}
-                          </span>
-                        ) : (
-                          <span className="text-gray-300">—</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3 text-gray-500 text-xs max-w-xs">
-                        {details || <span className="text-gray-300">—</span>}
-                        {req.preferred_time && (
-                          <div className="text-gray-400 mt-0.5">Preferred: {req.preferred_time}</div>
-                        )}
-                      </td>
-                      <td className="px-5 py-3 whitespace-nowrap">
-                        <StatusBadge status={status} />
-                      </td>
-                      <td className="px-5 py-3 text-gray-500 max-w-xs text-xs">
-                        {notes || <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="px-5 py-3 whitespace-nowrap">
-                        {status === 'pending' ? (
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => updateStatus(req.id, 'confirmed')}
-                              className="text-xs font-medium px-2.5 py-1 rounded bg-green-100 text-green-700 hover:bg-green-200 transition-colors"
-                            >
-                              Confirm
-                            </button>
-                            <button
-                              onClick={() => updateStatus(req.id, 'declined')}
-                              className="text-xs font-medium px-2.5 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200 transition-colors"
-                            >
-                              Decline
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => updateStatus(req.id, 'pending')}
-                            className="text-xs font-medium px-2.5 py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
-                          >
-                            Reopen
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-                {filtered.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="px-5 py-8 text-center text-sm text-gray-400">
-                      No requests match this filter.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        </>
       )}
     </div>
   );
@@ -414,7 +495,7 @@ function RealServiceRequestsPage({
 
 export default function OrdersPage() {
   const [mode, setMode] = useState<'loading' | 'demo' | 'real'>(
-    isSupabaseConfigured ? 'loading' : 'demo'
+    isSupabaseConfigured ? 'loading' : 'demo',
   );
   const [requests, setRequests] = useState<DbServiceRequest[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -425,7 +506,6 @@ export default function OrdersPage() {
 
     async function load() {
       const supabase = createClient();
-
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -433,21 +513,17 @@ export default function OrdersPage() {
         setMode('demo');
         return;
       }
-
       const business = await getActiveBusiness(supabase);
       if (!business) {
         setMode('demo');
         return;
       }
-
       setBusinessId(business.id);
-
       const { data, error } = await supabase
         .from('service_requests')
         .select('*')
         .eq('business_id', business.id)
         .order('created_at', { ascending: false });
-
       if (error) {
         setLoadError(error.message);
       } else {
@@ -461,9 +537,14 @@ export default function OrdersPage() {
 
   if (mode === 'loading') {
     return (
-      <div className="p-6 max-w-5xl">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Service Requests</h1>
-        <p className="text-sm text-gray-400">Loading…</p>
+      <div className="w-full max-w-5xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
+        <div className="h-3 w-32 mb-4 animate-pulse rounded-sm" style={{ backgroundColor: 'var(--hairline)' }} />
+        <div className="h-12 w-2/3 mb-8 animate-pulse rounded-sm" style={{ backgroundColor: 'var(--hairline)' }} />
+        <div className="space-y-4">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-32 fd-card animate-pulse" />
+          ))}
+        </div>
       </div>
     );
   }

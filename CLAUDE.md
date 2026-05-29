@@ -1,6 +1,9 @@
-@AGENTS.md
-
 # FrontDesk AI — Claude Code Project Guide
+
+> **Detailed references** (keep this file lean — route depth here):
+> - Design system & UI conventions → `docs/design-system.md`
+> - Call pipeline architecture → `docs/call-pipeline.md`
+> - AI collaboration workflow → `docs/ai-collaboration-workflow.md`
 
 ## Product Vision
 
@@ -20,7 +23,25 @@ Supported `business_type` values: `restaurant | auto_repair | salon | clinic | t
 - **TypeScript** (strict mode)
 - **Tailwind CSS v4**
 - **Supabase** — Auth + Postgres + Row Level Security
-- **OpenAI Realtime API** — browser voice prototype (direct WebRTC/WebSocket, server-side key)
+- **OpenAI Realtime API** — browser voice (direct WebRTC, server-side key) + Whisper transcription
+
+### Design System
+Apple-inspired "Studio Modernist" look defined in `src/app/globals.css`: Apple system fonts
+(SF Pro / SF Mono via `--font-display/-body/-mono`), neutral gray palette (`--paper #F5F5F7`,
+`--ink #1D1D1F`, warm `--accent #D04F1A`, status tokens), and `fd-*` primitive classes
+(`fd-card`, `fd-btn*`, `fd-pill*`, `fd-eyebrow`, `fd-display`, `fd-tab*`, `fd-input`,
+`fd-stagger`). Reuse these primitives — don't reintroduce ad-hoc `bg-white rounded-xl shadow`
+patterns or raw hexes. **Full conventions: `docs/design-system.md`.**
+
+### Call Pipeline
+- Session (`/api/voice-session`) sets conservative server VAD (`threshold 0.65`,
+  `silence_duration_ms 1000`) + per-turn caller transcription (`audio.input.transcription`).
+- Realtime events → per-turn `TranscriptEntry`s; `saveCall` writes one `call_messages` row per
+  turn (caller + assistant).
+- Whisper (`/api/transcribe-call`) writes `calls.transcript` — the source of truth for
+  extraction; it does NOT insert a caller row (avoids duplicating per-turn rows).
+- `/api/post-call` extracts intent (appointment wins over service request; phone optional;
+  appointments default pending). **Full architecture: `docs/call-pipeline.md`.**
 
 ### Directory Layout
 - `src/app/` — App Router pages and layouts
@@ -41,7 +62,7 @@ See `.env.example`. Never commit `.env.local` (covered by `.gitignore` via `.env
 ## Navigation
 - `/` — Landing page
 - `/dashboard` — Overview
-- `/dashboard/voice` — Browser voice prototype (Phase 5, uncommitted)
+- `/dashboard/voice` — Live browser voice test ("Test the call")
 - `/dashboard/simulator` — AI Call Simulator (mock)
 - `/dashboard/calls` — Call History
 - `/dashboard/reservations` — Appointment Requests
@@ -49,16 +70,23 @@ See `.env.example`. Never commit `.env.local` (covered by `.gitignore` via `.env
 - `/dashboard/knowledge` — Knowledge Base
 - `/dashboard/settings` — Settings
 
-## Current Project State (2026-05-18)
+## Current Project State (2026-05-28)
 
-- **Committed through Phase 5** — Browser voice prototype committed (f40c6d9).
-  - `src/app/api/voice-session/route.ts` — server-side ephemeral token endpoint
-  - `src/app/dashboard/voice/page.tsx` — voice UI with full lifecycle handling
-  - `src/components/Sidebar.tsx` — includes Voice Agent nav link
-- **Phase 6 in progress** — Professional voice agent hardening.
-  - Readiness checklist, connection timeout, WebRTC failure states, mic error UX, save clarity.
-  - Live voice QA is pending OpenAI API billing setup — page is polished without a key.
-- **Live voice QA blocked** — `OPENAI_API_KEY` billing not yet enabled. Do not test live voice.
+- **Live browser voice works and is under active QA** — `OPENAI_API_KEY` is configured; real
+  calls produce transcripts and create pending appointments.
+- **Call pipeline tuned** — conservative server VAD + per-turn caller transcription; both
+  caller and Front desk turns saved as separate `call_messages` rows; Whisper still produces
+  the official `calls.transcript` for extraction. See `docs/call-pipeline.md`.
+- **UI redesigned** to the Apple "Studio Modernist" system (`docs/design-system.md`):
+  - **Done:** Overview, Call History (date-grouped cards + avatars + stat strip), Appointments
+    (full-width cards), Service Requests (full-width cards), Voice test page, shared chrome
+    (Sidebar / DemoBanner / StatusBadge), `globals.css`.
+  - **Partial:** Knowledge / Settings / Simulator — primitives applied (cards/buttons/hairlines)
+    but page headers not yet brought to the `fd-display` treatment.
+  - **Not started:** landing `/`, auth (`/login`, `/signup`, `/onboarding`). Leave the landing
+    `HeroVideoPlaylist` video loop intact.
+- **Uncommitted** — the redesign + pipeline work is in the working tree only (HEAD is the
+  pre-redesign baseline). Commit only when Eric asks.
 
 ---
 
@@ -139,9 +167,10 @@ Use these table names in shared schema — avoid restaurant-only names:
 Restaurant-specific tables (e.g. `menu_items`) belong in a vertical-specific module only.
 
 ## Status Colors
-- pending → amber
-- confirmed → green
-- declined → red
-- resolved → green
-- escalated → red
-- missed → gray
+Implemented via `fd-pill` variants (`StatusBadge.tsx` → `docs/design-system.md`):
+- pending → amber (`fd-pill-warn`)
+- confirmed → green (`fd-pill-ok`)
+- declined → red (`fd-pill-danger`)
+- resolved → green (`fd-pill-ok`)
+- escalated → red (`fd-pill-danger`)
+- missed → gray (`fd-pill-muted`)

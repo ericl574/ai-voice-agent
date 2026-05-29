@@ -195,53 +195,59 @@ function KpiCard({
   accent?: boolean;
 }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-5">
-      <p className="text-xs font-medium text-gray-500 mb-2 leading-tight">{label}</p>
-      <p className={`text-3xl font-bold mb-1 ${accent ? 'text-orange-500' : 'text-gray-900'}`}>
+    <div className="fd-card px-5 py-5">
+      <p className="text-[13px] font-medium mb-3" style={{ color: 'var(--ink-soft)' }}>{label}</p>
+      <p
+        className="text-[44px] font-semibold tracking-tight leading-none mb-2"
+        style={{ color: accent ? 'var(--accent)' : 'var(--ink)' }}
+      >
         {value}
       </p>
-      <p className="text-xs text-gray-400">{sub}</p>
+      <p className="text-[12px] leading-snug" style={{ color: 'var(--ink-muted)' }}>{sub}</p>
     </div>
   );
 }
 
-const BADGE_STYLES: Record<BadgeColor, string> = {
-  amber: 'bg-orange-50 text-orange-700 border-orange-300',
-  red: 'bg-rose-50 text-rose-700 border-rose-300',
-  blue: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+const BADGE_COLOR: Record<BadgeColor, string> = {
+  amber: 'fd-pill fd-pill-warn',
+  red:   'fd-pill fd-pill-danger',
+  blue:  'fd-pill fd-pill-info',
 };
 
-const AVATAR_COLORS = [
-  'bg-violet-100 text-violet-700',
-  'bg-sky-100 text-sky-700',
-  'bg-teal-100 text-teal-700',
-];
-
 function PriorityRow({ action, index = 0 }: { action: PriorityAction; index?: number }) {
-  const avatarColor = AVATAR_COLORS[index % AVATAR_COLORS.length];
   return (
-    <div className="px-5 py-4 flex items-start gap-3 sm:gap-4">
-      <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${avatarColor}`}>
-        <span className="font-semibold text-xs">{action.initials}</span>
+    <div
+      className="grid grid-cols-[40px_1fr] sm:grid-cols-[44px_1fr_auto] gap-x-4 gap-y-3 px-5 py-4 items-start"
+      style={{ borderTop: index === 0 ? 'none' : '1px solid var(--hairline)' }}
+    >
+      <div
+        className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 text-[13px] font-semibold"
+        style={{ backgroundColor: 'var(--paper-dim)', color: 'var(--ink-soft)' }}
+      >
+        {action.initials}
       </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-0.5">
-          <span className="text-sm font-semibold text-gray-900">{action.name}</span>
-          <span className="text-xs text-gray-400">{action.requestType}</span>
-          <span
-            className={`inline-block border text-xs font-medium px-2 py-0.5 rounded-full ${BADGE_STYLES[action.badgeColor]}`}
-          >
-            {action.badgeLabel}
+
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
+          <span className="text-[15px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>
+            {action.name}
           </span>
+          <span className="text-[12px]" style={{ color: 'var(--ink-muted)' }}>·</span>
+          <span className="text-[12px]" style={{ color: 'var(--ink-soft)' }}>
+            {action.requestType}
+          </span>
+          <span className={BADGE_COLOR[action.badgeColor]}>{action.badgeLabel}</span>
         </div>
-        <p className="text-xs text-gray-500 truncate">{action.summary}</p>
+        <p className="text-[13px] leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
+          {action.summary}
+        </p>
       </div>
-      <div className="flex flex-col items-end gap-2 flex-shrink-0 ml-1">
-        <span className="text-xs text-gray-400 whitespace-nowrap">{action.time}</span>
-        <Link
-          href={action.actionHref}
-          className="text-xs font-semibold text-white bg-orange-500 hover:bg-orange-600 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
-        >
+
+      <div className="col-start-2 sm:col-start-3 flex flex-row sm:flex-col items-end justify-between sm:justify-start gap-2 sm:gap-3 sm:pt-1">
+        <span className="text-[12px] whitespace-nowrap order-2 sm:order-1" style={{ color: 'var(--ink-muted)' }}>
+          {action.time}
+        </span>
+        <Link href={action.actionHref} className="fd-btn fd-btn-accent order-1 sm:order-2 whitespace-nowrap">
           {action.actionLabel} →
         </Link>
       </div>
@@ -284,7 +290,7 @@ function GlanceGrid({
   requestCount: number;
 }) {
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
       {GLANCE_ITEMS.map((item) => {
         const count =
           item.countKey === 'appointments'
@@ -296,19 +302,22 @@ function GlanceGrid({
           <Link
             key={item.href}
             href={item.href}
-            className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-5 hover:border-orange-200 hover:shadow-md transition-all group"
+            className="group fd-card p-5 transition-colors hover:border-[#D2D2D7]"
           >
-            <div className="flex items-start justify-between mb-1.5">
-              <span className="text-sm font-semibold text-gray-900 group-hover:text-orange-600 transition-colors leading-tight">
+            <div className="flex items-start justify-between mb-3">
+              <p className="text-[15px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>
                 {item.label}
-              </span>
+              </p>
               {count != null && count > 0 && (
-                <span className="ml-2 flex-shrink-0 text-[10px] font-bold bg-orange-50 text-orange-500 border border-orange-200 rounded-full w-5 h-5 flex items-center justify-center">{count}</span>
+                <span className="fd-pill fd-pill-warn">{count} new</span>
               )}
             </div>
-            <p className="text-xs text-gray-400 mb-3">{item.description}</p>
-            <span className="text-xs font-medium text-orange-400 group-hover:text-orange-600 transition-colors">
-              View →
+            <p className="text-[13px] leading-snug mb-6" style={{ color: 'var(--ink-soft)' }}>
+              {item.description}
+            </p>
+            <span className="text-[13px] font-medium inline-flex items-center gap-1" style={{ color: 'var(--accent)' }}>
+              Open
+              <span className="transition-transform group-hover:translate-x-0.5 inline-block">→</span>
             </span>
           </Link>
         );
@@ -318,6 +327,22 @@ function GlanceGrid({
 }
 
 // ─── Shared overview layout ───────────────────────────────────────────────────
+
+function todayLabel(): string {
+  return new Date()
+    .toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    })
+    .toUpperCase();
+}
+
+function splitGreeting(greeting: string): { lead: string; name: string } {
+  const match = greeting.match(/^(.*?,)\s*(.*?)\.?$/);
+  if (!match) return { lead: greeting, name: '' };
+  return { lead: match[1], name: match[2] };
+}
 
 function OverviewLayout({
   greeting,
@@ -344,139 +369,132 @@ function OverviewLayout({
   refreshing?: boolean;
   loadError?: string | null;
 }) {
+  const { lead, name } = splitGreeting(greeting);
+
   return (
-    <div className="w-full max-w-[1120px] mx-auto px-8 py-8 sm:px-10 lg:px-12">
+    <div className="w-full max-w-[1180px] mx-auto px-6 sm:px-10 lg:px-12 pt-8 pb-20 fd-stagger">
 
-      {loadError && (
-        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-2.5 text-xs text-red-700">
-          <strong>Failed to load data:</strong> {loadError}
+      {/* ── Top meta strip ─────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-8">
+        <div className="flex items-baseline gap-3 flex-wrap">
+          <span className="text-[13px] font-medium" style={{ color: 'var(--ink-soft)' }}>{todayLabel()}</span>
+          <span style={{ color: 'var(--ink-faint)' }}>·</span>
+          {statusPill}
         </div>
-      )}
-
-      {/* Status + greeting + actions */}
-      <div className="flex flex-wrap items-start justify-between gap-4 mb-7">
-        <div>
-          <div className="mb-3">{statusPill}</div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-1.5">
-            {greeting}
-          </h1>
-          {needsAttention > 0 ? (
-            <p className="text-sm text-gray-500">
-              {needsAttention} item{needsAttention !== 1 ? 's' : ''} need staff attention
-              {appointmentCount > 0 && (
-                <>
-                  {' · '}
-                  <span className="text-orange-600 font-medium">
-                    {appointmentCount} need{appointmentCount === 1 ? 's' : ''} confirmation
-                  </span>
-                </>
-              )}
-            </p>
-          ) : (
-            <p className="text-sm text-green-600 font-medium">
-              All clear — no items need attention.
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-2">
           {onRefresh && (
-            <button
-              onClick={onRefresh}
-              disabled={refreshing}
-              className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900 border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
-            >
-              <svg
-                className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                />
-              </svg>
-              Refresh
+            <button onClick={onRefresh} disabled={refreshing} className="fd-btn fd-btn-quiet">
+              {refreshing ? 'Updating…' : 'Refresh'}
             </button>
           )}
-          <Link
-            href="/dashboard/simulator"
-            className="flex items-center gap-1.5 text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 px-4 py-2 rounded-xl shadow-sm shadow-orange-500/20 transition-colors"
-          >
-            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M8 5v14l11-7z" />
-            </svg>
-            Try our service
+          <Link href="/dashboard/simulator" className="fd-btn fd-btn-primary">
+            Try our service →
           </Link>
         </div>
       </div>
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-8">
-        <KpiCard label="Calls handled today" value={callsHandled} sub={callsSub} />
-        <KpiCard
-          label="Needs staff attention"
-          value={needsAttention}
-          sub="across new requests"
-          accent
-        />
-        <KpiCard
-          label="Appointment requests"
-          value={appointmentCount}
-          sub="awaiting confirmation"
-        />
-        <KpiCard label="Service requests" value={serviceRequestCount} sub="open for your team" />
-      </div>
+      {loadError && (
+        <div className="mb-8 px-4 py-3 text-sm" style={{ border: '1px solid var(--danger)', backgroundColor: 'var(--danger-soft)', color: 'var(--danger)' }}>
+          <strong>Failed to load:</strong> {loadError}
+        </div>
+      )}
 
-      {/* Priority actions */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm mb-6">
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-          <h2 className="font-semibold text-gray-900">Priority actions</h2>
+      {/* ── Greeting hero ──────────────────────────────────────────────── */}
+      <section className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-y-8 gap-x-12 items-end mb-14">
+        <h1
+          className="fd-display text-4xl sm:text-5xl lg:text-6xl"
+          style={{ color: 'var(--ink)' }}
+        >
+          {lead}
+          {name && (
+            <>
+              <br />
+              {name}
+            </>
+          )}
+        </h1>
+        <div className="flex flex-col lg:items-end gap-3 lg:max-w-[260px]">
+          <p className="text-[15px] leading-relaxed lg:text-right" style={{ color: 'var(--ink-soft)' }}>
+            {needsAttention > 0 ? (
+              <>
+                <span className="font-semibold" style={{ color: 'var(--ink)' }}>{needsAttention}</span>{' '}
+                item{needsAttention !== 1 ? 's' : ''} need staff attention
+                {appointmentCount > 0 && (
+                  <>
+                    {' · '}
+                    <span className="whitespace-nowrap" style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                      {appointmentCount} awaiting confirmation
+                    </span>
+                  </>
+                )}
+              </>
+            ) : (
+              <span className="font-semibold" style={{ color: 'var(--ok)' }}>
+                All clear — nothing needs attention
+              </span>
+            )}
+          </p>
+        </div>
+      </section>
+
+      {/* ── KPI block ──────────────────────────────────────────────────── */}
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-16">
+        <KpiCard label="Calls today" value={callsHandled} sub={callsSub} />
+        <KpiCard label="Needs attention" value={needsAttention} sub="across new requests" accent />
+        <KpiCard label="Appointments" value={appointmentCount} sub="awaiting confirmation" />
+        <KpiCard label="Service requests" value={serviceRequestCount} sub="open for your team" />
+      </section>
+
+      {/* ── Priority ───────────────────────────────────────────────────── */}
+      <section className="mb-20">
+        <div className="flex items-end justify-between gap-4 mb-5">
+          <div>
+            <h2 className="text-[22px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>
+              Priority actions
+            </h2>
+            <p className="text-[13px] mt-1" style={{ color: 'var(--ink-soft)' }}>
+              The urgent items captured by the front desk.
+            </p>
+          </div>
           {needsAttention > 0 && (
-            <Link
-              href="/dashboard/calls"
-              className="text-sm text-orange-500 hover:text-orange-600 font-medium"
-            >
+            <Link href="/dashboard/calls" className="text-[13px] font-medium whitespace-nowrap" style={{ color: 'var(--accent)' }}>
               See all {needsAttention} →
             </Link>
           )}
         </div>
-        <p className="px-5 pt-3 pb-1 text-xs text-gray-400">
-          The most urgent items captured by the front desk.
-        </p>
         {priorityActions.length === 0 ? (
-          <div className="px-5 py-6">
-              <div className="mx-auto max-w-md rounded-xl border border-green-100 bg-green-50/50 px-5 py-4 text-center">
-                <div className="mx-auto mb-2 flex h-8 w-8 items-center justify-center rounded-full bg-green-100">
-                  <span className="h-2 w-2 rounded-full bg-green-500" />
-                </div>
-                <p className="text-sm font-semibold text-gray-900">
-                  All clear — no staff actions needed.
-                </p>
-                <p className="mt-1 text-xs text-gray-500">
-                  New appointment requests, service requests, and follow-ups will appear here.
-                </p>
-              </div>
-            </div>
+          <div className="fd-card py-14 text-center">
+            <p className="text-2xl font-semibold mb-2" style={{ color: 'var(--ink)' }}>All clear</p>
+            <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>
+              New appointment requests, service requests, and follow-ups will appear here.
+            </p>
+          </div>
         ) : (
-          <div className="divide-y divide-gray-50">
+          <div className="fd-card overflow-hidden">
             {priorityActions.map((action, index) => (
               <PriorityRow key={action.id} action={action} index={index} />
             ))}
           </div>
         )}
-      </div>
+      </section>
 
-      {/* At a glance */}
-      <div>
-        <div className="mb-4">
-          <h2 className="font-semibold text-gray-900">At a glance</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Jump to the detail page for any area.</p>
+      {/* ── At a glance ────────────────────────────────────────────────── */}
+      <section>
+        <div className="mb-5">
+          <h2 className="text-[22px] font-semibold tracking-tight" style={{ color: 'var(--ink)' }}>
+            At a glance
+          </h2>
+          <p className="text-[13px] mt-1" style={{ color: 'var(--ink-soft)' }}>
+            Jump to any section.
+          </p>
         </div>
         <GlanceGrid appointmentCount={appointmentCount} requestCount={serviceRequestCount} />
-      </div>
+      </section>
+
+      <footer className="mt-16 pt-6 flex items-center justify-between gap-3" style={{ borderTop: '1px solid var(--hairline)' }}>
+        <span className="text-[11px] font-medium" style={{ color: 'var(--ink-muted)' }}>Compiled live · staff edition</span>
+        <span className="text-[11px] font-semibold tracking-wide" style={{ color: 'var(--ink-muted)' }}>FrontDesk</span>
+      </footer>
 
     </div>
   );
@@ -503,9 +521,12 @@ function DemoOverviewPage() {
   const needsAttention = pendingReservations.length + pendingOrders.length;
 
   const statusPill = (
-    <span className="inline-flex items-center gap-1.5 bg-green-50 border border-green-200 text-green-700 text-xs font-medium px-3 py-1 rounded-full">
-      <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
-      Front desk active
+    <span className="inline-flex items-center gap-2 text-[13px] font-medium" style={{ color: 'var(--ok)' }}>
+      <span className="relative inline-flex w-1.5 h-1.5">
+        <span className="absolute inset-0 rounded-full animate-ping" style={{ backgroundColor: '#22c55e', opacity: 0.5 }} />
+        <span className="relative inline-block w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#16a34a' }} />
+      </span>
+      Front desk live
     </span>
   );
 
@@ -554,9 +575,12 @@ function RealOverviewPage({
   );
 
   const statusPill = (
-    <span className="inline-flex items-center gap-1.5 bg-green-50 border border-green-200 text-green-700 text-xs font-medium px-3 py-1 rounded-full">
-      <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
-      Front desk active
+    <span className="inline-flex items-center gap-2 text-[13px] font-medium" style={{ color: 'var(--ok)' }}>
+      <span className="relative inline-flex w-1.5 h-1.5">
+        <span className="absolute inset-0 rounded-full animate-ping" style={{ backgroundColor: '#22c55e', opacity: 0.5 }} />
+        <span className="relative inline-block w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#16a34a' }} />
+      </span>
+      Front desk live
     </span>
   );
 
@@ -681,12 +705,15 @@ function DashboardPageInner() {
 
   if (mode === 'loading') {
     return (
-      <div className="w-full max-w-[1120px] mx-auto px-8 py-8 sm:px-10 lg:px-12">
-        <div className="w-32 h-6 bg-gray-100 rounded animate-pulse mb-3" />
-        <div className="w-64 h-9 bg-gray-100 rounded animate-pulse mb-6" />
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="w-full max-w-[1180px] mx-auto px-6 sm:px-10 lg:px-12 pt-8 pb-20">
+        <div className="pb-3 mb-10 flex items-center justify-between" style={{ borderBottom: '1px solid var(--rule)' }}>
+          <div className="h-3 w-40 animate-pulse" style={{ backgroundColor: 'var(--hairline)' }} />
+          <div className="h-6 w-28 animate-pulse" style={{ backgroundColor: 'var(--hairline)' }} />
+        </div>
+        <div className="h-16 sm:h-24 w-3/4 animate-pulse mb-14" style={{ backgroundColor: 'var(--hairline)' }} />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-px" style={{ backgroundColor: 'var(--hairline)' }}>
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-24 bg-gray-100 rounded-xl animate-pulse" />
+            <div key={i} className="h-40" style={{ backgroundColor: 'var(--surface)' }} />
           ))}
         </div>
       </div>

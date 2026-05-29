@@ -87,22 +87,20 @@ export async function POST(req: NextRequest) {
   // Place caller block after assistant lines so the extraction model sees both sides
   const officialTranscript = [assistantTranscript, callerLines].filter(Boolean).join('\n');
 
-  // ── Persist official transcript + caller call_message ─────────────────────────
+  // ── Persist the official transcript on the calls row ─────────────────────────
+  // This text is consumed by /api/post-call extraction (it pulls Caller: lines via
+  // callerLinesOnly()). It uses Whisper's full-recording transcription, which generally
+  // catches more than per-turn Realtime transcripts.
+  //
+  // We deliberately do NOT insert a call_messages row for the caller here.
+  // saveCall() in the client now writes one row per Realtime turn (both caller and
+  // assistant), so the dashboard transcript shows separate turns rather than one blob.
+  // Inserting a Whisper-flat row again would duplicate the caller side.
 
   await supabase
     .from('calls')
     .update({ transcript: officialTranscript })
     .eq('id', callId);
-
-  if (rawCallerText) {
-    // Insert caller turn as a single call_message with role 'customer'
-    // (assistant messages were already inserted by saveCall in the client)
-    await supabase.from('call_messages').insert({
-      call_id: callId,
-      role: 'customer',
-      content: rawCallerText,
-    });
-  }
 
   return NextResponse.json({
     ok: true,

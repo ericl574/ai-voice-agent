@@ -35,7 +35,7 @@ type Tab = 'profile' | 'qa' | 'instructions';
 const EMPTY_DRAFT: Draft = { category: '', question: '', answer: '' };
 
 const INPUT_CLASS =
-  'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400';
+  'w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400';
 
 const LABEL_CLASS = 'block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5';
 
@@ -100,7 +100,7 @@ function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void 
     { id: 'instructions', label: 'Custom instructions' },
   ];
   return (
-    <div className="flex gap-1 border-b border-gray-200 mb-6">
+    <div className="flex gap-1 border-b fd-hairline-strong mb-6">
       {tabs.map((t) => (
         <button
           key={t.id}
@@ -179,7 +179,7 @@ function CheckCard({
       className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${
         checked
           ? 'border-orange-200 bg-orange-50/50'
-          : 'border-gray-100 hover:border-gray-200 hover:bg-gray-50'
+          : 'fd-hairline hover:fd-hairline-strong hover:bg-gray-50'
       }`}
     >
       <input
@@ -279,8 +279,8 @@ function ProfileTab({
     <div className="space-y-4 max-w-2xl pb-20">
 
       {/* ── 1. Business identity ── */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100">
+      <div className="fd-card overflow-hidden">
+        <div className="px-5 py-4 border-b fd-hairline">
           <h2 className="text-sm font-semibold text-gray-900">Business identity</h2>
           <p className="text-xs text-gray-400 mt-0.5">Basic facts about your business. Used in every call.</p>
         </div>
@@ -352,8 +352,8 @@ function ProfileTab({
       </div>
 
       {/* ── 2. Operating basics ── */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100">
+      <div className="fd-card overflow-hidden">
+        <div className="px-5 py-4 border-b fd-hairline">
           <h2 className="text-sm font-semibold text-gray-900">Operating basics</h2>
           <p className="text-xs text-gray-400 mt-0.5">Tells callers when you&apos;re open and how you handle visits.</p>
         </div>
@@ -391,8 +391,8 @@ function ProfileTab({
       </div>
 
       {/* ── 3. Front desk tone ── */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100">
+      <div className="fd-card overflow-hidden">
+        <div className="px-5 py-4 border-b fd-hairline">
           <h2 className="text-sm font-semibold text-gray-900">Front desk tone</h2>
           <p className="text-xs text-gray-400 mt-0.5">Select one or more styles that fit your business.</p>
         </div>
@@ -406,7 +406,7 @@ function ProfileTab({
                 className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-colors ${
                   toneTags.includes(value)
                     ? 'bg-orange-500 border-orange-500 text-white'
-                    : 'bg-white border-gray-200 text-gray-600 hover:border-orange-300 hover:text-orange-600'
+                    : 'bg-white fd-hairline-strong text-gray-600 hover:border-orange-300 hover:text-orange-600'
                 }`}
               >
                 {label}
@@ -417,8 +417,8 @@ function ProfileTab({
       </div>
 
       {/* ── 4. Request types ── */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100">
+      <div className="fd-card overflow-hidden">
+        <div className="px-5 py-4 border-b fd-hairline">
           <h2 className="text-sm font-semibold text-gray-900">Request types</h2>
           <p className="text-xs text-gray-400 mt-0.5">What kinds of calls should your front desk handle?</p>
         </div>
@@ -435,8 +435,8 @@ function ProfileTab({
       </div>
 
       {/* ── 5. Details to collect when action is needed ── */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100">
+      <div className="fd-card overflow-hidden">
+        <div className="px-5 py-4 border-b fd-hairline">
           <h2 className="text-sm font-semibold text-gray-900">Details to collect when action is needed</h2>
           <p className="text-xs text-gray-400 mt-0.5">
             Only collected when the caller wants an appointment, callback, service request, or staff follow-up — not for general questions.
@@ -455,8 +455,8 @@ function ProfileTab({
       </div>
 
       {/* ── 6. Response rules ── */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100">
+      <div className="fd-card overflow-hidden">
+        <div className="px-5 py-4 border-b fd-hairline">
           <h2 className="text-sm font-semibold text-gray-900">Response rules</h2>
           <p className="text-xs text-gray-400 mt-0.5">
             How your front desk handles callbacks, escalations, and booking confirmation.
@@ -511,7 +511,7 @@ function ProfileTab({
       )}
 
       {!isDemo && (
-        <div className="fixed bottom-0 left-64 right-0 bg-white border-t border-gray-100 shadow-sm z-20">
+        <div className="fixed bottom-0 left-64 right-0 bg-white border-t fd-hairline shadow-sm z-20">
           <div className="px-6 py-3 flex items-center gap-4">
             <span className="text-sm min-w-[120px]">
               {saved ? (
@@ -674,7 +674,7 @@ function QATab({
         {!isAdding && !isDemo && (
           <button
             onClick={() => startAdd()}
-            className="flex-shrink-0 flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+            className="flex-shrink-0 flex items-center gap-1.5 fd-btn fd-btn-accent text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -697,7 +697,7 @@ function QATab({
 
       {/* Add form */}
       {isAdding && (
-        <div className="mb-6 bg-white rounded-xl border border-orange-200 shadow-sm overflow-hidden">
+        <div className="mb-6 bg-white rounded-[6px] border border-orange-200 shadow-sm overflow-hidden">
           <div className="px-5 py-3 bg-orange-50 border-b border-orange-200">
             <h3 className="font-semibold text-gray-900 text-sm">New entry</h3>
           </div>
@@ -741,7 +741,7 @@ function QATab({
 
       {/* Empty state */}
       {items.length === 0 && !isAdding && !loadError && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-6 py-12 text-center">
+        <div className="fd-card px-6 py-12 text-center">
           <p className="text-gray-400 text-sm mb-3">No Q&A entries yet.</p>
           {!isDemo && (
             <button onClick={() => startAdd()} className="text-sm font-semibold text-orange-600 hover:text-orange-700 transition-colors">
@@ -757,11 +757,11 @@ function QATab({
           {categories.map((category) => {
             const entries = items.filter((e) => e.category === category);
             return (
-              <div key={category} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
+              <div key={category} className="fd-card overflow-hidden">
+                <div className="px-5 py-3 bg-gray-50 border-b fd-hairline">
                   <h3 className="font-semibold text-gray-900 text-sm">{category}</h3>
                 </div>
-                <ul className="divide-y divide-gray-50">
+                <ul className="divide-y divide-[--hairline]">
                   {entries.map((entry) =>
                     editingId === entry.id ? (
                       <li key={entry.id} className="px-5 py-4 bg-orange-50/40">
@@ -796,7 +796,7 @@ function QATab({
                   )}
                 </ul>
                 {!isDemo && (
-                  <div className="px-5 py-3 border-t border-gray-100">
+                  <div className="px-5 py-3 border-t fd-hairline">
                     <button onClick={() => startAdd(category)} className="text-xs font-medium text-gray-500 hover:text-gray-900 transition-colors flex items-center gap-1">
                       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -860,8 +860,8 @@ function InstructionsTab({
         Open-ended rules for situations that don&apos;t fit structured fields. The front desk follows these exactly.
       </p>
 
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100">
+      <div className="fd-card overflow-hidden">
+        <div className="px-5 py-4 border-b fd-hairline">
           <h2 className="font-semibold text-gray-900">Special rules</h2>
           <p className="text-xs text-gray-400 mt-0.5">
             One rule per line. Plain language works best.
@@ -969,7 +969,7 @@ export default function KnowledgePage() {
 
   if (mode === 'loading') {
     return (
-      <div className="p-6 max-w-3xl">
+      <div className="w-full max-w-3xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
         <h1 className="text-2xl font-bold text-gray-900 mb-2">Business Setup</h1>
         <p className="text-sm text-gray-400">Loading…</p>
       </div>
@@ -979,7 +979,7 @@ export default function KnowledgePage() {
   const isDemo = mode === 'demo';
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="w-full max-w-4xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Business Setup</h1>
         <p className="text-sm text-gray-500 mt-1">

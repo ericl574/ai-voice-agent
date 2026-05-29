@@ -7,8 +7,6 @@ import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
 
 // ─── DB types ──────────────────────────────────────────────────────────────
-// Uses flexible optional fields — any schema mismatch surfaces as a visible
-// error rather than a silent crash.
 
 interface DbAppointment {
   id: string;
@@ -17,13 +15,11 @@ interface DbAppointment {
   customer_name?: string | null;
   customer_phone?: string | null;
   party_size?: number | null;
-  // Real schema columns
   appointment_date?: string | null;
   appointment_time?: string | null;
   service_type?: string | null;
   special_request?: string | null;
   staff_notes?: string | null;
-  // Backwards-compatible fallbacks from initial implementation
   service_details?: string | null;
   requested_date?: string | null;
   requested_time?: string | null;
@@ -51,7 +47,6 @@ function formatCreatedAt(iso: string): string {
     return d.toLocaleString('en-US', {
       month: 'short',
       day: 'numeric',
-      year: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
     });
@@ -64,11 +59,11 @@ function partyOrService(appt: DbAppointment): string {
   if (appt.party_size != null) return `${appt.party_size} guest${appt.party_size !== 1 ? 's' : ''}`;
   if (appt.service_type) return appt.service_type;
   if (appt.service_details) return appt.service_details;
-  return '—';
+  return 'Appointment';
 }
 
 function requestedWhen(appt: DbAppointment): { date: string; time: string } {
-  const date = appt.appointment_date ?? appt.requested_date ?? '—';
+  const date = appt.appointment_date ?? appt.requested_date ?? '';
   const time = appt.appointment_time ?? appt.requested_time ?? '';
   return { date, time };
 }
@@ -78,16 +73,235 @@ function notesText(appt: DbAppointment): string {
   return parts.join(' · ');
 }
 
+function customerInitial(name: string | null | undefined): string {
+  if (!name) return '·';
+  return name.trim()[0]?.toUpperCase() ?? '·';
+}
+
+// Apple Contacts-style soft tinted avatars — deterministic by name hash.
+// Mirrors the helper in calls/page.tsx and orders/page.tsx so the avatar
+// vocabulary is identical across the three queue pages.
+const AVATAR_PALETTE: Array<{ bg: string; fg: string }> = [
+  { bg: '#E8F0FE', fg: '#1E40AF' }, // blue
+  { bg: '#E6F4EA', fg: '#166534' }, // green
+  { bg: '#FCE7E6', fg: '#9F1239' }, // rose
+  { bg: '#FEF3C7', fg: '#92400E' }, // amber
+  { bg: '#EDE9FE', fg: '#5B21B6' }, // violet
+  { bg: '#E0F2FE', fg: '#075985' }, // sky
+  { bg: '#FCE7F3', fg: '#9D174D' }, // pink
+  { bg: '#D1FAE5', fg: '#065F46' }, // emerald
+];
+
+function avatarFor(name: string | null | undefined): { bg: string; fg: string } {
+  const safe = (name ?? '').trim();
+  let hash = 0;
+  for (let i = 0; i < safe.length; i++) hash = (hash * 31 + safe.charCodeAt(i)) >>> 0;
+  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
+}
+
+// ─── Page header ───────────────────────────────────────────────────────────
+
+function PageHeader({ subtitle, count }: { subtitle: string; count?: number | null }) {
+  return (
+    <header className="mb-8">
+      <h1 className="fd-display text-4xl sm:text-5xl mb-2" style={{ color: 'var(--ink)' }}>
+        Appointment requests
+      </h1>
+      <p className="text-[15px] max-w-2xl leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
+        {subtitle}
+        {count != null && (
+          <span style={{ color: 'var(--ink-muted)' }}> · {count} total</span>
+        )}
+      </p>
+    </header>
+  );
+}
+
+// ─── Appointment card (full-width) ─────────────────────────────────────────
+
+function AppointmentCard({
+  customerName,
+  customerPhone,
+  serviceLabel,
+  receivedAt,
+  date,
+  time,
+  notes,
+  status,
+  onConfirm,
+  onDecline,
+  onReopen,
+}: {
+  customerName: string | null;
+  customerPhone: string | null;
+  serviceLabel: string;
+  receivedAt: string;
+  date: string;
+  time: string;
+  notes: string;
+  status: RequestStatus;
+  onConfirm?: () => void;
+  onDecline?: () => void;
+  onReopen?: () => void;
+}) {
+  const isPending = status === 'pending';
+  const av = avatarFor(customerName);
+  return (
+    <article className="fd-card overflow-hidden">
+      {/* Top metadata band */}
+      <div
+        className="px-6 py-3 flex items-center justify-between gap-4 text-[11px]"
+        style={{ borderBottom: '1px solid var(--hairline)', backgroundColor: 'var(--surface-soft)' }}
+      >
+        <div className="flex items-center gap-4 min-w-0">
+          <span className="fd-eyebrow" style={{ color: 'var(--ink-muted)' }}>
+            Received
+          </span>
+          <span className="fd-numeric" style={{ color: 'var(--ink-2)' }}>{receivedAt}</span>
+        </div>
+        <StatusBadge status={status} />
+      </div>
+
+      {/* Main row — 12-column grid */}
+      <div className="px-6 py-5 grid grid-cols-12 gap-x-6 gap-y-4 items-start">
+        {/* Customer (cols 1-4) */}
+        <div className="col-span-12 md:col-span-4 flex items-center gap-3">
+          <div
+            className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0 text-[15px] font-semibold"
+            style={{ backgroundColor: av.bg, color: av.fg }}
+          >
+            {customerInitial(customerName)}
+          </div>
+          <div className="min-w-0">
+            <p className="text-[15px] font-semibold leading-tight truncate" style={{ color: 'var(--ink)' }}>
+              {customerName ?? 'Unknown caller'}
+            </p>
+            <p className="text-[12px] mt-0.5 fd-numeric" style={{ color: 'var(--ink-muted)' }}>
+              {customerPhone ?? 'No phone provided'}
+            </p>
+          </div>
+        </div>
+
+        {/* Service (cols 5-7) */}
+        <div className="col-span-6 md:col-span-3">
+          <p className="fd-eyebrow mb-1.5" style={{ color: 'var(--ink-muted)' }}>Service</p>
+          <p className="text-[14px] leading-snug" style={{ color: 'var(--ink)' }}>{serviceLabel}</p>
+        </div>
+
+        {/* Requested time (cols 8-10) */}
+        <div className="col-span-6 md:col-span-3">
+          <p className="fd-eyebrow mb-1.5" style={{ color: 'var(--ink-muted)' }}>Requested</p>
+          {date ? (
+            <p className="text-[14px] leading-snug" style={{ color: 'var(--ink)' }}>
+              <span className="fd-numeric">{date}</span>
+              {time && <>, <span className="fd-numeric">{time}</span></>}
+            </p>
+          ) : (
+            <p className="text-[14px] italic" style={{ color: 'var(--ink-faint)' }}>
+              Time TBC
+            </p>
+          )}
+        </div>
+
+        {/* Actions (cols 11-12) */}
+        <div className="col-span-12 md:col-span-2 flex flex-row md:flex-col gap-2 md:items-stretch">
+          {isPending ? (
+            <>
+              <button onClick={onConfirm} className="fd-btn fd-btn-accent flex-1 md:flex-none">
+                Confirm
+              </button>
+              <button onClick={onDecline} className="fd-btn fd-btn-ghost flex-1 md:flex-none">
+                Decline
+              </button>
+            </>
+          ) : (
+            <button onClick={onReopen} className="fd-btn fd-btn-quiet flex-1 md:flex-none">
+              Reopen
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Notes row */}
+      {notes && (
+        <div
+          className="px-6 py-4 flex items-start gap-4"
+          style={{ borderTop: '1px solid var(--hairline)', backgroundColor: 'var(--surface-soft)' }}
+        >
+          <span className="fd-eyebrow flex-shrink-0 pt-0.5" style={{ color: 'var(--ink-muted)' }}>
+            Notes
+          </span>
+          <p className="text-[13px] leading-relaxed flex-1" style={{ color: 'var(--ink-2)' }}>
+            {notes}
+          </p>
+        </div>
+      )}
+    </article>
+  );
+}
+
+// ─── Filter bar ────────────────────────────────────────────────────────────
+
+function FilterBar({
+  filter,
+  setFilter,
+  countLabel,
+}: {
+  filter: Filter;
+  setFilter: (f: Filter) => void;
+  countLabel: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 mb-6 flex-wrap">
+      <div className="flex items-center gap-1.5">
+        {FILTERS.map((f) => (
+          <button
+            key={f.value}
+            onClick={() => setFilter(f.value)}
+            className={`fd-tab ${filter === f.value ? 'fd-tab-active' : ''}`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+      <span className="ml-auto fd-eyebrow" style={{ color: 'var(--ink-muted)' }}>
+        {countLabel}
+      </span>
+    </div>
+  );
+}
+
+// ─── Reminder strip ────────────────────────────────────────────────────────
+
+function StaffReminderStrip() {
+  return (
+    <div
+      className="mb-6 px-4 py-3 flex items-center gap-3 rounded-[10px]"
+      style={{
+        backgroundColor: 'var(--warn-soft)',
+        border: '1px solid #F3D7A0',
+      }}
+    >
+      <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--warn)' }}>
+        Staff reminder
+      </span>
+      <span className="text-[13px]" style={{ color: 'var(--ink-2)' }}>
+        The front desk never confirms appointments directly. All requests require your manual confirmation.
+      </span>
+    </div>
+  );
+}
+
 // ─── Demo mode ─────────────────────────────────────────────────────────────
 
 function DemoReservationsPage() {
   const [filter, setFilter] = useState<Filter>('all');
   const [statuses, setStatuses] = useState<Record<string, RequestStatus>>(
-    () => Object.fromEntries(MOCK_RESERVATIONS.map((r) => [r.id, r.status]))
+    () => Object.fromEntries(MOCK_RESERVATIONS.map((r) => [r.id, r.status])),
   );
 
   const filtered = MOCK_RESERVATIONS.filter(
-    (r) => filter === 'all' || statuses[r.id] === filter
+    (r) => filter === 'all' || statuses[r.id] === filter,
   );
 
   function updateStatus(id: string, status: RequestStatus) {
@@ -95,110 +309,45 @@ function DemoReservationsPage() {
   }
 
   return (
-    <div className="p-6 max-w-5xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Appointment Requests</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          All requests are initially pending until confirmed by staff.
-        </p>
-      </div>
-
-      <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800 mb-5">
-        <strong>Staff reminder:</strong> The AI assistant never confirms appointments directly. All requests require your manual confirmation below.
-      </div>
-
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2">
-          {FILTERS.map((f) => (
-            <button
-              key={f.value}
-              onClick={() => setFilter(f.value)}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                filter === f.value
-                  ? 'bg-orange-500 text-white'
-                  : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
-          <span className="ml-auto text-xs text-amber-700 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded">
-            Demo mode
-          </span>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50 text-left">
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Received</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Party / Service</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Requested Date &amp; Time</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {filtered.map((r) => {
-                const status = statuses[r.id];
-                return (
-                  <tr key={r.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-5 py-3 text-xs text-gray-500 whitespace-nowrap">{r.requestedAt}</td>
-                    <td className="px-5 py-3">
-                      <div className="font-medium text-gray-900">{r.guestName}</div>
-                      <div className="text-xs text-gray-400">{r.phone}</div>
-                    </td>
-                    <td className="px-5 py-3 text-gray-700 whitespace-nowrap">{r.partySize} guests</td>
-                    <td className="px-5 py-3 whitespace-nowrap text-gray-700">
-                      {r.requestedDate}
-                      <div className="text-xs text-gray-400">{r.requestedTime}</div>
-                    </td>
-                    <td className="px-5 py-3 whitespace-nowrap">
-                      <StatusBadge status={status} />
-                    </td>
-                    <td className="px-5 py-3 text-gray-500 max-w-xs">
-                      {r.notes || <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className="px-5 py-3 whitespace-nowrap">
-                      {status === 'pending' ? (
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => updateStatus(r.id, 'confirmed')}
-                            className="text-xs font-medium px-2.5 py-1 rounded bg-green-100 text-green-700 hover:bg-green-200 transition-colors"
-                          >
-                            Confirm
-                          </button>
-                          <button
-                            onClick={() => updateStatus(r.id, 'declined')}
-                            className="text-xs font-medium px-2.5 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200 transition-colors"
-                          >
-                            Decline
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => updateStatus(r.id, 'pending')}
-                          className="text-xs font-medium px-2.5 py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
-                        >
-                          Reopen
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-5 py-8 text-center text-sm text-gray-400">
-                    No reservations match this filter.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+    <div className="w-full max-w-5xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
+      <PageHeader
+        count={MOCK_RESERVATIONS.length}
+        subtitle="Every request starts pending until you confirm. Tap into a row to see what the caller said and decide."
+      />
+      <StaffReminderStrip />
+      <FilterBar
+        filter={filter}
+        setFilter={setFilter}
+        countLabel={`${filtered.length} of ${MOCK_RESERVATIONS.length} · demo`}
+      />
+      <div className="space-y-4 fd-stagger">
+        {filtered.map((r) => {
+          const status = statuses[r.id];
+          return (
+            <AppointmentCard
+              key={r.id}
+              customerName={r.guestName}
+              customerPhone={r.phone}
+              serviceLabel={`${r.partySize} guest${r.partySize !== 1 ? 's' : ''}`}
+              receivedAt={r.requestedAt}
+              date={r.requestedDate}
+              time={r.requestedTime}
+              notes={r.notes ?? ''}
+              status={status}
+              onConfirm={() => updateStatus(r.id, 'confirmed')}
+              onDecline={() => updateStatus(r.id, 'declined')}
+              onReopen={() => updateStatus(r.id, 'pending')}
+            />
+          );
+        })}
+        {filtered.length === 0 && (
+          <div className="fd-card px-6 py-14 text-center">
+            <p className="fd-display text-2xl mb-1" style={{ color: 'var(--ink)' }}>Nothing here.</p>
+            <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>
+              No reservations match this filter.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -216,9 +365,8 @@ function RealReservationsPage({
   businessId: string;
 }) {
   const [filter, setFilter] = useState<Filter>('all');
-  // Local status map for optimistic updates
   const [statuses, setStatuses] = useState<Record<string, string>>(
-    () => Object.fromEntries(initial.map((a) => [a.id, a.status]))
+    () => Object.fromEntries(initial.map((a) => [a.id, a.status])),
   );
   const [updateError, setUpdateError] = useState<string | null>(null);
 
@@ -228,7 +376,6 @@ function RealReservationsPage({
   });
 
   async function updateStatus(id: string, newStatus: RequestStatus) {
-    // Optimistic update
     setStatuses((prev) => ({ ...prev, [id]: newStatus }));
     setUpdateError(null);
 
@@ -240,158 +387,77 @@ function RealReservationsPage({
       .eq('business_id', businessId);
 
     if (error) {
-      // Roll back on failure
       setStatuses((prev) => ({ ...prev, [id]: initial.find((a) => a.id === id)?.status ?? prev[id] }));
       setUpdateError(`Failed to update status: ${error.message}`);
     }
   }
 
   return (
-    <div className="p-6 max-w-5xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Appointment Requests</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          All requests are initially pending until confirmed by staff.
-        </p>
-      </div>
-
-      <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800 mb-5">
-        <strong>Staff reminder:</strong> The AI assistant never confirms appointments directly. All requests require your manual confirmation below.
-      </div>
+    <div className="w-full max-w-5xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
+      <PageHeader
+        count={initial.length}
+        subtitle="Every request starts pending until you confirm. Tap into a row to see what the caller said and decide."
+      />
+      <StaffReminderStrip />
 
       {loadError && (
-        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+        <div className="mb-6 px-4 py-3 text-sm" style={{ border: '1px solid var(--danger)', backgroundColor: 'var(--danger-soft)', color: 'var(--danger)' }}>
           <strong>Failed to load appointments:</strong> {loadError}
         </div>
       )}
-
       {updateError && (
-        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+        <div className="mb-6 px-4 py-3 text-sm" style={{ border: '1px solid var(--danger)', backgroundColor: 'var(--danger-soft)', color: 'var(--danger)' }}>
           {updateError}
         </div>
       )}
 
       {initial.length === 0 && !loadError ? (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-6 py-16 text-center">
-          <svg
-            className="w-10 h-10 text-gray-300 mx-auto mb-3"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-            />
-          </svg>
-          <p className="text-gray-400 text-sm font-medium">No appointment requests yet</p>
-          <p className="text-gray-400 text-xs mt-1">
-            Appointment requests from AI-handled calls will appear here.
+        <div className="fd-card px-6 py-16 text-center">
+          <p className="fd-display text-3xl mb-2" style={{ color: 'var(--ink)' }}>
+            No requests yet.
+          </p>
+          <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>
+            Appointment requests from calls handled by your front desk will appear here.
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2">
-            {FILTERS.map((f) => (
-              <button
-                key={f.value}
-                onClick={() => setFilter(f.value)}
-                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                  filter === f.value
-                    ? 'bg-orange-500 text-white'
-                    : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-            <span className="ml-auto text-sm text-gray-500">
-              {initial.length} request{initial.length !== 1 ? 's' : ''}
-            </span>
+        <>
+          <FilterBar
+            filter={filter}
+            setFilter={setFilter}
+            countLabel={`${filtered.length} of ${initial.length}`}
+          />
+          <div className="space-y-4 fd-stagger">
+            {filtered.map((a) => {
+              const status = (statuses[a.id] ?? a.status) as RequestStatus;
+              const { date, time } = requestedWhen(a);
+              return (
+                <AppointmentCard
+                  key={a.id}
+                  customerName={a.customer_name ?? null}
+                  customerPhone={a.customer_phone ?? null}
+                  serviceLabel={partyOrService(a)}
+                  receivedAt={formatCreatedAt(a.created_at)}
+                  date={date}
+                  time={time}
+                  notes={notesText(a)}
+                  status={status}
+                  onConfirm={() => updateStatus(a.id, 'confirmed')}
+                  onDecline={() => updateStatus(a.id, 'declined')}
+                  onReopen={() => updateStatus(a.id, 'pending')}
+                />
+              );
+            })}
+            {filtered.length === 0 && (
+              <div className="fd-card px-6 py-14 text-center">
+                <p className="fd-display text-2xl mb-1" style={{ color: 'var(--ink)' }}>Nothing here.</p>
+                <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>
+                  No requests match this filter.
+                </p>
+              </div>
+            )}
           </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50 text-left">
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Received</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Customer</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Party / Service</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Requested Date &amp; Time</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filtered.map((a) => {
-                  const status = (statuses[a.id] ?? a.status) as RequestStatus;
-                  const { date, time } = requestedWhen(a);
-                  return (
-                    <tr key={a.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-5 py-3 text-xs text-gray-500 whitespace-nowrap">
-                        {formatCreatedAt(a.created_at)}
-                      </td>
-                      <td className="px-5 py-3">
-                        <div className="font-medium text-gray-900">
-                          {a.customer_name ?? <span className="text-gray-400">Unknown</span>}
-                        </div>
-                        <div className="text-xs text-gray-400">{a.customer_phone ?? ''}</div>
-                      </td>
-                      <td className="px-5 py-3 text-gray-700 whitespace-nowrap">
-                        {partyOrService(a)}
-                      </td>
-                      <td className="px-5 py-3 whitespace-nowrap text-gray-700">
-                        {date}
-                        {time && <div className="text-xs text-gray-400">{time}</div>}
-                      </td>
-                      <td className="px-5 py-3 whitespace-nowrap">
-                        <StatusBadge status={status} />
-                      </td>
-                      <td className="px-5 py-3 text-gray-500 max-w-xs">
-                        {notesText(a) || <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="px-5 py-3 whitespace-nowrap">
-                        {status === 'pending' ? (
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => updateStatus(a.id, 'confirmed')}
-                              className="text-xs font-medium px-2.5 py-1 rounded bg-green-100 text-green-700 hover:bg-green-200 transition-colors"
-                            >
-                              Confirm
-                            </button>
-                            <button
-                              onClick={() => updateStatus(a.id, 'declined')}
-                              className="text-xs font-medium px-2.5 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200 transition-colors"
-                            >
-                              Decline
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => updateStatus(a.id, 'pending')}
-                            className="text-xs font-medium px-2.5 py-1 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
-                          >
-                            Reopen
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-                {filtered.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="px-5 py-8 text-center text-sm text-gray-400">
-                      No requests match this filter.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        </>
       )}
     </div>
   );
@@ -401,7 +467,7 @@ function RealReservationsPage({
 
 export default function ReservationsPage() {
   const [mode, setMode] = useState<'loading' | 'demo' | 'real'>(
-    isSupabaseConfigured ? 'loading' : 'demo'
+    isSupabaseConfigured ? 'loading' : 'demo',
   );
   const [appointments, setAppointments] = useState<DbAppointment[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -412,7 +478,6 @@ export default function ReservationsPage() {
 
     async function load() {
       const supabase = createClient();
-
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -420,21 +485,17 @@ export default function ReservationsPage() {
         setMode('demo');
         return;
       }
-
       const business = await getActiveBusiness(supabase);
       if (!business) {
         setMode('demo');
         return;
       }
-
       setBusinessId(business.id);
-
       const { data, error } = await supabase
         .from('appointments')
         .select('*')
         .eq('business_id', business.id)
         .order('created_at', { ascending: false });
-
       if (error) {
         setLoadError(error.message);
       } else {
@@ -448,9 +509,14 @@ export default function ReservationsPage() {
 
   if (mode === 'loading') {
     return (
-      <div className="p-6 max-w-5xl">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Appointment Requests</h1>
-        <p className="text-sm text-gray-400">Loading…</p>
+      <div className="w-full max-w-5xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
+        <div className="h-3 w-32 mb-4 animate-pulse" style={{ backgroundColor: 'var(--hairline)' }} />
+        <div className="h-12 w-2/3 mb-8 animate-pulse" style={{ backgroundColor: 'var(--hairline)' }} />
+        <div className="space-y-4">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-32 fd-card animate-pulse" />
+          ))}
+        </div>
       </div>
     );
   }

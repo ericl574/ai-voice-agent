@@ -1,26 +1,290 @@
 @import "tailwindcss";
 
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Surface — neutral grays, Apple-style */
+  --paper:        #F5F5F7;   /* page background — Apple's signature light gray */
+  --paper-dim:    #ECECEE;   /* secondary fill, panels */
+  --surface:      #FFFFFF;   /* cards */
+  --surface-soft: #FAFAFC;   /* nested cards */
+
+  /* Ink — Apple's system gray ramp */
+  --ink:          #1D1D1F;   /* primary text, Apple near-black */
+  --ink-2:        #2C2C2E;   /* high-contrast body */
+  --ink-soft:     #6E6E73;   /* secondary text, Apple gray 3 */
+  --ink-muted:    #86868B;   /* tertiary text, Apple gray 5 */
+  --ink-faint:    #AEAEB2;   /* placeholders, hints */
+
+  /* Lines — cool neutral hairlines */
+  --hairline:     #E5E5EA;   /* default borders */
+  --hairline-strong: #D2D2D7;/* emphasized borders */
+  --rule:         #1D1D1F;   /* hard rules under section headers */
+
+  /* Accent — kept as brand orange, refined */
+  --accent:       #D04F1A;
+  --accent-hot:   #A33D11;
+  --accent-soft:  #FBEDE2;
+
+  /* Status */
+  --ok:           #2E7D5B;
+  --ok-soft:      #E6F0EA;
+  --warn:         #B26B12;
+  --warn-soft:    #FAEDD0;
+  --danger:       #9F2D34;
+  --danger-soft:  #F6E1E3;
+  --info:         #2A5B8B;
+  --info-soft:    #E4EDF6;
+
+  /* Focus ring — Apple-style blue glow */
+  --focus-ring:   rgba(0, 122, 255, 0.35);
+
+  /* Sidebar (dark) */
+  --sidebar-bg:   #1D1D1F;
+  --sidebar-line: rgba(255,255,255,0.08);
+  --sidebar-text: #AEAEB2;
+  --sidebar-strong: #FFFFFF;
+
+  /* Typography — Apple system stack (San Francisco on Apple platforms,
+     graceful fallback to Segoe / Roboto / Helvetica on others) */
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, system-ui, sans-serif;
+  --font-body:    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, system-ui, sans-serif;
+  --font-mono:    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, "Cascadia Code", Consolas, monospace;
+
+  /* Letter-spacing for small-caps labels */
+  --tracking-label: 0.18em;
+  --tracking-label-tight: 0.12em;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: var(--paper);
+  --color-foreground: var(--ink);
+  --font-sans:    var(--font-body);
+  --font-display: var(--font-display);
+  --font-mono:    var(--font-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ── Body baseline ─────────────────────────────────────────────────────────── */
+
+html, body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ── Reusable primitives (used across pages) ───────────────────────────────── */
+
+.fd-display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  line-height: 1.05;
+}
+
+.fd-eyebrow {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.fd-section-rule {
+  border-top: 1px solid var(--rule);
+}
+
+.fd-hairline { border-color: var(--hairline); }
+.fd-hairline-strong { border-color: var(--hairline-strong); }
+
+/* Card — Apple-style soft radius, hairline border, no shadow by default */
+.fd-card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+}
+.fd-card-flat {
+  background: var(--surface);
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+.fd-card-inset {
+  background: var(--surface-soft);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+}
+
+/* Buttons — primitive class library */
+.fd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.8125rem;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  padding: 0.625rem 1rem;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease, transform 140ms ease;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fd-btn:active:not(:disabled) { transform: scale(0.98); }
+.fd-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.fd-btn-primary {
+  background: var(--ink);
+  color: var(--paper);
+}
+.fd-btn-primary:hover:not(:disabled) { background: var(--accent); }
+
+.fd-btn-accent {
+  background: var(--accent);
+  color: var(--surface);
+}
+.fd-btn-accent:hover:not(:disabled) { background: var(--accent-hot); }
+
+.fd-btn-ghost {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--hairline-strong);
+}
+.fd-btn-ghost:hover:not(:disabled) { background: var(--paper-dim); border-color: var(--ink); }
+
+.fd-btn-quiet {
+  background: transparent;
+  color: var(--ink-soft);
+}
+.fd-btn-quiet:hover:not(:disabled) { color: var(--ink); background: var(--paper-dim); }
+
+/* Pills / status chips */
+.fd-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: var(--tracking-label-tight);
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.fd-pill-ok      { color: var(--ok);     background: var(--ok-soft); border-color: transparent; }
+.fd-pill-warn    { color: var(--warn);   background: var(--warn-soft); border-color: transparent; }
+.fd-pill-danger  { color: var(--danger); background: var(--danger-soft); border-color: transparent; }
+.fd-pill-info    { color: var(--info);   background: var(--info-soft); border-color: transparent; }
+.fd-pill-muted   { color: var(--ink-soft); background: var(--paper-dim); border-color: transparent; }
+
+/* Filter tabs */
+.fd-tab {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  padding: 6px 12px;
+  border-radius: 999px;
+  color: var(--ink-soft);
+  transition: color 120ms ease, background-color 120ms ease;
+  cursor: pointer;
+}
+.fd-tab:hover { color: var(--ink); }
+.fd-tab-active { background: var(--ink); color: var(--paper); }
+.fd-tab-active:hover { color: var(--paper); }
+
+/* Inputs */
+.fd-input {
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  padding: 0.625rem 0.875rem;
+  width: 100%;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.fd-input::placeholder { color: var(--ink-faint); }
+.fd-input:focus {
+  outline: none;
+  border-color: #0071E3;
+  box-shadow: 0 0 0 4px var(--focus-ring);
+}
+
+/* Page canvas */
+.fd-canvas {
+  background: var(--paper);
+  min-height: 100%;
+}
+
+/* Numeric — small caps style number labels */
+.fd-numeric {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
+  letter-spacing: 0.02em;
+}
+
+/* Section header — small-caps title with rule */
+.fd-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+.fd-section-title {
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+/* Reveal animation — used once on page load */
+@keyframes fd-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fd-stagger > * {
+  opacity: 0;
+  animation: fd-rise 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+.fd-stagger > *:nth-child(1) { animation-delay:  40ms; }
+.fd-stagger > *:nth-child(2) { animation-delay: 100ms; }
+.fd-stagger > *:nth-child(3) { animation-delay: 160ms; }
+.fd-stagger > *:nth-child(4) { animation-delay: 220ms; }
+.fd-stagger > *:nth-child(5) { animation-delay: 280ms; }
+.fd-stagger > *:nth-child(6) { animation-delay: 340ms; }
+.fd-stagger > *:nth-child(7) { animation-delay: 400ms; }
+@media (prefers-reduced-motion: reduce) {
+  .fd-stagger > * { opacity: 1; animation: none; }
+}
+
+/* Sidebar — dark surface */
+.fd-sidebar {
+  background: var(--sidebar-bg);
+  color: var(--sidebar-text);
+}
+.fd-sidebar a, .fd-sidebar button { color: var(--sidebar-text); }
+.fd-sidebar .fd-sidebar-active {
+  background: rgba(255,255,255,0.08);
+  color: var(--sidebar-strong);
+}
+
+/* Selection — warm tone */
+::selection {
+  background: var(--accent);
+  color: var(--surface);
 }

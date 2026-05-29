@@ -46,38 +46,39 @@ type TranscriptState =
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-const TYPE_COLORS: Record<string, string> = {
-  reservation:         'bg-blue-100 text-blue-700',
-  appointment:         'bg-blue-100 text-blue-700',
-  appointment_request: 'bg-blue-100 text-blue-700',
-  order:               'bg-purple-100 text-purple-700',
-  service_request:     'bg-purple-100 text-purple-700',
-  quote_request:       'bg-purple-100 text-purple-700',
-  inquiry:             'bg-gray-100 text-gray-600',
-  general_question:    'bg-gray-100 text-gray-600',
-  complaint:           'bg-red-100 text-red-700',
+const TYPE_PILL: Record<string, string> = {
+  reservation:         'fd-pill fd-pill-info',
+  appointment:         'fd-pill fd-pill-info',
+  appointment_request: 'fd-pill fd-pill-info',
+  order:               'fd-pill fd-pill-info',
+  service_request:     'fd-pill fd-pill-info',
+  quote_request:       'fd-pill fd-pill-info',
+  inquiry:             'fd-pill fd-pill-muted',
+  general_question:    'fd-pill fd-pill-muted',
+  complaint:           'fd-pill fd-pill-danger',
 };
 
-const STATUS_STYLES: Record<string, string> = {
-  resolved:    'bg-green-100 text-green-800',
-  escalated:   'bg-red-100 text-red-800',
-  missed:      'bg-gray-100 text-gray-600',
-  active:      'bg-blue-100 text-blue-700',
-  in_progress: 'bg-blue-100 text-blue-700',
+const STATUS_PILL: Record<string, string> = {
+  resolved:    'fd-pill fd-pill-ok',
+  escalated:   'fd-pill fd-pill-danger',
+  missed:      'fd-pill fd-pill-muted',
+  active:      'fd-pill fd-pill-info',
+  in_progress: 'fd-pill fd-pill-info',
+  pending:     'fd-pill fd-pill-warn',
 };
 
 function cap(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-function typeClass(t: string | null | undefined) {
-  if (!t) return 'bg-gray-100 text-gray-500';
-  return TYPE_COLORS[t.toLowerCase()] ?? 'bg-gray-100 text-gray-600';
+function typePillClass(t: string | null | undefined) {
+  if (!t) return 'fd-pill fd-pill-muted';
+  return TYPE_PILL[t.toLowerCase()] ?? 'fd-pill fd-pill-muted';
 }
 
-function statusClass(s: string | null | undefined) {
-  if (!s) return 'bg-gray-100 text-gray-500';
-  return STATUS_STYLES[s.toLowerCase()] ?? 'bg-gray-100 text-gray-600';
+function statusPillClass(s: string | null | undefined) {
+  if (!s) return 'fd-pill fd-pill-muted';
+  return STATUS_PILL[s.toLowerCase()] ?? 'fd-pill fd-pill-muted';
 }
 
 function formatDuration(secs: number | null | undefined): string {
@@ -114,6 +115,210 @@ function msgText(msg: DbCallMessage): string {
   return m.content ?? m.message ?? m.text ?? '(empty)';
 }
 
+// ─── Energy helpers ────────────────────────────────────────────────────────
+// Deterministic avatar palette — Apple Contacts style soft pastels, picked by name hash.
+
+const AVATAR_PALETTE: Array<{ bg: string; fg: string }> = [
+  { bg: '#E8F0FE', fg: '#1E40AF' }, // blue
+  { bg: '#E6F4EA', fg: '#166534' }, // green
+  { bg: '#FCE7E6', fg: '#9F1239' }, // rose
+  { bg: '#FEF3C7', fg: '#92400E' }, // amber
+  { bg: '#EDE9FE', fg: '#5B21B6' }, // violet
+  { bg: '#E0F2FE', fg: '#075985' }, // sky
+  { bg: '#FCE7F3', fg: '#9D174D' }, // pink
+  { bg: '#D1FAE5', fg: '#065F46' }, // emerald
+];
+
+function avatarFor(name: string | null | undefined): { initials: string; bg: string; fg: string } {
+  const safe = (name ?? '').trim();
+  let hash = 0;
+  for (let i = 0; i < safe.length; i++) hash = (hash * 31 + safe.charCodeAt(i)) >>> 0;
+  const palette = AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
+  const initials = safe ? safe.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase() : '·';
+  return { initials, ...palette };
+}
+
+function dateOnly(iso: string | null | undefined): Date | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}
+
+function startOfDay(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+function dateGroupLabel(iso: string | null | undefined): { key: number; label: string } {
+  const d = dateOnly(iso);
+  if (!d) return { key: 0, label: 'Unknown' };
+  const today = startOfDay(new Date());
+  const dayStart = startOfDay(d);
+  const diffDays = Math.round((today - dayStart) / (1000 * 60 * 60 * 24));
+  if (diffDays === 0) return { key: dayStart, label: 'Today' };
+  if (diffDays === 1) return { key: dayStart, label: 'Yesterday' };
+  if (diffDays < 7) return { key: dayStart, label: d.toLocaleDateString('en-US', { weekday: 'long' }) };
+  return { key: dayStart, label: d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }) };
+}
+
+function groupCallsByDate(calls: DbCall[]): Array<{ key: number; label: string; calls: DbCall[] }> {
+  const groups = new Map<number, { key: number; label: string; calls: DbCall[] }>();
+  for (const c of calls) {
+    const { key, label } = dateGroupLabel(c.started_at ?? c.created_at);
+    const g = groups.get(key);
+    if (g) g.calls.push(c);
+    else groups.set(key, { key, label, calls: [c] });
+  }
+  return Array.from(groups.values()).sort((a, b) => b.key - a.key);
+}
+
+function computeStats(calls: DbCall[]): {
+  today: number;
+  total: number;
+  avgLabel: string;
+  resolvedPct: number;
+} {
+  const todayStart = startOfDay(new Date());
+  let today = 0;
+  let durationSum = 0;
+  let durationCount = 0;
+  let resolved = 0;
+  for (const c of calls) {
+    const d = dateOnly(c.started_at ?? c.created_at);
+    if (d && startOfDay(d) === todayStart) today++;
+    if (typeof c.duration_seconds === 'number') {
+      durationSum += c.duration_seconds;
+      durationCount++;
+    }
+    if (c.status === 'resolved') resolved++;
+  }
+  const avgSec = durationCount > 0 ? Math.round(durationSum / durationCount) : 0;
+  const m = Math.floor(avgSec / 60);
+  const s = avgSec % 60;
+  const avgLabel = durationCount > 0 ? `${m}:${s.toString().padStart(2, '0')}` : '—';
+  const resolvedPct = calls.length > 0 ? Math.round((resolved / calls.length) * 100) : 0;
+  return { today, total: calls.length, avgLabel, resolvedPct };
+}
+
+function StatStrip({ stats }: { stats: ReturnType<typeof computeStats> }) {
+  const items = [
+    { label: 'Today', value: String(stats.today), accent: stats.today > 0 },
+    { label: 'Total', value: String(stats.total) },
+    { label: 'Avg duration', value: stats.avgLabel },
+    { label: 'Resolved', value: `${stats.resolvedPct}%`, success: stats.resolvedPct >= 80 },
+  ];
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+      {items.map((item) => (
+        <div key={item.label} className="fd-card px-4 py-4">
+          <p className="text-[12px] font-medium mb-2" style={{ color: 'var(--ink-soft)' }}>
+            {item.label}
+          </p>
+          <p
+            className="text-[28px] font-semibold tracking-tight leading-none"
+            style={{
+              color: item.accent ? 'var(--accent)' : item.success ? 'var(--ok)' : 'var(--ink)',
+            }}
+          >
+            {item.value}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CallRow({
+  call,
+  expanded,
+  onToggle,
+  transcript,
+}: {
+  call: DbCall;
+  expanded: boolean;
+  onToggle: () => void;
+  transcript: TranscriptState | undefined;
+}) {
+  const name = call.customer_name ?? call.caller_name ?? 'Unknown caller';
+  const phone = call.customer_phone ?? call.caller_phone ?? '';
+  const av = avatarFor(name);
+  const { time } = formatDateTime(call.started_at ?? call.created_at);
+  const type = call.intent ?? call.call_type;
+  const status = call.status;
+
+  return (
+    <div
+      className="fd-card overflow-hidden transition-shadow hover:shadow-sm"
+      style={{ backgroundColor: expanded ? 'var(--surface-soft)' : undefined }}
+    >
+      <button
+        onClick={onToggle}
+        className="w-full text-left px-5 py-4 flex items-start gap-4 group"
+      >
+        {/* Avatar */}
+        <div
+          className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 text-[13px] font-semibold mt-0.5"
+          style={{ backgroundColor: av.bg, color: av.fg }}
+        >
+          {av.initials}
+        </div>
+
+        {/* Main */}
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
+            <span className="text-[15px] font-semibold tracking-tight truncate" style={{ color: 'var(--ink)' }}>
+              {name}
+            </span>
+            {phone && (
+              <span className="text-[12px] fd-numeric" style={{ color: 'var(--ink-muted)' }}>
+                {phone}
+              </span>
+            )}
+            {type && (
+              <>
+                <span style={{ color: 'var(--ink-faint)' }}>·</span>
+                <span className={typePillClass(type)}>
+                  {cap(type.replace(/_/g, ' '))}
+                </span>
+              </>
+            )}
+          </div>
+          <p className="text-[13px] leading-relaxed line-clamp-2" style={{ color: 'var(--ink-soft)' }}>
+            {call.summary ?? 'No summary.'}
+          </p>
+        </div>
+
+        {/* Meta column */}
+        <div className="flex flex-col items-end gap-1.5 flex-shrink-0 pt-0.5">
+          {status && <span className={statusPillClass(status)}>{cap(status)}</span>}
+          <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--ink-muted)' }}>
+            <span className="fd-numeric">{time}</span>
+            <span>·</span>
+            <span className="fd-numeric">{formatDuration(call.duration_seconds)}</span>
+            <svg
+              className={`w-3.5 h-3.5 transition-transform ${expanded ? 'rotate-180' : 'group-hover:translate-x-0.5'}`}
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={expanded ? 'M19 9l-7 7-7-7' : 'M9 5l7 7-7 7'} />
+            </svg>
+          </div>
+        </div>
+      </button>
+
+      {/* Expanded transcript */}
+      {expanded && (
+        <div className="px-5 pb-5 pt-1" style={{ borderTop: '1px solid var(--hairline)' }}>
+          <TranscriptPanel
+            state={transcript}
+            isTestCall={call.customer_name === 'Test call'}
+            callTranscript={call.transcript}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Demo mode ─────────────────────────────────────────────────────────────
 
 const MOCK_TYPE_LABEL: Record<CallType, string> = {
@@ -123,69 +328,68 @@ const MOCK_TYPE_LABEL: Record<CallType, string> = {
   complaint: 'Complaint',
 };
 
-const MOCK_TYPE_COLOR: Record<CallType, string> = {
-  reservation: 'bg-blue-100 text-blue-700',
-  order:       'bg-purple-100 text-purple-700',
-  inquiry:     'bg-gray-100 text-gray-600',
-  complaint:   'bg-red-100 text-red-700',
+const MOCK_TYPE_PILL: Record<CallType, string> = {
+  reservation: 'fd-pill fd-pill-info',
+  order:       'fd-pill fd-pill-info',
+  inquiry:     'fd-pill fd-pill-muted',
+  complaint:   'fd-pill fd-pill-danger',
 };
+
+function CallsPageHeader({ count, demo }: { count: number; demo?: boolean }) {
+  return (
+    <header className="mb-8">
+      <h1 className="fd-display text-4xl sm:text-5xl mb-2" style={{ color: 'var(--ink)' }}>
+        Call history
+      </h1>
+      <p className="text-[15px] max-w-xl leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
+        Every call answered by your front desk. Tap a row to expand the transcript.
+        {' '}<span style={{ color: 'var(--ink-muted)' }}>· {count} total{demo ? ' · Demo' : ''}</span>
+      </p>
+    </header>
+  );
+}
 
 function DemoCallHistoryPage() {
   return (
-    <div className="p-6 max-w-5xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Call History</h1>
-        <p className="text-sm text-gray-500 mt-1">All calls handled by the AI assistant.</p>
-      </div>
-
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
-          <span className="text-sm text-gray-500">{MOCK_CALLS.length} calls total</span>
-          <span className="text-xs text-amber-700 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded">
-            Demo mode
-          </span>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50 text-left">
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Date / Time</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Caller</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Type</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Duration</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
-                <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Summary</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {MOCK_CALLS.map((call) => (
-                <tr key={call.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-5 py-3 whitespace-nowrap text-gray-600">
-                    <div>{call.date}</div>
-                    <div className="text-xs text-gray-400">{call.time}</div>
-                  </td>
-                  <td className="px-5 py-3">
-                    <div className="font-medium text-gray-900">{call.callerName}</div>
-                    <div className="text-xs text-gray-400">{call.callerPhone}</div>
-                  </td>
-                  <td className="px-5 py-3 whitespace-nowrap">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${MOCK_TYPE_COLOR[call.type]}`}>
-                      {MOCK_TYPE_LABEL[call.type]}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3 text-gray-600 whitespace-nowrap font-mono text-xs">
-                    {call.duration}
-                  </td>
-                  <td className="px-5 py-3 whitespace-nowrap">
-                    <StatusBadge status={call.status} />
-                  </td>
-                  <td className="px-5 py-3 text-gray-500 max-w-xs truncate">{call.summary}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+    <div className="w-full max-w-5xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
+      <CallsPageHeader count={MOCK_CALLS.length} demo />
+      <div className="space-y-2 fd-stagger">
+        {MOCK_CALLS.map((call) => {
+          const av = avatarFor(call.callerName);
+          return (
+            <div key={call.id} className="fd-card px-5 py-4 flex items-start gap-4">
+              <div
+                className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 text-[13px] font-semibold mt-0.5"
+                style={{ backgroundColor: av.bg, color: av.fg }}
+              >
+                {av.initials}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
+                  <span className="text-[15px] font-semibold tracking-tight truncate" style={{ color: 'var(--ink)' }}>
+                    {call.callerName}
+                  </span>
+                  <span className="text-[12px] fd-numeric" style={{ color: 'var(--ink-muted)' }}>
+                    {call.callerPhone}
+                  </span>
+                  <span style={{ color: 'var(--ink-faint)' }}>·</span>
+                  <span className={MOCK_TYPE_PILL[call.type]}>{MOCK_TYPE_LABEL[call.type]}</span>
+                </div>
+                <p className="text-[13px] leading-relaxed line-clamp-2" style={{ color: 'var(--ink-soft)' }}>
+                  {call.summary}
+                </p>
+              </div>
+              <div className="flex flex-col items-end gap-1.5 flex-shrink-0 pt-0.5">
+                <StatusBadge status={call.status} />
+                <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--ink-muted)' }}>
+                  <span className="fd-numeric">{call.time}</span>
+                  <span>·</span>
+                  <span className="fd-numeric">{call.duration}</span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -238,13 +442,15 @@ function TranscriptPanel({
             {parsedLines.map((line, idx) => {
               const label = line.role === 'assistant' ? 'Front desk' : 'Caller';
               const isAI = line.role === 'assistant';
+              // Front desk (agent) on the LEFT, caller on the RIGHT — staff reads the
+              // conversation as a third party reviewing what the business said vs the customer.
               return (
-                <div key={idx} className={`flex gap-2 ${isAI ? 'flex-row-reverse' : ''}`}>
+                <div key={idx} className={`flex gap-2 ${isAI ? '' : 'flex-row-reverse'}`}>
                   <span className={`text-xs font-semibold whitespace-nowrap mt-1.5 ${isAI ? 'text-orange-500' : 'text-gray-500'}`}>
                     {label}
                   </span>
                   <div className={`text-xs px-3 py-2 rounded-lg max-w-prose leading-relaxed ${
-                    isAI ? 'bg-orange-50 text-gray-800' : 'bg-white border border-gray-200 text-gray-700'
+                    isAI ? 'bg-orange-50 text-gray-800' : 'bg-white border fd-hairline-strong text-gray-700'
                   }`}>
                     {line.text}
                   </div>
@@ -276,8 +482,9 @@ function TranscriptPanel({
       {state.messages.map((msg) => {
         const label = roleLabel(msg.role);
         const isAI = label === 'Front desk';
+        // Front desk (agent) on the LEFT, caller on the RIGHT — staff perspective.
         return (
-          <div key={msg.id} className={`flex gap-2 ${isAI ? 'flex-row-reverse' : ''}`}>
+          <div key={msg.id} className={`flex gap-2 ${isAI ? '' : 'flex-row-reverse'}`}>
             <span
               className={`text-xs font-semibold whitespace-nowrap mt-1.5 ${
                 isAI ? 'text-orange-500' : 'text-gray-500'
@@ -289,7 +496,7 @@ function TranscriptPanel({
               className={`text-xs px-3 py-2 rounded-lg max-w-prose leading-relaxed ${
                 isAI
                   ? 'bg-orange-50 text-gray-800'
-                  : 'bg-white border border-gray-200 text-gray-700'
+                  : 'bg-white border fd-hairline-strong text-gray-700'
               }`}
             >
               {msgText(msg)}
@@ -346,153 +553,55 @@ function RealCallHistoryPage({
     }
   }
 
+  const stats = computeStats(calls);
+  const groups = groupCallsByDate(calls);
+
   return (
-    <div className="p-6 max-w-5xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Call History</h1>
-        <p className="text-sm text-gray-500 mt-1">All calls handled by the AI assistant.</p>
-      </div>
+    <div className="w-full max-w-5xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
+      <CallsPageHeader count={calls.length} />
 
       {loadError && (
-        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+        <div className="mb-6 px-4 py-3 text-sm rounded-[10px]" style={{ border: '1px solid var(--danger)', backgroundColor: 'var(--danger-soft)', color: 'var(--danger)' }}>
           <strong>Failed to load calls:</strong> {loadError}
         </div>
       )}
 
       {calls.length === 0 && !loadError ? (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-6 py-16 text-center">
-          <svg
-            className="w-10 h-10 text-gray-300 mx-auto mb-3"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"
-            />
-          </svg>
-          <p className="text-gray-400 text-sm font-medium">No calls yet</p>
-          <p className="text-gray-400 text-xs mt-1">
-            Calls handled by your AI assistant will appear here.
+        <div className="fd-card px-6 py-16 text-center">
+          <p className="fd-display text-3xl mb-2" style={{ color: 'var(--ink)' }}>No calls yet</p>
+          <p className="text-[15px]" style={{ color: 'var(--ink-soft)' }}>
+            Calls handled by your front desk will appear here.
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-5 py-3 border-b border-gray-100">
-            <span className="text-sm text-gray-500">
-              {calls.length} call{calls.length !== 1 ? 's' : ''} total
-            </span>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50 text-left">
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Date / Time</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Caller</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Type</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Duration</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
-                  <th className="px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Summary</th>
-                  <th className="px-5 py-3 w-8"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {calls.flatMap((call) => {
-                  const { date, time } = formatDateTime(call.started_at ?? call.created_at);
-                  const isExpanded = expandedId === call.id;
-
-                  const mainRow = (
-                    <tr
+        <>
+          <StatStrip stats={stats} />
+          <div className="space-y-10 fd-stagger">
+            {groups.map((group) => (
+              <section key={group.key}>
+                <div className="flex items-baseline justify-between mb-3">
+                  <h2 className="text-[13px] font-semibold tracking-wide uppercase" style={{ color: 'var(--ink-muted)' }}>
+                    {group.label}
+                  </h2>
+                  <span className="text-[12px]" style={{ color: 'var(--ink-muted)' }}>
+                    {group.calls.length} call{group.calls.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {group.calls.map((call) => (
+                    <CallRow
                       key={call.id}
-                      onClick={() => toggleExpand(call.id)}
-                      className={`border-t border-gray-50 transition-colors cursor-pointer ${
-                        isExpanded ? 'bg-orange-50/30' : 'hover:bg-gray-50'
-                      }`}
-                    >
-                      <td className="px-5 py-3 whitespace-nowrap text-gray-600">
-                        <div>{date}</div>
-                        <div className="text-xs text-gray-400">{time}</div>
-                      </td>
-                      <td className="px-5 py-3">
-                        <div className="font-medium text-gray-900">
-                          {call.customer_name ?? call.caller_name ?? 'Unknown'}
-                        </div>
-                        <div className="text-xs text-gray-400">
-                          {call.customer_phone ?? call.caller_phone ?? ''}
-                        </div>
-                      </td>
-                      <td className="px-5 py-3 whitespace-nowrap">
-                        {(call.intent ?? call.call_type) ? (
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${typeClass(call.intent ?? call.call_type)}`}
-                          >
-                            {cap((call.intent ?? call.call_type ?? '').replace(/_/g, ' '))}
-                          </span>
-                        ) : (
-                          <span className="text-gray-400 text-xs">—</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3 text-gray-600 whitespace-nowrap font-mono text-xs">
-                        {formatDuration(call.duration_seconds)}
-                      </td>
-                      <td className="px-5 py-3 whitespace-nowrap">
-                        {call.status ? (
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusClass(call.status)}`}
-                          >
-                            {cap(call.status)}
-                          </span>
-                        ) : (
-                          <span className="text-gray-400 text-xs">—</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3 text-gray-500 max-w-xs truncate">
-                        {call.summary ?? '—'}
-                      </td>
-                      <td className="px-5 py-3">
-                        <svg
-                          className={`w-4 h-4 text-gray-400 transition-transform ml-auto ${
-                            isExpanded ? 'rotate-180' : ''
-                          }`}
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M19 9l-7 7-7-7"
-                          />
-                        </svg>
-                      </td>
-                    </tr>
-                  );
-
-                  if (!isExpanded) return [mainRow];
-
-                  const expandedRow = (
-                    <tr key={`${call.id}-transcript`} className="border-t border-gray-100">
-                      <td colSpan={7} className="px-5 py-4 bg-gray-50">
-                        <TranscriptPanel
-                          state={transcripts[call.id]}
-                          isTestCall={call.customer_name === 'Test call'}
-                          callTranscript={call.transcript}
-                        />
-                      </td>
-                    </tr>
-                  );
-
-                  return [mainRow, expandedRow];
-                })}
-              </tbody>
-            </table>
+                      call={call}
+                      expanded={expandedId === call.id}
+                      onToggle={() => toggleExpand(call.id)}
+                      transcript={transcripts[call.id]}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
           </div>
-        </div>
+        </>
       )}
     </div>
   );

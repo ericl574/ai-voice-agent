@@ -84,7 +84,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="p-6 max-w-2xl">
+    <div className="w-full max-w-2xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
         <p className="text-sm text-gray-500 mt-1">Configure your business and AI assistant settings.</p>
@@ -93,8 +93,8 @@ export default function SettingsPage() {
       <form onSubmit={handleSave} className="space-y-6">
 
         {/* ── Business Information ────────────────────────────── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
+        <div className="fd-card overflow-hidden">
+          <div className="px-5 py-4 border-b fd-hairline">
             <h2 className="font-semibold text-gray-900">Business Information</h2>
           </div>
           <div className="p-5 space-y-4">
@@ -123,8 +123,8 @@ export default function SettingsPage() {
         </div>
 
         {/* ── AI Assistant (greeting / voice) ─────────────────── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
+        <div className="fd-card overflow-hidden">
+          <div className="px-5 py-4 border-b fd-hairline">
             <h2 className="font-semibold text-gray-900">AI Assistant</h2>
           </div>
           <div className="p-5 space-y-4">
@@ -135,7 +135,7 @@ export default function SettingsPage() {
               <select
                 value={business.aiVoice}
                 onChange={(e) => setBusiness((r) => ({ ...r, aiVoice: e.target.value }))}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
               >
                 <option>Female – Warm</option>
                 <option>Female – Professional</option>
@@ -151,7 +151,7 @@ export default function SettingsPage() {
                 rows={3}
                 value={business.greetingMessage}
                 onChange={(e) => setBusiness((r) => ({ ...r, greetingMessage: e.target.value }))}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none"
+                className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none"
               />
               <p className="text-xs text-gray-400 mt-1">
                 Use <code className="bg-gray-100 px-1 rounded">{'{business_name}'}</code> and{' '}
@@ -165,7 +165,7 @@ export default function SettingsPage() {
               <select
                 value={business.callbackWindow}
                 onChange={(e) => setBusiness((r) => ({ ...r, callbackWindow: e.target.value }))}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
               >
                 <option>1 hour</option>
                 <option>2 hours</option>
@@ -180,8 +180,8 @@ export default function SettingsPage() {
         </div>
 
         {/* ── AI Agent Configuration (persisted) ──────────────── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
+        <div className="fd-card overflow-hidden">
+          <div className="px-5 py-4 border-b fd-hairline">
             <h2 className="font-semibold text-gray-900">AI Agent Configuration</h2>
             <p className="text-xs text-gray-400 mt-0.5">
               These settings are saved to your account and shape how the AI responds in the Call Simulator and voice agent.
@@ -199,7 +199,7 @@ export default function SettingsPage() {
                 value={agentName}
                 onChange={(e) => setAgentName(e.target.value)}
                 placeholder="e.g. Ava"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
               />
               <p className="text-xs text-gray-400 mt-1">
                 Name your AI front desk agent. Used in the simulator greeting and future voice calls.
@@ -214,7 +214,7 @@ export default function SettingsPage() {
               <select
                 value={agentConfig.tone ?? 'friendly'}
                 onChange={(e) => setAgentConfig((prev) => ({ ...prev, tone: e.target.value }))}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
               >
                 <option value="friendly">Friendly</option>
                 <option value="professional">Professional</option>
@@ -233,7 +233,7 @@ export default function SettingsPage() {
                 onChange={(e) =>
                   setAgentConfig((prev) => ({ ...prev, callback_expectation: e.target.value }))
                 }
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
               />
               <p className="text-xs text-gray-400 mt-1">
                 Told to callers after logging a request. Shown in the simulator call summary.
@@ -251,7 +251,7 @@ export default function SettingsPage() {
                 onChange={(e) =>
                   setAgentConfig((prev) => ({ ...prev, staff_handoff_rule: e.target.value }))
                 }
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none"
+                className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none"
               />
               <p className="text-xs text-gray-400 mt-1">
                 When should the AI escalate to a human? e.g. Escalate urgent or angry callers.
@@ -269,7 +269,7 @@ export default function SettingsPage() {
                 onChange={(e) =>
                   setAgentConfig((prev) => ({ ...prev, booking_rule: e.target.value }))
                 }
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none"
+                className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none"
               />
               <p className="text-xs text-gray-400 mt-1">
                 e.g. Never confirm appointments automatically. Always mark as pending.
@@ -309,8 +309,8 @@ export default function SettingsPage() {
         </div>
 
         {/* ── Notifications ───────────────────────────────────── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
+        <div className="fd-card overflow-hidden">
+          <div className="px-5 py-4 border-b fd-hairline">
             <h2 className="font-semibold text-gray-900">Notifications</h2>
           </div>
           <div className="p-5 space-y-3">
@@ -385,7 +385,7 @@ function Field({
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
+        className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
       />
     </div>
   );

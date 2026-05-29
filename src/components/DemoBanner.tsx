@@ -3,51 +3,52 @@ import { MOCK_RESTAURANT } from '@/lib/mock-data';
 
 export default function DemoBanner({ isSignedIn = false }: { isSignedIn?: boolean }) {
   return (
-    <div className="bg-amber-50 border-b border-amber-100 px-5 h-12 flex items-center justify-between flex-shrink-0">
-
-      <div className="flex items-center gap-3">
-        <span className="inline-flex items-center bg-orange-50 border border-orange-200 text-orange-600 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded">
-          View Demo
+    <div
+      className="h-11 px-6 flex items-center justify-between flex-shrink-0"
+      style={{
+        backgroundColor: 'var(--paper-dim)',
+        borderBottom: '1px solid var(--hairline)',
+      }}
+    >
+      <div className="flex items-center gap-3 min-w-0">
+        <span
+          className="fd-eyebrow"
+          style={{ color: 'var(--accent)' }}
+        >
+          Demo
         </span>
-        <span className="text-sm font-medium text-gray-700">{MOCK_RESTAURANT.name}</span>
-        <span className="text-xs text-gray-400 hidden sm:inline">— sample data</span>
+        <span style={{ color: 'var(--hairline-strong)' }}>·</span>
+        <span className="text-[13px] font-medium truncate" style={{ color: 'var(--ink)' }}>
+          {MOCK_RESTAURANT.name}
+        </span>
+        <span className="text-[11px] hidden sm:inline" style={{ color: 'var(--ink-muted)' }}>
+          sample data — not your account
+        </span>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         <Link
           href="/"
-          className="text-sm text-gray-500 hover:text-gray-800 font-medium transition-colors flex items-center gap-1 px-2"
+          className="text-[12px] font-medium transition-colors flex items-center gap-1"
+          style={{ color: 'var(--ink-soft)' }}
         >
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Home
+          ← Home
         </Link>
         {isSignedIn ? (
-          <a
-            href="/dashboard"
-            className="text-sm font-semibold bg-black hover:bg-orange-600 text-white px-4 py-1 rounded-lg transition-colors"
-          >
+          <a href="/dashboard" className="fd-btn fd-btn-primary text-[12px] px-3 py-1.5">
             My dashboard →
           </a>
         ) : (
           <>
-            <Link
-              href="/login"
-              className="text-sm text-gray-600 hover:text-gray-900 font-medium transition-colors px-2"
-            >
+            <Link href="/login" className="fd-btn fd-btn-quiet text-[12px] px-3 py-1.5">
               Sign in
             </Link>
-            <Link
-              href="/signup"
-              className="text-sm font-semibold bg-black hover:bg-orange-600 text-white px-4 py-1 rounded-lg transition-colors"
-            >
+            <Link href="/signup" className="fd-btn fd-btn-primary text-[12px] px-3 py-1.5">
               Create account
             </Link>
           </>
         )}
       </div>
-
     </div>
   );
 }
