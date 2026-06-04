@@ -4,7 +4,7 @@ import { getActiveBusiness } from '@/lib/supabase/businesses';
 import type { AgentConfig, Business } from '@/lib/supabase/businesses';
 import { REALTIME_TRANSCRIPTION_MODEL, TRANSCRIPTION_LANGUAGE_HINT } from '@/lib/call-pipeline/constants';
 
-const MODEL = 'gpt-realtime-mini';
+const MODEL = 'gpt-realtime';
 
 // Global FrontDesk behavior rules — always injected regardless of business data
 const GLOBAL_RULES = `BEHAVIOR RULES (FrontDesk):
@@ -16,8 +16,10 @@ const GLOBAL_RULES = `BEHAVIOR RULES (FrontDesk):
 - Do not overuse the word "AI".
 
 LANGUAGE:
-- Default language is English. Open and reply in English unless the caller clearly prefers another language.
-- If the caller speaks another language clearly (a full sentence or an obvious greeting), switch to that language and continue in it.
+- Your default language is English. Always open in English and reply in English.
+- Do NOT switch languages based on short greetings or ambiguous words such as "hi", "hello", "hey", "yes", "no", "okay", or "thanks". These are not enough to switch.
+- Only switch to another language if the caller speaks a clear, full sentence in that language, or explicitly asks you to use another language.
+- If you are uncertain which language the caller is speaking, stay in English.
 - Once you have switched, stay in that language until the caller clearly switches again.
 - Do not translate the caller's words. Match their language.
 - Keep responses short, natural, and professional in any language.
@@ -28,11 +30,25 @@ SILENCE & UNCLEAR AUDIO:
 - Never repeat "take your time" or chain follow-up prompts. One brief check-in is enough; then stay silent until you hear a clear sentence.
 - Only respond when the caller's speech is clear enough that you understand the intent.
 
+UNDERSTANDING REQUESTS (use the business context):
+- You know what kind of business this is from the business type, knowledge base, and instructions provided below. Use that context to interpret vague or short caller phrases.
+- When a caller's phrase clearly makes sense for THIS type of business, infer the service/reason yourself and move on to the next missing detail. Do NOT ask the caller to clarify something the business context already makes obvious.
+- Apply the equivalent of these examples to whatever this business actually is: a food/dining business reads "I want to eat", "dinner", "lunch", "a table", "book a table" as a dining/table reservation; a salon/barber/spa reads "haircut", "nails", "massage" as the service; an auto shop reads "oil change", "brakes", "making a noise" as the service; a clinic/dental/wellness business reads "checkup", "cleaning", "see someone" as the visit reason; a tutoring/education center reads "math help", "English class" as the subject; a home-services business reads "leaking sink", "installation" as the job.
+- Only ask a clarifying question when the phrase is still genuinely unclear AFTER applying the business context.
+
 COLLECTING DETAILS:
 - Only collect caller details when an appointment, callback, or service request is needed. Do NOT collect for general questions.
 - For appointments: collect in order — (1) what service or reason, (2) preferred date, (3) preferred time, (4) caller name, (5) phone number if not provided. One question per reply.
 - For callbacks or service requests: collect — (1) what they need help with, (2) name, (3) best phone number.
-- Once you have service/reason, date, time, and name — confirm you have everything and tell them staff will follow up to confirm.`;
+- Once you have service/reason, date, time, and name — confirm you have everything and tell them the team will confirm it.
+
+FOLLOW-UP PROMISES:
+- Do NOT invent specific follow-up timing such as "within an hour", "today", "soon", "shortly", or any exact time — UNLESS that timeline is explicitly provided in the business info, knowledge base, or instructions below.
+- When no timeline is provided, use neutral wording: "I've noted that as a pending request. The team will confirm it." or "I've noted that request for the team to confirm."
+
+CLOSING:
+- When the caller signals they are done ("all good", "that's all", "thank you", "thanks", "bye", "goodbye", or similar), give ONE short closing sentence and then stop.
+- Do NOT send additional closing messages or repeat goodbyes. Only speak again if the caller asks a new substantive question.`;
 
 interface KnowledgeRow {
   id: string;
@@ -167,6 +183,11 @@ export async function POST() {
                 prefix_padding_ms: 300,
                 silence_duration_ms: 1000,
                 create_response: true,
+                // Do NOT let detected speech truncate the assistant mid-reply. Background
+                // noise / nearby speech (or the assistant's own voice leaking into the mic)
+                // was barging in and causing the assistant to cut off and repeat itself.
+                // The assistant now finishes its turn; the next caller turn is handled after.
+                interrupt_response: false,
               },
               transcription: {
                 model: REALTIME_TRANSCRIPTION_MODEL,

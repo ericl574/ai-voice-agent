@@ -180,8 +180,14 @@ export default function VoicePage() {
       console.log('[FD debug] event:', type);
     }
 
-    if (type === 'input_audio_buffer.speech_started') setIsSpeaking(true);
-    if (type === 'input_audio_buffer.speech_stopped') setIsSpeaking(false);
+    if (type === 'input_audio_buffer.speech_started') {
+      console.log('[FD debug] VAD speech_started');
+      setIsSpeaking(true);
+    }
+    if (type === 'input_audio_buffer.speech_stopped') {
+      console.log('[FD debug] VAD speech_stopped');
+      setIsSpeaking(false);
+    }
 
     if (type === 'conversation.item.input_audio_transcription.completed') {
       setIsSpeaking(false);
@@ -383,7 +389,17 @@ export default function VoicePage() {
     // 1. Request microphone access
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Explicitly enable the browser's built-in DSP. echoCancellation stops the assistant's
+      // own voice (played through speakers) from looping back into the mic and being heard as
+      // caller speech; noiseSuppression/autoGainControl reduce background noise that can falsely
+      // trigger a caller turn. Defaults are device-dependent, so request them explicitly.
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       streamRef.current = stream;
     } catch (err: unknown) {
       const denied =
