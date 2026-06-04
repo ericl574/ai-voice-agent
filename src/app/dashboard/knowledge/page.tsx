@@ -10,6 +10,7 @@ import {
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
 import type { AgentConfig } from '@/lib/supabase/businesses';
+import { BUSINESS_TYPE_OPTIONS, getVertical } from '@/lib/agents/verticals/registry';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,55 +40,22 @@ const INPUT_CLASS =
 
 const LABEL_CLASS = 'block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5';
 
-const BUSINESS_TYPE_OPTIONS = [
-  { value: 'restaurant', label: 'Restaurant' },
-  { value: 'auto_repair', label: 'Auto Repair Shop' },
-  { value: 'salon', label: 'Salon / Spa' },
-  { value: 'clinic', label: 'Clinic / Medical' },
-  { value: 'tutoring', label: 'Tutoring / Education' },
-  { value: 'home_services', label: 'Home Services' },
-  { value: 'other', label: 'Other' },
-];
+// Universal tone suggestions (a vertical may override via profile.suggestedToneTags).
+const TONE_TAGS = ['Friendly', 'Calm', 'Direct', 'Efficient', 'Professional', 'Warm'];
 
-const TONE_TAGS = [
-  { value: 'friendly', label: 'Friendly' },
-  { value: 'calm', label: 'Calm' },
-  { value: 'direct', label: 'Direct' },
-  { value: 'efficient', label: 'Efficient' },
-  { value: 'professional', label: 'Professional' },
-  { value: 'warm', label: 'Warm' },
-];
-
-const REQUEST_TYPES = [
-  { value: 'appointments', label: 'Appointments' },
-  { value: 'service_requests', label: 'Service requests' },
-  { value: 'inquiries', label: 'General inquiries' },
-  { value: 'orders', label: 'Orders / takeout' },
-];
-
-const COLLECT_FIELDS: { key: keyof AgentConfig; label: string }[] = [
-  { key: 'collect_name', label: 'Caller name' },
-  { key: 'collect_phone', label: 'Phone number' },
-  { key: 'collect_service', label: 'Service / date / time' },
-  { key: 'collect_notes', label: 'Notes / special requests' },
-  { key: 'collect_urgency', label: 'Urgency level' },
-];
-
+// Defaults intentionally OMIT main_request_types / details_to_collect so an unconfigured
+// business falls back to its vertical's suggested defaults (shown in the chip editors) until
+// the owner customizes and saves an explicit list.
 const DEFAULT_CONFIG: AgentConfig = {
   tone: 'friendly',
-  tone_tags: ['friendly', 'calm', 'direct', 'efficient'],
+  tone_tags: ['friendly', 'calm'],
+  custom_tone: '',
   business_hours: '',
   walk_in_allowed: false,
   appointments_require_confirmation: true,
-  main_request_types: ['appointments', 'service_requests', 'inquiries'],
   staff_handoff_rule: 'Escalate urgent, angry, or complex calls to staff immediately.',
   booking_rule: 'Never confirm appointments automatically. Mark as pending until staff confirms.',
-  callback_expectation: 'Staff will follow up within 2 hours during business hours.',
-  collect_name: true,
-  collect_phone: true,
-  collect_service: true,
-  collect_notes: true,
-  collect_urgency: false,
+  callback_expectation: 'Staff will follow up during business hours.',
   custom_instructions: '',
 };
 
@@ -165,31 +133,146 @@ function ToggleRow({
   );
 }
 
-function CheckCard({
-  label,
-  checked,
-  onChange,
+// Editable, vertical-aware chip list: selected chips (removable) + suggestion chips (click to
+// add) + a free-text input. Suggestions are guidance only; the owner's list is what gets saved.
+function ChipEditor({
+  title,
+  selected,
+  suggestions,
+  hidden,
+  onAdd,
+  onRemove,
+  onDelete,
+  onReset,
+  resetLabel = 'Reset to defaults',
+  placeholder = 'Add your own…',
+  emptyText = 'None selected — add a suggestion below or type your own.',
 }: {
-  label: string;
-  checked: boolean;
-  onChange: () => void;
+  title?: string;
+  selected: string[];
+  suggestions: string[];
+  hidden: string[];
+  onAdd: (value: string) => void;
+  onRemove: (value: string) => void;
+  onDelete: (value: string) => void;
+  onReset?: () => void;
+  resetLabel?: string;
+  placeholder?: string;
+  emptyText?: string;
 }) {
+  const [input, setInput] = useState('');
+  const eq = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+  const has = (v: string) => selected.some((s) => eq(s, v));
+  const isHidden = (v: string) => hidden.some((h) => eq(h, v));
+  // Suggestion row = vertical defaults minus selected minus ×-deleted (hidden, persisted).
+  const available = suggestions.filter((s) => !has(s) && !isHidden(s));
+
+  function add(value: string) {
+    const val = value.trim();
+    setInput('');
+    if (val && !has(val)) onAdd(val); // parent materializes selection + un-hides
+  }
+
   return (
-    <label
-      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${
-        checked
-          ? 'border-orange-200 bg-orange-50/50'
-          : 'fd-hairline hover:fd-hairline-strong hover:bg-gray-50'
-      }`}
-    >
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={onChange}
-        className="w-4 h-4 accent-orange-500 flex-shrink-0"
-      />
-      <span className="text-sm text-gray-700">{label}</span>
-    </label>
+    <div className="space-y-3">
+      {(title || onReset) && (
+        <div className="flex items-center justify-between gap-3">
+          {title ? (
+            <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{title}</span>
+          ) : <span />}
+          {onReset && (
+            <button
+              type="button"
+              onClick={onReset}
+              className="flex-shrink-0 text-xs font-medium text-gray-500 hover:text-orange-600 transition-colors"
+            >
+              ↺ {resetLabel}
+            </button>
+          )}
+        </div>
+      )}
+
+      {selected.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {selected.map((item) => (
+            <span
+              key={item}
+              className="inline-flex items-center rounded-full text-sm font-medium bg-orange-500 text-white overflow-hidden"
+            >
+              {/* Chip body — DESELECT: returns the chip to the suggestions row (toggle). */}
+              <button
+                type="button"
+                onClick={() => onRemove(item)}
+                title="Click to deselect"
+                className="pl-3 pr-1.5 py-1.5 leading-none hover:bg-orange-600 transition-colors"
+              >
+                {item}
+              </button>
+              {/* × — DELETE: removes + hides the chip (persisted). stopPropagation so it doesn't
+                  also trigger the body deselect. Reset (or re-adding) brings it back. */}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onDelete(item); }}
+                aria-label={`Delete ${item}`}
+                className="pr-3 pl-0.5 py-1.5 text-orange-100 hover:text-white leading-none text-base hover:bg-orange-600 transition-colors"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-gray-400">{emptyText}</p>
+      )}
+
+      {available.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {available.map((s) => (
+            <span
+              key={s}
+              className="inline-flex items-center rounded-full text-sm font-medium border fd-hairline-strong text-gray-600 overflow-hidden"
+            >
+              {/* Body — SELECT: moves the chip into the selected list. */}
+              <button
+                type="button"
+                onClick={() => onAdd(s)}
+                title="Click to select"
+                className="pl-3 pr-1.5 py-1.5 leading-none hover:text-orange-600 transition-colors"
+              >
+                {s}
+              </button>
+              {/* × — DELETE: hides this suggestion (persisted). stopPropagation so it doesn't select. */}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onDelete(s); }}
+                aria-label={`Delete ${s}`}
+                className="pr-3 pl-0.5 py-1.5 text-gray-400 hover:text-red-500 leading-none text-base transition-colors"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(input); } }}
+          placeholder={placeholder}
+          className={INPUT_CLASS}
+        />
+        <button
+          type="button"
+          onClick={() => add(input)}
+          className="flex-shrink-0 text-sm font-semibold bg-gray-900 hover:bg-gray-700 text-white px-4 py-2 rounded-lg transition-colors"
+        >
+          Add
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -233,18 +316,36 @@ function ProfileTab({
     setIsDirty(true);
   }
 
-  function toggleToneTag(tag: string) {
-    const current = config.tone_tags ?? [];
-    const next = current.includes(tag) ? current.filter((t) => t !== tag) : [...current, tag];
-    setField('tone_tags', next.length > 0 ? next : [tag]);
+  // Update several agent_config keys in one onChange (avoids stale-config double setField).
+  function patchConfig(patch: Partial<AgentConfig>) {
+    onChange({ ...config, ...patch });
+    setIsDirty(true);
   }
 
-  function toggleRequestType(type: string) {
-    const current = config.main_request_types ?? [];
-    setField(
-      'main_request_types',
-      current.includes(type) ? current.filter((t) => t !== type) : [...current, type],
-    );
+  const eq = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+
+  // Shared handlers for a chip section: select (un-hides), deselect, delete (hide), reset.
+  function chipHandlers(
+    selectedKey: 'main_request_types' | 'details_to_collect' | 'tone_tags',
+    hiddenKey: 'hidden_request_types' | 'hidden_details_to_collect' | 'hidden_tone_tags',
+    current: string[],
+    currentHidden: string[],
+    defaults: string[],
+  ) {
+    return {
+      onAdd: (v: string) =>
+        patchConfig({
+          [selectedKey]: [...current, v],
+          [hiddenKey]: currentHidden.filter((h) => !eq(h, v)),
+        }),
+      onRemove: (v: string) => setField(selectedKey, current.filter((x) => !eq(x, v))),
+      onDelete: (v: string) =>
+        patchConfig({
+          [selectedKey]: current.filter((x) => !eq(x, v)),
+          [hiddenKey]: currentHidden.some((h) => eq(h, v)) ? currentHidden : [...currentHidden, v],
+        }),
+      onReset: () => patchConfig({ [selectedKey]: [...defaults], [hiddenKey]: [] }),
+    };
   }
 
   async function handleSave() {
@@ -272,11 +373,51 @@ function ProfileTab({
     }
   }
 
+  // Vertical drives the SUGGESTIONS; the owner's saved arrays are the source of truth.
+  // When a list is unset, show the vertical's suggested defaults as the selected starting point
+  // (the owner can remove any). The first add/remove materializes an explicit saved array.
+  const vertical = getVertical(localType);
   const toneTags = config.tone_tags ?? [];
-  const requestTypes = config.main_request_types ?? [];
+  const toneSuggestions = vertical.suggestedToneTags ?? TONE_TAGS;
+  const requestTypes = config.main_request_types ?? vertical.suggestedRequestTypes;
+  const detailFields = config.details_to_collect ?? vertical.suggestedDetailFields;
+  const hiddenRequest = config.hidden_request_types ?? [];
+  const hiddenDetails = config.hidden_details_to_collect ?? [];
+  const hiddenTone = config.hidden_tone_tags ?? [];
 
   return (
     <div className="space-y-4 max-w-2xl pb-20">
+
+      {/* ── 0. Business type — master control (drives all suggestions below) ── */}
+      <div className="fd-card overflow-hidden ring-1 ring-orange-200">
+        <div className="px-5 py-4 border-b fd-hairline bg-orange-50/60">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-orange-600 mb-1">Start here</p>
+          <h2 className="text-base font-semibold text-gray-900">Choose your business type</h2>
+          <p className="text-xs text-gray-500 mt-1">
+            This sets the suggested request types, details, and tone below. You can still customize everything — your changes always take priority.
+          </p>
+        </div>
+        <div className="px-5 py-4">
+          {isDemo ? (
+            <InfoPair label="Business type" value={localType} />
+          ) : (
+            <>
+              <select
+                value={localType}
+                onChange={(e) => { setLocalType(e.target.value); setIsDirty(true); }}
+                className={INPUT_CLASS}
+              >
+                {BUSINESS_TYPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              {vertical.profileSetupHint && (
+                <p className="text-xs text-gray-400 mt-2">{vertical.profileSetupHint}</p>
+              )}
+            </>
+          )}
+        </div>
+      </div>
 
       {/* ── 1. Business identity ── */}
       <div className="fd-card overflow-hidden">
@@ -288,7 +429,6 @@ function ProfileTab({
           {isDemo ? (
             <div className="grid grid-cols-2 gap-x-8 gap-y-4">
               <InfoPair label="Business name" value={localName} />
-              <InfoPair label="Business type" value={localType} />
               <InfoPair label="Phone" value={localPhone} />
               <InfoPair label="Location" value={[localCity, localRegion].filter(Boolean).join(', ')} />
             </div>
@@ -303,18 +443,6 @@ function ProfileTab({
                   placeholder="Your business name"
                   className={INPUT_CLASS}
                 />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Business type</label>
-                <select
-                  value={localType}
-                  onChange={(e) => { setLocalType(e.target.value); setIsDirty(true); }}
-                  className={INPUT_CLASS}
-                >
-                  {BUSINESS_TYPE_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
               </div>
               <div>
                 <label className={LABEL_CLASS}>Phone</label>
@@ -394,24 +522,28 @@ function ProfileTab({
       <div className="fd-card overflow-hidden">
         <div className="px-5 py-4 border-b fd-hairline">
           <h2 className="text-sm font-semibold text-gray-900">Front desk tone</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Select one or more styles that fit your business.</p>
+          <p className="text-xs text-gray-400 mt-0.5">Add or remove tone tags, or describe your own tone. Suggestions adapt to your business type.</p>
         </div>
-        <div className="px-5 py-4">
-          <div className="flex flex-wrap gap-2">
-            {TONE_TAGS.map(({ value, label }) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => toggleToneTag(value)}
-                className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-colors ${
-                  toneTags.includes(value)
-                    ? 'bg-orange-500 border-orange-500 text-white'
-                    : 'bg-white fd-hairline-strong text-gray-600 hover:border-orange-300 hover:text-orange-600'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+        <div className="px-5 py-4 space-y-4">
+          <ChipEditor
+            selected={toneTags}
+            suggestions={toneSuggestions}
+            hidden={hiddenTone}
+            {...chipHandlers('tone_tags', 'hidden_tone_tags', toneTags, hiddenTone, toneSuggestions)}
+            resetLabel="Reset tone tags"
+            placeholder="Add a tone tag…"
+            emptyText="No tone tags — add a suggestion below, type your own, or use just the free-form tone."
+          />
+          <div>
+            <label className={LABEL_CLASS}>Custom tone (free-form)</label>
+            <input
+              type="text"
+              value={config.custom_tone ?? ''}
+              onChange={(e) => setField('custom_tone', e.target.value)}
+              placeholder='e.g. "premium, calm, and concise"'
+              className={INPUT_CLASS}
+            />
+            <p className="text-xs text-gray-400 mt-1">Optional — combined with the tags above to guide the voice. Not affected by &ldquo;Reset tone tags&rdquo;.</p>
           </div>
         </div>
       </div>
@@ -420,17 +552,19 @@ function ProfileTab({
       <div className="fd-card overflow-hidden">
         <div className="px-5 py-4 border-b fd-hairline">
           <h2 className="text-sm font-semibold text-gray-900">Request types</h2>
-          <p className="text-xs text-gray-400 mt-0.5">What kinds of calls should your front desk handle?</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            What kinds of calls should your front desk handle? Suggestions adapt to your business type — add or remove freely.
+          </p>
         </div>
-        <div className="px-5 py-4 grid grid-cols-2 gap-3">
-          {REQUEST_TYPES.map(({ value, label }) => (
-            <CheckCard
-              key={value}
-              label={label}
-              checked={requestTypes.includes(value)}
-              onChange={() => toggleRequestType(value)}
-            />
-          ))}
+        <div className="px-5 py-4">
+          <ChipEditor
+            selected={requestTypes}
+            suggestions={vertical.suggestedRequestTypes}
+            hidden={hiddenRequest}
+            {...chipHandlers('main_request_types', 'hidden_request_types', requestTypes, hiddenRequest, vertical.suggestedRequestTypes)}
+            placeholder="Add a request type…"
+            emptyText="No request types — add a suggestion below, type your own, or reset to defaults."
+          />
         </div>
       </div>
 
@@ -439,18 +573,18 @@ function ProfileTab({
         <div className="px-5 py-4 border-b fd-hairline">
           <h2 className="text-sm font-semibold text-gray-900">Details to collect when action is needed</h2>
           <p className="text-xs text-gray-400 mt-0.5">
-            Only collected when the caller wants an appointment, callback, service request, or staff follow-up — not for general questions.
+            Collected only when the caller wants an appointment, callback, or service request — not for general questions. Add or remove to fit your business.
           </p>
         </div>
-        <div className="px-5 py-4 grid grid-cols-2 gap-3">
-          {COLLECT_FIELDS.map(({ key, label }) => (
-            <CheckCard
-              key={key}
-              label={label}
-              checked={(config[key] as boolean) ?? (key !== 'collect_urgency')}
-              onChange={() => setField(key, !((config[key] as boolean) ?? (key !== 'collect_urgency')))}
-            />
-          ))}
+        <div className="px-5 py-4">
+          <ChipEditor
+            selected={detailFields}
+            suggestions={vertical.suggestedDetailFields}
+            hidden={hiddenDetails}
+            {...chipHandlers('details_to_collect', 'hidden_details_to_collect', detailFields, hiddenDetails, vertical.suggestedDetailFields)}
+            placeholder="Add a detail to collect…"
+            emptyText="No details — add a suggestion below, type your own, or reset to defaults."
+          />
         </div>
       </div>
 
@@ -540,11 +674,13 @@ function ProfileTab({
 function QATab({
   initialItems,
   businessId,
+  businessType,
   isDemo,
   loadError,
 }: {
   initialItems: KnowledgeItem[];
   businessId: string;
+  businessType: string;
   isDemo: boolean;
   loadError: string | null;
 }) {
@@ -561,6 +697,12 @@ function QATab({
   }, [initialItems]);
 
   const categories = [...new Set(items.map((e) => e.category))].sort();
+
+  // Vertical-specific guidance — suggested KB categories + example placeholder for this
+  // business type. Suggestions only: the category field stays free text, existing rows unaffected.
+  const vertical = getVertical(businessType);
+  const suggestedCategories = vertical.knowledgeCategories;
+  const categoryPlaceholder = `Category (e.g. ${suggestedCategories.slice(0, 3).join(', ')})`;
 
   function startEdit(item: KnowledgeItem) {
     setIsAdding(false);
@@ -684,6 +826,27 @@ function QATab({
         )}
       </div>
 
+      {/* Vertical-specific suggested categories — guidance, not rigid. Click to start an entry. */}
+      {!isDemo && (
+        <div className="mb-5">
+          <p className="text-xs text-gray-400 mb-2">
+            Suggested categories for {vertical.label} — click one to add an entry, or use your own:
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {suggestedCategories.map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => startAdd(cat)}
+                className="px-3 py-1 rounded-full text-xs font-medium border fd-hairline-strong text-gray-600 hover:border-orange-300 hover:text-orange-600 transition-colors"
+              >
+                + {cat}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {loadError && (
         <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
           <strong>Failed to load Q&A:</strong> {loadError}
@@ -704,7 +867,7 @@ function QATab({
           <div className="p-5 space-y-3">
             <input
               type="text"
-              placeholder="Category (e.g. Hours, Pricing, Services)"
+              placeholder={categoryPlaceholder}
               value={addDraft.category}
               onChange={(e) => setAddDraft((d) => ({ ...d, category: e.target.value }))}
               className={INPUT_CLASS}
@@ -1007,6 +1170,7 @@ export default function KnowledgePage() {
         <QATab
           initialItems={items}
           businessId={businessId}
+          businessType={businessType}
           isDemo={isDemo}
           loadError={loadError}
         />

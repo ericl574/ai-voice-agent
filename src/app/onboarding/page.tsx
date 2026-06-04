@@ -4,16 +4,7 @@ import { useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
-
-const BUSINESS_TYPE_OPTIONS = [
-  { value: 'restaurant', label: 'Restaurant' },
-  { value: 'auto_repair', label: 'Auto Repair Shop' },
-  { value: 'salon', label: 'Salon / Spa' },
-  { value: 'clinic', label: 'Clinic / Medical' },
-  { value: 'tutoring', label: 'Tutoring / Education' },
-  { value: 'home_services', label: 'Home Services' },
-  { value: 'other', label: 'Other' },
-];
+import { BUSINESS_TYPE_OPTIONS } from '@/lib/agents/verticals/registry';
 
 const TIMEZONES = [
   'America/New_York',
@@ -186,18 +177,7 @@ function OnboardingPageInner() {
                 <h2 className="font-semibold text-gray-900">Business information</h2>
               </div>
               <div className="p-5 space-y-4">
-                <FormField label="Business name">
-                  <input
-                    type="text"
-                    required
-                    value={form.name}
-                    onChange={(e) => set('name', e.target.value)}
-                    placeholder="e.g. Sunrise Auto Repair"
-                    className={INPUT_CLASS}
-                  />
-                </FormField>
-
-                <FormField label="Business type" optional>
+                <FormField label="Business type">
                   <select
                     value={form.businessType}
                     onChange={(e) => set('businessType', e.target.value)}
@@ -209,6 +189,20 @@ function OnboardingPageInner() {
                       </option>
                     ))}
                   </select>
+                  <p className="text-xs text-gray-400 mt-1">
+                    This tailors your front desk to your industry — terminology, common requests, and knowledge categories. Choose &ldquo;Other&rdquo; if none fit.
+                  </p>
+                </FormField>
+
+                <FormField label="Business name">
+                  <input
+                    type="text"
+                    required
+                    value={form.name}
+                    onChange={(e) => set('name', e.target.value)}
+                    placeholder="e.g. Sunrise Auto Repair"
+                    className={INPUT_CLASS}
+                  />
                 </FormField>
 
                 <div className="grid grid-cols-2 gap-4">

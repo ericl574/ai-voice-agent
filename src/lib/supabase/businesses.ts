@@ -10,11 +10,20 @@ export interface AgentConfig {
   collect_notes?: boolean;
   collect_urgency?: boolean;
   // Layer 1 — call behavior profile (stored in JSONB, no migration needed)
-  tone_tags?: string[];           // multi-select: ['friendly','calm','direct','efficient']
+  tone_tags?: string[];           // multi-select presets, e.g. ['friendly','calm']
+  custom_tone?: string;           // free-form tone text, e.g. "premium, calm, and concise"
   business_hours?: string;        // free-form text, e.g. "Mon–Fri 9am–6pm, Sat 10am–4pm"
   walk_in_allowed?: boolean;
   appointments_require_confirmation?: boolean;
-  main_request_types?: string[];  // e.g. ['appointments','service_requests','inquiries']
+  // Editable, vertical-aware chip arrays (owner can add/remove/customize). Empty/undefined
+  // → the prompt builder falls back to the vertical's suggested defaults.
+  main_request_types?: string[];  // request types this front desk handles
+  details_to_collect?: string[];  // caller details to collect when action is needed
+  // Chips the owner ×-deleted, hidden from the suggestion row (persisted so deletes survive
+  // refresh). Subtracted from suggestions and from the prompt. Cleared by "Reset to defaults".
+  hidden_request_types?: string[];
+  hidden_details_to_collect?: string[];
+  hidden_tone_tags?: string[];
   // Layer 3 — custom instructions (stored in JSONB, no migration needed)
   custom_instructions?: string;
 }

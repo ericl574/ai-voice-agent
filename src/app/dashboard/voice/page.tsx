@@ -25,6 +25,24 @@ interface TranscriptEntry {
 
 const CONNECT_TIMEOUT_MS = 30_000;
 
+// Delay between detecting a clear end-call cue and actually hanging up — long enough for the
+// assistant to speak one short closing sentence first.
+const AUTO_END_DELAY_MS = 4_000;
+
+// True when the caller clearly signals the conversation is over. Conservative on purpose:
+// a new question in the same utterance (or a "?") cancels the match, and "thank you"/"thanks"
+// alone is NOT an end cue.
+function looksLikeEndCall(raw: string): boolean {
+  const text = raw.toLowerCase().trim();
+  if (!text) return false;
+  // A new substantive question in the same breath ("thank you, what are your hours?") → not an end.
+  if (text.includes('?')) return false;
+  if (/\b(what|when|where|how|why|who|which|hours|open|price|cost|available|do you|are you|can you|could you|would you)\b/.test(text)) {
+    return false;
+  }
+  return /\b(bye bye|bye|goodbye|that'?s all|all good|nothing else|no,? that'?s it|end the call|hang up|you can hang up|i said goodbye|i'?m done|i am done|we'?re done|we are done)\b/.test(text);
+}
+
 // ── Readiness checklist row ────────────────────────────────────────────────
 
 function ReadinessRow({
@@ -122,6 +140,7 @@ export default function VoicePage() {
   const startedAtRef = useRef<Date | null>(null);
   const statusRef = useRef<CallStatus>('idle');
   const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const postCallGenRef = useRef(0);
   // Caller mic recording — MediaRecorder is the source of truth for post-call transcription.
@@ -199,6 +218,27 @@ export default function VoicePage() {
           ? prev.map((e) => (e.id === itemId ? { ...e, text } : e))
           : [...prev, { id: itemId, role: 'user', text }]
       );
+
+      // Auto end-call: if the caller clearly signals they're done, schedule a graceful hang-up
+      // after a short delay (lets the assistant speak its closing). Uses the same path as the
+      // End-call button. A later non-closing caller turn cancels a pending hang-up.
+      if (looksLikeEndCall(text)) {
+        if (statusRef.current === 'connected' && !autoEndTimerRef.current) {
+          console.log('[FD debug] end-call intent detected:', JSON.stringify(text));
+          console.log('[FD debug] auto end-call scheduled in', AUTO_END_DELAY_MS, 'ms');
+          autoEndTimerRef.current = setTimeout(() => {
+            autoEndTimerRef.current = null;
+            if (statusRef.current === 'connected') {
+              console.log('[FD debug] auto end-call executing');
+              stopCall();
+            }
+          }, AUTO_END_DELAY_MS);
+        }
+      } else if (autoEndTimerRef.current) {
+        console.log('[FD debug] auto end-call cancelled — caller continued');
+        clearTimeout(autoEndTimerRef.current);
+        autoEndTimerRef.current = null;
+      }
     }
 
     // OpenAI Realtime emits assistant transcript events under two name patterns depending
@@ -363,6 +403,10 @@ export default function VoicePage() {
 
   function cleanup() {
     clearConnectTimeout();
+    if (autoEndTimerRef.current) {
+      clearTimeout(autoEndTimerRef.current);
+      autoEndTimerRef.current = null;
+    }
     // On error paths (connection drop etc.), force-stop MediaRecorder to release mic
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       try { mediaRecorderRef.current.stop(); } catch {}
@@ -738,6 +782,10 @@ export default function VoicePage() {
     setExtraction(null);
     setExtractionErrorMsg(null);
     postCallGenRef.current++; // invalidate any in-flight post-call response
+    if (autoEndTimerRef.current) {
+      clearTimeout(autoEndTimerRef.current);
+      autoEndTimerRef.current = null;
+    }
   }
 
   // ── Derived UI flags ─────────────────────────────────────────────────────
