@@ -23,6 +23,15 @@ interface TranscriptEntry {
   text: string;
 }
 
+// Why a call ended — logged so the cause of any teardown is unambiguous.
+type EndReason =
+  | 'manual'
+  | 'auto-end'
+  | 'realtime-error'
+  | 'peer-disconnect'
+  | 'connect-error'
+  | 'unknown';
+
 const CONNECT_TIMEOUT_MS = 30_000;
 
 // Delay between detecting a clear end-call cue and actually hanging up — long enough for the
@@ -41,6 +50,25 @@ function looksLikeEndCall(raw: string): boolean {
     return false;
   }
   return /\b(bye bye|bye|goodbye|that'?s all|all good|nothing else|no,? that'?s it|end the call|hang up|you can hang up|i said goodbye|i'?m done|i am done|we'?re done|we are done)\b/.test(text);
+}
+
+// Dev-only: POST a copy of the recorded caller audio to a local route that writes it to
+// project-root /audio-source for offline debugging. Best-effort — never blocks or breaks the
+// call flow; failures are logged as warnings only.
+async function saveAudioSourceForDebug(blob: Blob): Promise<void> {
+  try {
+    const form = new FormData();
+    form.append('audio', blob, 'caller-audio.webm');
+    const res = await fetch('/api/debug/save-audio-source', { method: 'POST', body: form });
+    if (!res.ok) {
+      console.warn('[FD debug] save-audio-source failed:', res.status);
+      return;
+    }
+    const data = await res.json().catch(() => null);
+    if (data?.path) console.log('[FD debug] caller audio source saved to:', data.path);
+  } catch (err) {
+    console.warn('[FD debug] save-audio-source error:', err);
+  }
 }
 
 // ── Readiness checklist row ────────────────────────────────────────────────
@@ -141,6 +169,15 @@ export default function VoicePage() {
   const statusRef = useRef<CallStatus>('idle');
   const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True while a Realtime response is generating. Set on response.created, cleared on
+  // response.done/cancelled/failed. Lets us treat the "active response in progress" error as
+  // recoverable instead of fatal.
+  const responseInProgressRef = useRef(false);
+  // Why the call is ending — logged in stopCall/cleanup so failures are unambiguous.
+  const endReasonRef = useRef<EndReason>('unknown');
+  // Count of recoverable "active response in progress" errors this call — each one is a caller
+  // barge-in the server rejected (a possible dropped turn). Logged as a summary at cleanup.
+  const activeResponseErrorCountRef = useRef(0);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const postCallGenRef = useRef(0);
   // Caller mic recording — MediaRecorder is the source of truth for post-call transcription.
@@ -229,8 +266,8 @@ export default function VoicePage() {
           autoEndTimerRef.current = setTimeout(() => {
             autoEndTimerRef.current = null;
             if (statusRef.current === 'connected') {
-              console.log('[FD debug] auto end-call executing');
-              stopCall();
+              console.log(`[FD debug] auto-end triggered by phrase: ${JSON.stringify(text)}`);
+              stopCall('auto-end');
             }
           }, AUTO_END_DELAY_MS);
         }
@@ -346,9 +383,48 @@ export default function VoicePage() {
       }
     }
 
+    // ── Response lifecycle tracking ──────────────────────────────────────────
+    // A response is "in progress" between response.created and its terminal event. We never send
+    // response.create ourselves (server VAD create_response:true auto-generates), but tracking the
+    // state lets us treat a duplicate-response error as recoverable.
+    if (type === 'response.created') {
+      responseInProgressRef.current = true;
+      console.log('[FD debug] response.created — active');
+    }
+    if (
+      type === 'response.done' ||
+      type === 'response.cancelled' ||
+      type === 'response.canceled' ||
+      type === 'response.failed'
+    ) {
+      responseInProgressRef.current = false;
+      console.log(`[FD debug] ${type} — response active cleared`);
+    }
+
     if (type === 'error') {
-      const errObj = event.error as Record<string, unknown>;
-      setErrorMsg(`OpenAI error: ${errObj?.message ?? JSON.stringify(errObj)}`);
+      const errObj = (event.error as Record<string, unknown>) ?? {};
+      const message = String(errObj.message ?? JSON.stringify(errObj));
+      const code = String(errObj.code ?? '');
+
+      // Recoverable: the server rejected a duplicate auto-response while one is still generating.
+      // The in-flight response continues and completes via response.done — keep the call alive.
+      const isActiveResponseError =
+        /active response in progress/i.test(message) ||
+        code === 'conversation_already_has_active_response';
+
+      if (isActiveResponseError) {
+        responseInProgressRef.current = true;
+        activeResponseErrorCountRef.current += 1; // a caller barge-in the server rejected
+        console.log(
+          `[FD debug] Realtime error (recoverable — keeping call alive): ${message} | count this call: ${activeResponseErrorCountRef.current}`,
+        );
+        return; // do NOT setStatus('error') or cleanup() — the session is still alive
+      }
+
+      // Fatal: surface and tear down.
+      endReasonRef.current = 'realtime-error';
+      console.log(`[FD debug] Realtime error (fatal → ending call): ${message}`);
+      setErrorMsg(`OpenAI error: ${message}`);
       setStatus('error');
       cleanup();
     }
@@ -369,39 +445,47 @@ export default function VoicePage() {
     return new Promise((resolve) => {
       const mr = mediaRecorderRef.current;
       if (!mr) { resolve(null); return; }
-      if (mr.state === 'inactive') {
-        const blob = audioChunksRef.current.length > 0
-          ? new Blob(audioChunksRef.current, { type: mr.mimeType || 'audio/webm' })
-          : null;
+
+      // Resolve exactly once. A safety timeout guards against onstop/onerror never firing
+      // (some browsers can leave MediaRecorder wedged) so stopCall can't hang forever.
+      let settled = false;
+      const finish = (blob: Blob | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(safety);
         audioChunksRef.current = [];
         mediaRecorderRef.current = null;
         resolve(blob);
+      };
+      const blobFromChunks = () =>
+        audioChunksRef.current.length > 0
+          ? new Blob(audioChunksRef.current, { type: mr.mimeType || 'audio/webm' })
+          : null;
+      const safety = setTimeout(() => {
+        console.warn('[FD debug] stopMediaRecorder — onstop did not fire within 3s; resolving best-effort');
+        finish(blobFromChunks());
+      }, 3000);
+
+      if (mr.state === 'inactive') {
+        finish(blobFromChunks());
         return;
       }
-      mr.onstop = () => {
-        const blob = audioChunksRef.current.length > 0
-          ? new Blob(audioChunksRef.current, { type: mr.mimeType || 'audio/webm' })
-          : null;
-        audioChunksRef.current = [];
-        mediaRecorderRef.current = null;
-        resolve(blob);
-      };
-      mr.onerror = () => {
-        audioChunksRef.current = [];
-        mediaRecorderRef.current = null;
-        resolve(null);
-      };
+      mr.onstop = () => finish(blobFromChunks());
+      mr.onerror = () => finish(null);
       try {
         mr.stop(); // triggers ondataavailable with any remaining data, then onstop
       } catch {
-        audioChunksRef.current = [];
-        mediaRecorderRef.current = null;
-        resolve(null);
+        finish(null);
       }
     });
   }
 
   function cleanup() {
+    console.log(`[FD debug] cleanup — call end reason: ${endReasonRef.current}`);
+    console.log(
+      `[FD debug] call summary — active-response (possible dropped) turns: ${activeResponseErrorCountRef.current}`,
+    );
+    responseInProgressRef.current = false;
     clearConnectTimeout();
     if (autoEndTimerRef.current) {
       clearTimeout(autoEndTimerRef.current);
@@ -428,6 +512,9 @@ export default function VoicePage() {
     setErrorMsg('');
     setTranscript([]);
     setSavedCallId(null);
+    endReasonRef.current = 'unknown';
+    responseInProgressRef.current = false;
+    activeResponseErrorCountRef.current = 0;
     setStatus('requesting');
 
     // 1. Request microphone access
@@ -464,6 +551,7 @@ export default function VoicePage() {
     // 2. Connection watchdog — 30s timeout
     connectTimeoutRef.current = setTimeout(() => {
       if (statusRef.current === 'connecting') {
+        endReasonRef.current = 'connect-error';
         setErrorMsg('Connection timed out after 30 seconds. Check your internet connection and try again.');
         setStatus('error');
         cleanup();
@@ -492,6 +580,8 @@ export default function VoicePage() {
           (s === 'failed' || s === 'disconnected' || s === 'closed') &&
           statusRef.current === 'connected'
         ) {
+          endReasonRef.current = 'peer-disconnect';
+          console.log(`[FD debug] peer connection ${s} → ending call`);
           setErrorMsg('The connection was interrupted. The call has ended unexpectedly.');
           setStatus('error');
           cleanup();
@@ -532,10 +622,16 @@ export default function VoicePage() {
         setStartedAt(new Date());
       };
       dc.onmessage = (e) => {
-        try { handleRealtimeEvent(JSON.parse(e.data as string)); } catch {}
+        try {
+          handleRealtimeEvent(JSON.parse(e.data as string));
+        } catch (err) {
+          console.warn('[FD debug] failed to handle Realtime event:', err);
+        }
       };
       dc.onerror = () => {
         if (statusRef.current === 'connected' || statusRef.current === 'connecting') {
+          endReasonRef.current = 'peer-disconnect';
+          console.log('[FD debug] data channel error → ending call');
           setErrorMsg('Data channel error. The connection may have dropped.');
           setStatus('error');
           cleanup();
@@ -566,6 +662,7 @@ export default function VoicePage() {
       clearConnectTimeout();
       // Only surface error if not already cancelled by user
       if (statusRef.current !== 'idle') {
+        endReasonRef.current = 'connect-error';
         const msg = err instanceof Error ? err.message : String(err);
         setErrorMsg(msg);
         setStatus('error');
@@ -574,7 +671,9 @@ export default function VoicePage() {
     }
   }
 
-  async function stopCall() {
+  async function stopCall(reason: EndReason = 'unknown') {
+    endReasonRef.current = reason;
+    console.log(`[FD debug] stopCall reason: ${reason}`);
     setStatus('stopping');
     // Collect caller audio BEFORE stopping mic tracks — keeps final chunk in recorder
     const callerAudioBlob = await stopMediaRecorder();
@@ -593,6 +692,12 @@ export default function VoicePage() {
       console.log('[FD debug] stopCall — assistant samples:', assistantEntries.slice(0, 3).map((e) => `"${e.text.slice(0, 40)}"`));
     }
     console.log('[FD debug] stopCall — caller audio blob size:', callerAudioBlob?.size ?? 0, 'bytes');
+
+    // Dev-only: save a copy of the raw recorded caller audio to project-root /audio-source.
+    // Fire-and-forget; runs regardless of save/transcription path and never blocks the flow.
+    if (callerAudioBlob && callerAudioBlob.size > 0) {
+      void saveAudioSourceForDebug(callerAudioBlob);
+    }
 
     cleanup();
 
@@ -635,7 +740,16 @@ export default function VoicePage() {
       form.append('assistant_transcript', assistantTranscript);
 
       console.log('[FD debug] uploading caller audio —', audioBlob.size, 'bytes');
-      const transRes = await fetch('/api/transcribe-call', { method: 'POST', body: form });
+      // Bound the request so a hung transcription can't leave the UI on "Transcribing…" forever.
+      // On abort, fetch rejects → the catch below sets extraction error + status 'saved'.
+      const ctrl = new AbortController();
+      const transcribeTimeout = setTimeout(() => ctrl.abort(), 60_000);
+      let transRes: Response;
+      try {
+        transRes = await fetch('/api/transcribe-call', { method: 'POST', body: form, signal: ctrl.signal });
+      } finally {
+        clearTimeout(transcribeTimeout);
+      }
       const transData = await transRes.json();
       console.log('[FD debug] transcription result:', JSON.stringify(transData).substring(0, 400));
 
@@ -649,7 +763,10 @@ export default function VoicePage() {
       runPostCall(callId, officialTranscript); // manages its own extraction state
     } catch (err: unknown) {
       if (gen !== postCallGenRef.current) return;
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg =
+        err instanceof DOMException && err.name === 'AbortError'
+          ? 'Transcription timed out after 60 seconds'
+          : err instanceof Error ? err.message : String(err);
       console.error('[FD debug] transcription failed:', msg);
       setExtractionErrorMsg(msg);
       setExtraction('error');
@@ -783,6 +900,9 @@ export default function VoicePage() {
     setExtraction(null);
     setExtractionErrorMsg(null);
     postCallGenRef.current++; // invalidate any in-flight post-call response
+    endReasonRef.current = 'unknown';
+    responseInProgressRef.current = false;
+    activeResponseErrorCountRef.current = 0;
     if (autoEndTimerRef.current) {
       clearTimeout(autoEndTimerRef.current);
       autoEndTimerRef.current = null;
@@ -981,7 +1101,7 @@ export default function VoicePage() {
 
                 {isLive && (
                   <button
-                    onClick={stopCall}
+                    onClick={() => stopCall('manual')}
                     className="fd-btn"
                     style={{ backgroundColor: 'var(--danger)', color: 'var(--surface)' }}
                   >

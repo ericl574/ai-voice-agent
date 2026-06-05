@@ -36,6 +36,9 @@ yarn-error.log*
 # claude code local settings (contains personal allow-lists, not project rules)
 .claude/settings.local.json
 
+# dev-only saved caller audio (debug captures, never committed)
+/audio-source/
+
 # vercel
 .vercel
 
