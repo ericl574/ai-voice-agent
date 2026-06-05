@@ -96,6 +96,9 @@ export async function POST() {
           // `language` is a soft hint (default English, auto-switches on clearly non-English speech).
           audio: {
             input: {
+              noise_reduction: {
+                type: 'far_field',
+            },
               turn_detection: {
                 type: 'server_vad',
                 threshold: 0.65,
