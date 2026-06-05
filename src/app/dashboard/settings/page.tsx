@@ -17,6 +17,35 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
   collect_notes: true,
 };
 
+const TIMEZONES = [
+  'America/Vancouver',
+  'America/Los_Angeles',
+  'America/Denver',
+  'America/Phoenix',
+  'America/Chicago',
+  'America/Toronto',
+  'America/New_York',
+  'America/Anchorage',
+  'Pacific/Honolulu',
+  'UTC',
+];
+
+// Stored value IS the OpenAI Realtime voice id; the route passes it straight to audio.output.voice.
+const VOICE_OPTIONS = [
+  { value: 'alloy', label: 'Voice 1 — neutral' },
+  { value: 'coral', label: 'Voice 2 — warm' },
+  { value: 'sage', label: 'Voice 3 — clear / professional' },
+  { value: 'shimmer', label: 'Voice 4 — brighter' },
+];
+
+function browserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Vancouver';
+  } catch {
+    return 'America/Vancouver';
+  }
+}
+
 export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -40,7 +69,8 @@ export default function SettingsPage() {
         phone: b.phone ?? prev.phone,
         email: b.email ?? prev.email,
         greetingMessage: b.greeting ?? prev.greetingMessage,
-        timezone: b.timezone ?? prev.timezone,
+        // No saved timezone → default to the browser's timezone (else America/Vancouver).
+        timezone: b.timezone || browserTimezone(),
       }));
       setAgentName(b.ai_agent_name ?? '');
       if (b.agent_config) {
@@ -119,6 +149,24 @@ export default function SettingsPage() {
               type="email"
               onChange={(v) => setBusiness((r) => ({ ...r, email: v }))}
             />
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
+                Business Timezone
+              </label>
+              <select
+                value={business.timezone}
+                onChange={(e) => setBusiness((r) => ({ ...r, timezone: e.target.value }))}
+                className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
+              >
+                {/* Include any saved value not already in the list, so it never silently changes. */}
+                {(TIMEZONES.includes(business.timezone) ? TIMEZONES : [business.timezone, ...TIMEZONES]).map((tz) => (
+                  <option key={tz} value={tz}>{tz}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400 mt-1">
+                Used to interpret dates like today, tomorrow, Friday, and next week.
+              </p>
+            </div>
           </div>
         </div>
 
@@ -133,15 +181,43 @@ export default function SettingsPage() {
                 AI Voice
               </label>
               <select
-                value={business.aiVoice}
-                onChange={(e) => setBusiness((r) => ({ ...r, aiVoice: e.target.value }))}
+                value={agentConfig.voice_id ?? ''}
+                onChange={(e) =>
+                  setAgentConfig((prev) => ({ ...prev, voice_id: e.target.value || undefined }))
+                }
                 className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
               >
-                <option>Female – Warm</option>
-                <option>Female – Professional</option>
-                <option>Male – Warm</option>
-                <option>Male – Professional</option>
+                <option value="">Default</option>
+                {VOICE_OPTIONS.map((v) => (
+                  <option key={v.value} value={v.value}>{v.label}</option>
+                ))}
               </select>
+              <p className="text-xs text-gray-400 mt-1">
+                Preset voices. &ldquo;Default&rdquo; uses the standard voice.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
+                Speaking speed — {(agentConfig.voice_speed ?? 1.0).toFixed(2)}×
+              </label>
+              <input
+                type="range"
+                min={0.85}
+                max={1.25}
+                step={0.05}
+                value={agentConfig.voice_speed ?? 1.0}
+                onChange={(e) =>
+                  setAgentConfig((prev) => ({ ...prev, voice_speed: parseFloat(e.target.value) }))
+                }
+                className="w-full accent-orange-500"
+              />
+              <div className="flex justify-between text-[11px] text-gray-400 mt-1">
+                <span>0.90 slower</span>
+                <span>1.00 normal</span>
+                <span>1.10 faster</span>
+                <span>1.20 fast</span>
+              </div>
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">

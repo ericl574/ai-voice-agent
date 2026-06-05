@@ -24,6 +24,9 @@ export interface AgentConfig {
   hidden_request_types?: string[];
   hidden_details_to_collect?: string[];
   hidden_tone_tags?: string[];
+  // Voice settings (applied to the Realtime session's audio.output)
+  voice_id?: string;              // OpenAI Realtime voice id, e.g. 'alloy' | 'coral' | 'sage' | 'shimmer'
+  voice_speed?: number;           // speaking speed, 0.85–1.25 (default 1.0)
   // Layer 3 — custom instructions (stored in JSONB, no migration needed)
   custom_instructions?: string;
 }

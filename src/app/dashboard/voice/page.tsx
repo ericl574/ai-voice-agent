@@ -442,6 +442,7 @@ export default function VoicePage() {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          channelCount: 1,
         },
       });
       streamRef.current = stream;

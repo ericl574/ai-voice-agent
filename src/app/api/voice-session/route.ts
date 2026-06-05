@@ -25,6 +25,10 @@ export async function POST() {
   // Build the prompt from the authenticated user's business data. The default (signed-out,
   // missing profile, or DB error) resolves to the generic vertical — made explicit and logged.
   let systemInstructions = buildSystemPrompt(null, null, []);
+  // Voice settings applied to the Realtime session's audio.output. Defaults preserve current
+  // behavior: no voice override (server default) and normal (1.0) speed.
+  let voiceId: string | undefined;
+  let voiceSpeed = 1.0;
   try {
     const supabase = await createClient();
     const {
@@ -40,11 +44,17 @@ export async function POST() {
           .eq('business_id', business.id)
           .order('category', { ascending: true });
 
+        const agentConfig = business.agent_config as AgentConfig | null;
         systemInstructions = buildSystemPrompt(
           business,
-          business.agent_config as AgentConfig | null,
+          agentConfig,
           (knowledgeRows as KnowledgeRow[]) ?? [],
         );
+        if (agentConfig?.voice_id) voiceId = agentConfig.voice_id;
+        if (typeof agentConfig?.voice_speed === 'number') {
+          // Clamp to the product range; API accepts 0.25–1.5.
+          voiceSpeed = Math.min(1.25, Math.max(0.85, agentConfig.voice_speed));
+        }
         console.log(
           `[FD] voice session vertical: ${getVertical(business.business_type).id} (business_type: ${business.business_type})`,
         );
@@ -58,6 +68,8 @@ export async function POST() {
     // Fall through to generic instructions — never block a voice session due to a DB error
     console.log('[FD] voice session vertical: generic (DB error fallback)');
   }
+
+  console.log(`[FD] voice session audio.output → voice: ${voiceId ?? '(server default)'}, speed: ${voiceSpeed} (applied via API config)`);
 
   try {
     const res = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
@@ -100,6 +112,12 @@ export async function POST() {
                 model: REALTIME_TRANSCRIPTION_MODEL,
                 language: TRANSCRIPTION_LANGUAGE_HINT,
               },
+            },
+            // Voice + speaking speed are real Realtime params (applied via API, not the prompt).
+            // voice omitted → server default voice (preserves prior behavior).
+            output: {
+              ...(voiceId ? { voice: voiceId } : {}),
+              speed: voiceSpeed,
             },
           },
         },

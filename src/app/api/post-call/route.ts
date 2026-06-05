@@ -6,11 +6,12 @@ import {
   looksLikePhone,
   type ExtractionResult,
 } from '@/lib/call-pipeline/extraction';
+import { todayInTimeZone, DEFAULT_BUSINESS_TIMEZONE } from '@/lib/call-pipeline/time';
 
 // ── Extraction prompt ────────────────────────────────────────────────────────
 
-function buildPrompt(today: string): string {
-  return `You are analyzing a phone call transcript from a service business. Today's date is ${today}.
+function buildPrompt(today: string, timeZone: string): string {
+  return `You are analyzing a phone call transcript from a service business. Today's date is ${today} in the business's local timezone (${timeZone}). Resolve ALL relative dates (today, tomorrow, Friday, next week) against this local date and timezone.
 
 The transcript may be in any language (English, Chinese, mixed, etc.). You must reason semantically about the caller's intent — do not rely on explicit keywords.
 
@@ -117,7 +118,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Call not found' }, { status: 404 });
   }
 
-  const today = new Date().toISOString().split('T')[0];
+  // Resolve "today" in the BUSINESS's timezone so relative dates (tomorrow, Friday) land on the
+  // correct local day — not the server/UTC day.
+  const { data: bizRow } = await supabase
+    .from('businesses')
+    .select('timezone')
+    .eq('id', business_id)
+    .single();
+  const businessTimezone = (bizRow?.timezone as string) || DEFAULT_BUSINESS_TIMEZONE;
+  const today = todayInTimeZone(businessTimezone);
   const transcriptText = transcript.trim() || '(no transcript captured)';
   const callerText = callerLinesOnly(transcriptText);
 
@@ -137,7 +146,7 @@ export async function POST(req: NextRequest) {
         model: 'gpt-4o-mini',
         response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: buildPrompt(today) },
+          { role: 'system', content: buildPrompt(today, businessTimezone) },
           { role: 'user', content: `Transcript:\n${transcriptText}` },
         ],
         max_tokens: 600,

@@ -2,6 +2,7 @@ import type { AgentConfig, Business } from '@/lib/supabase/businesses';
 import type { KnowledgeRow, VerticalProfile } from './types';
 import { GLOBAL_RULES } from './globalRules';
 import { getVertical } from '../verticals/registry';
+import { todayInTimeZone } from '@/lib/call-pipeline/time';
 
 // Renders the selected vertical profile into a concise prompt section. Industry-specific
 // terminology and examples live ONLY here (via the profile), never in GLOBAL_RULES.
@@ -106,6 +107,7 @@ Name: ${name}
 ${business.phone ? `Phone: ${business.phone}` : ''}
 ${business.city ? `Location: ${business.city}${business.region ? ', ' + business.region : ''}` : ''}
 Timezone: ${business.timezone}
+Today (business timezone): ${todayInTimeZone(business.timezone)}
 Hours: ${hours}
 ${walkin ? 'Walk-ins: Welcome.' : 'Appointments: Preferred. Walk-ins subject to availability.'}
 
