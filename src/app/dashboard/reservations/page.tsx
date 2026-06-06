@@ -1,533 +1,277 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import StatusBadge from '@/components/StatusBadge';
-import { MOCK_RESERVATIONS, RequestStatus } from '@/lib/mock-data';
+import { useEffect, useMemo, useState } from 'react';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
+import { todayInTimeZone } from '@/lib/call-pipeline/time';
+import { MOCK_RESERVATIONS, RequestStatus } from '@/lib/mock-data';
+import {
+  type DbAppointment,
+  mockToAppointments,
+  parseApptDateTime,
+  startOfWeek,
+  addDays,
+} from '@/lib/appointments';
+import WeekGrid from './WeekGrid';
+import MonthHeatmap from './MonthHeatmap';
+import ScheduleList from './ScheduleList';
+import AddAppointmentModal, { type NewAppointmentInput } from './AddAppointmentModal';
 
-// ─── DB types ──────────────────────────────────────────────────────────────
+type View = 'week' | 'month';
 
-interface DbAppointment {
-  id: string;
-  business_id: string;
-  customer_id?: string | null;
-  customer_name?: string | null;
-  customer_phone?: string | null;
-  party_size?: number | null;
-  appointment_date?: string | null;
-  appointment_time?: string | null;
-  service_type?: string | null;
-  special_request?: string | null;
-  staff_notes?: string | null;
-  service_details?: string | null;
-  requested_date?: string | null;
-  requested_time?: string | null;
-  notes?: string | null;
-  status: string;
-  call_id?: string | null;
-  created_at: string;
-  updated_at?: string | null;
+function dateFromYMD(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
 }
 
-type Filter = 'all' | RequestStatus;
-
-const FILTERS: { label: string; value: Filter }[] = [
-  { label: 'All', value: 'all' },
-  { label: 'Pending', value: 'pending' },
-  { label: 'Confirmed', value: 'confirmed' },
-  { label: 'Declined', value: 'declined' },
-];
-
-// ─── Helpers ───────────────────────────────────────────────────────────────
-
-function formatCreatedAt(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-  } catch {
-    return iso;
-  }
-}
-
-function partyOrService(appt: DbAppointment): string {
-  if (appt.party_size != null) return `${appt.party_size} guest${appt.party_size !== 1 ? 's' : ''}`;
-  if (appt.service_type) return appt.service_type;
-  if (appt.service_details) return appt.service_details;
-  return 'Appointment';
-}
-
-function requestedWhen(appt: DbAppointment): { date: string; time: string } {
-  const date = appt.appointment_date ?? appt.requested_date ?? '';
-  const time = appt.appointment_time ?? appt.requested_time ?? '';
-  return { date, time };
-}
-
-function notesText(appt: DbAppointment): string {
-  const parts = [appt.special_request, appt.staff_notes, appt.notes].filter(Boolean);
-  return parts.join(' · ');
-}
-
-function customerInitial(name: string | null | undefined): string {
-  if (!name) return '·';
-  return name.trim()[0]?.toUpperCase() ?? '·';
-}
-
-// Apple Contacts-style soft tinted avatars — deterministic by name hash.
-// Mirrors the helper in calls/page.tsx and orders/page.tsx so the avatar
-// vocabulary is identical across the three queue pages.
-const AVATAR_PALETTE: Array<{ bg: string; fg: string }> = [
-  { bg: '#E8F0FE', fg: '#1E40AF' }, // blue
-  { bg: '#E6F4EA', fg: '#166534' }, // green
-  { bg: '#FCE7E6', fg: '#9F1239' }, // rose
-  { bg: '#FEF3C7', fg: '#92400E' }, // amber
-  { bg: '#EDE9FE', fg: '#5B21B6' }, // violet
-  { bg: '#E0F2FE', fg: '#075985' }, // sky
-  { bg: '#FCE7F3', fg: '#9D174D' }, // pink
-  { bg: '#D1FAE5', fg: '#065F46' }, // emerald
-];
-
-function avatarFor(name: string | null | undefined): { bg: string; fg: string } {
-  const safe = (name ?? '').trim();
-  let hash = 0;
-  for (let i = 0; i < safe.length; i++) hash = (hash * 31 + safe.charCodeAt(i)) >>> 0;
-  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
-}
-
-// ─── Page header ───────────────────────────────────────────────────────────
-
-function PageHeader({ subtitle, count }: { subtitle: string; count?: number | null }) {
-  return (
-    <header className="mb-8">
-      <h1 className="fd-display text-4xl sm:text-5xl mb-2" style={{ color: 'var(--ink)' }}>
-        Appointment requests
-      </h1>
-      <p className="text-[15px] max-w-2xl leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
-        {subtitle}
-        {count != null && (
-          <span style={{ color: 'var(--ink-muted)' }}> · {count} total</span>
-        )}
-      </p>
-    </header>
-  );
-}
-
-// ─── Appointment card (full-width) ─────────────────────────────────────────
-
-function AppointmentCard({
-  customerName,
-  customerPhone,
-  serviceLabel,
-  receivedAt,
-  date,
-  time,
-  notes,
-  status,
-  onConfirm,
-  onDecline,
-  onReopen,
-}: {
-  customerName: string | null;
-  customerPhone: string | null;
-  serviceLabel: string;
-  receivedAt: string;
-  date: string;
-  time: string;
-  notes: string;
-  status: RequestStatus;
-  onConfirm?: () => void;
-  onDecline?: () => void;
-  onReopen?: () => void;
-}) {
-  const isPending = status === 'pending';
-  const av = avatarFor(customerName);
-  return (
-    <article className="fd-card overflow-hidden">
-      {/* Top metadata band */}
-      <div
-        className="px-6 py-3 flex items-center justify-between gap-4 text-[11px]"
-        style={{ borderBottom: '1px solid var(--hairline)', backgroundColor: 'var(--surface-soft)' }}
-      >
-        <div className="flex items-center gap-4 min-w-0">
-          <span className="fd-eyebrow" style={{ color: 'var(--ink-muted)' }}>
-            Received
-          </span>
-          <span className="fd-numeric" style={{ color: 'var(--ink-2)' }}>{receivedAt}</span>
-        </div>
-        <StatusBadge status={status} />
-      </div>
-
-      {/* Main row — 12-column grid */}
-      <div className="px-6 py-5 grid grid-cols-12 gap-x-6 gap-y-4 items-start">
-        {/* Customer (cols 1-4) */}
-        <div className="col-span-12 md:col-span-4 flex items-center gap-3">
-          <div
-            className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0 text-[15px] font-semibold"
-            style={{ backgroundColor: av.bg, color: av.fg }}
-          >
-            {customerInitial(customerName)}
-          </div>
-          <div className="min-w-0">
-            <p className="text-[15px] font-semibold leading-tight truncate" style={{ color: 'var(--ink)' }}>
-              {customerName ?? 'Unknown caller'}
-            </p>
-            <p className="text-[12px] mt-0.5 fd-numeric" style={{ color: 'var(--ink-muted)' }}>
-              {customerPhone ?? 'No phone provided'}
-            </p>
-          </div>
-        </div>
-
-        {/* Service (cols 5-7) */}
-        <div className="col-span-6 md:col-span-3">
-          <p className="fd-eyebrow mb-1.5" style={{ color: 'var(--ink-muted)' }}>Service</p>
-          <p className="text-[14px] leading-snug" style={{ color: 'var(--ink)' }}>{serviceLabel}</p>
-        </div>
-
-        {/* Requested time (cols 8-10) */}
-        <div className="col-span-6 md:col-span-3">
-          <p className="fd-eyebrow mb-1.5" style={{ color: 'var(--ink-muted)' }}>Requested</p>
-          {date ? (
-            <p className="text-[14px] leading-snug" style={{ color: 'var(--ink)' }}>
-              <span className="fd-numeric">{date}</span>
-              {time && <>, <span className="fd-numeric">{time}</span></>}
-            </p>
-          ) : (
-            <p className="text-[14px] italic" style={{ color: 'var(--ink-faint)' }}>
-              Time TBC
-            </p>
-          )}
-        </div>
-
-        {/* Actions (cols 11-12) */}
-        <div className="col-span-12 md:col-span-2 flex flex-row md:flex-col gap-2 md:items-stretch">
-          {isPending ? (
-            <>
-              <button onClick={onConfirm} className="fd-btn fd-btn-accent flex-1 md:flex-none">
-                Confirm
-              </button>
-              <button onClick={onDecline} className="fd-btn fd-btn-ghost flex-1 md:flex-none">
-                Decline
-              </button>
-            </>
-          ) : (
-            <button onClick={onReopen} className="fd-btn fd-btn-quiet flex-1 md:flex-none">
-              Reopen
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Notes row */}
-      {notes && (
-        <div
-          className="px-6 py-4 flex items-start gap-4"
-          style={{ borderTop: '1px solid var(--hairline)', backgroundColor: 'var(--surface-soft)' }}
-        >
-          <span className="fd-eyebrow flex-shrink-0 pt-0.5" style={{ color: 'var(--ink-muted)' }}>
-            Notes
-          </span>
-          <p className="text-[13px] leading-relaxed flex-1" style={{ color: 'var(--ink-2)' }}>
-            {notes}
-          </p>
-        </div>
-      )}
-    </article>
-  );
-}
-
-// ─── Filter bar ────────────────────────────────────────────────────────────
-
-function FilterBar({
-  filter,
-  setFilter,
-  countLabel,
-}: {
-  filter: Filter;
-  setFilter: (f: Filter) => void;
-  countLabel: string;
-}) {
-  return (
-    <div className="flex items-center gap-2 mb-6 flex-wrap">
-      <div className="flex items-center gap-1.5">
-        {FILTERS.map((f) => (
-          <button
-            key={f.value}
-            onClick={() => setFilter(f.value)}
-            className={`fd-tab ${filter === f.value ? 'fd-tab-active' : ''}`}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
-      <span className="ml-auto fd-eyebrow" style={{ color: 'var(--ink-muted)' }}>
-        {countLabel}
-      </span>
-    </div>
-  );
-}
-
-// ─── Reminder strip ────────────────────────────────────────────────────────
-
-function StaffReminderStrip() {
-  return (
-    <div
-      className="mb-6 px-4 py-3 flex items-center gap-3 rounded-[10px]"
-      style={{
-        backgroundColor: 'var(--warn-soft)',
-        border: '1px solid #F3D7A0',
-      }}
-    >
-      <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--warn)' }}>
-        Staff reminder
-      </span>
-      <span className="text-[13px]" style={{ color: 'var(--ink-2)' }}>
-        The front desk never confirms appointments directly. All requests require your manual confirmation.
-      </span>
-    </div>
-  );
-}
-
-// ─── Demo mode ─────────────────────────────────────────────────────────────
-
-function DemoReservationsPage() {
-  const [filter, setFilter] = useState<Filter>('all');
-  const [statuses, setStatuses] = useState<Record<string, RequestStatus>>(
-    () => Object.fromEntries(MOCK_RESERVATIONS.map((r) => [r.id, r.status])),
+export default function ReservationsPage() {
+  const [loading, setLoading] = useState(isSupabaseConfigured);
+  const [demo, setDemo] = useState(!isSupabaseConfigured);
+  const [businessId, setBusinessId] = useState('');
+  const [today, setToday] = useState<Date>(() => new Date());
+  const [appointments, setAppointments] = useState<DbAppointment[]>(
+    isSupabaseConfigured ? [] : mockToAppointments(MOCK_RESERVATIONS),
   );
 
-  const filtered = MOCK_RESERVATIONS.filter(
-    (r) => filter === 'all' || statuses[r.id] === filter,
+  const [view, setView] = useState<View>('week');
+  const [anchor, setAnchor] = useState<Date>(() => startOfWeek(new Date()));
+  const [anchorInitialized, setAnchorInitialized] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load real appointments (or fall back to demo).
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    async function load() {
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      const business = session ? await getActiveBusiness(supabase) : null;
+      if (!business) {
+        setDemo(true);
+        setAppointments(mockToAppointments(MOCK_RESERVATIONS));
+        setLoading(false);
+        return;
+      }
+      setBusinessId(business.id);
+      setToday(dateFromYMD(todayInTimeZone(business.timezone)));
+      const { data, error: loadErr } = await supabase
+        .from('appointments')
+        .select('*')
+        .eq('business_id', business.id)
+        .order('appointment_date', { ascending: true });
+      if (loadErr) setError(loadErr.message);
+      else setAppointments((data as DbAppointment[]) ?? []);
+      setLoading(false);
+    }
+    load();
+  }, []);
+
+  // Active = pending + confirmed (declined excluded from schedule + list).
+  const active = useMemo(
+    () => appointments.filter((a) => a.status === 'pending' || a.status === 'confirmed'),
+    [appointments],
   );
-
-  function updateStatus(id: string, status: RequestStatus) {
-    setStatuses((prev) => ({ ...prev, [id]: status }));
-  }
-
-  return (
-    <div className="w-full max-w-5xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
-      <PageHeader
-        count={MOCK_RESERVATIONS.length}
-        subtitle="Every request starts pending until you confirm. Tap into a row to see what the caller said and decide."
-      />
-      <StaffReminderStrip />
-      <FilterBar
-        filter={filter}
-        setFilter={setFilter}
-        countLabel={`${filtered.length} of ${MOCK_RESERVATIONS.length} · demo`}
-      />
-      <div className="space-y-4 fd-stagger">
-        {filtered.map((r) => {
-          const status = statuses[r.id];
-          return (
-            <AppointmentCard
-              key={r.id}
-              customerName={r.guestName}
-              customerPhone={r.phone}
-              serviceLabel={`${r.partySize} guest${r.partySize !== 1 ? 's' : ''}`}
-              receivedAt={r.requestedAt}
-              date={r.requestedDate}
-              time={r.requestedTime}
-              notes={r.notes ?? ''}
-              status={status}
-              onConfirm={() => updateStatus(r.id, 'confirmed')}
-              onDecline={() => updateStatus(r.id, 'declined')}
-              onReopen={() => updateStatus(r.id, 'pending')}
-            />
-          );
-        })}
-        {filtered.length === 0 && (
-          <div className="fd-card px-6 py-14 text-center">
-            <p className="fd-display text-2xl mb-1" style={{ color: 'var(--ink)' }}>Nothing here.</p>
-            <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>
-              No reservations match this filter.
-            </p>
-          </div>
-        )}
-      </div>
-    </div>
+  const dated = useMemo(
+    () => active
+      .filter((a) => parseApptDateTime(a) != null)
+      .sort((a, b) => parseApptDateTime(a)!.getTime() - parseApptDateTime(b)!.getTime()),
+    [active],
   );
-}
+  const undated = useMemo(() => active.filter((a) => parseApptDateTime(a) == null), [active]);
 
-// ─── Real mode ─────────────────────────────────────────────────────────────
-
-function RealReservationsPage({
-  appointments: initial,
-  loadError,
-  businessId,
-}: {
-  appointments: DbAppointment[];
-  loadError: string | null;
-  businessId: string;
-}) {
-  const [filter, setFilter] = useState<Filter>('all');
-  const [statuses, setStatuses] = useState<Record<string, string>>(
-    () => Object.fromEntries(initial.map((a) => [a.id, a.status])),
-  );
-  const [updateError, setUpdateError] = useState<string | null>(null);
-
-  const filtered = initial.filter((a) => {
-    const s = statuses[a.id] ?? a.status;
-    return filter === 'all' || s === filter;
-  });
+  // On first load, anchor the week to the most recent dated appointment so the view isn't empty.
+  useEffect(() => {
+    if (loading || anchorInitialized) return;
+    if (dated.length > 0) {
+      const latest = parseApptDateTime(dated[dated.length - 1])!;
+      setAnchor(startOfWeek(latest));
+    }
+    setAnchorInitialized(true);
+  }, [loading, anchorInitialized, dated]);
 
   async function updateStatus(id: string, newStatus: RequestStatus) {
-    setStatuses((prev) => ({ ...prev, [id]: newStatus }));
-    setUpdateError(null);
-
+    const prev = appointments.find((a) => a.id === id)?.status;
+    setAppointments((list) => list.map((a) => (a.id === id ? { ...a, status: newStatus } : a)));
+    if (demo) return;
     const supabase = createClient();
-    const { error } = await supabase
+    const { error: updErr } = await supabase
       .from('appointments')
       .update({ status: newStatus })
       .eq('id', id)
       .eq('business_id', businessId);
-
-    if (error) {
-      setStatuses((prev) => ({ ...prev, [id]: initial.find((a) => a.id === id)?.status ?? prev[id] }));
-      setUpdateError(`Failed to update status: ${error.message}`);
+    if (updErr) {
+      setError(`Failed to update status: ${updErr.message}`);
+      setAppointments((list) => list.map((a) => (a.id === id ? { ...a, status: prev ?? a.status } : a)));
     }
   }
 
-  return (
-    <div className="w-full max-w-5xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
-      <PageHeader
-        count={initial.length}
-        subtitle="Every request starts pending until you confirm. Tap into a row to see what the caller said and decide."
-      />
-      <StaffReminderStrip />
-
-      {loadError && (
-        <div className="mb-6 px-4 py-3 text-sm" style={{ border: '1px solid var(--danger)', backgroundColor: 'var(--danger-soft)', color: 'var(--danger)' }}>
-          <strong>Failed to load appointments:</strong> {loadError}
-        </div>
-      )}
-      {updateError && (
-        <div className="mb-6 px-4 py-3 text-sm" style={{ border: '1px solid var(--danger)', backgroundColor: 'var(--danger-soft)', color: 'var(--danger)' }}>
-          {updateError}
-        </div>
-      )}
-
-      {initial.length === 0 && !loadError ? (
-        <div className="fd-card px-6 py-16 text-center">
-          <p className="fd-display text-3xl mb-2" style={{ color: 'var(--ink)' }}>
-            No requests yet.
-          </p>
-          <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>
-            Appointment requests from calls handled by your front desk will appear here.
-          </p>
-        </div>
-      ) : (
-        <>
-          <FilterBar
-            filter={filter}
-            setFilter={setFilter}
-            countLabel={`${filtered.length} of ${initial.length}`}
-          />
-          <div className="space-y-4 fd-stagger">
-            {filtered.map((a) => {
-              const status = (statuses[a.id] ?? a.status) as RequestStatus;
-              const { date, time } = requestedWhen(a);
-              return (
-                <AppointmentCard
-                  key={a.id}
-                  customerName={a.customer_name ?? null}
-                  customerPhone={a.customer_phone ?? null}
-                  serviceLabel={partyOrService(a)}
-                  receivedAt={formatCreatedAt(a.created_at)}
-                  date={date}
-                  time={time}
-                  notes={notesText(a)}
-                  status={status}
-                  onConfirm={() => updateStatus(a.id, 'confirmed')}
-                  onDecline={() => updateStatus(a.id, 'declined')}
-                  onReopen={() => updateStatus(a.id, 'pending')}
-                />
-              );
-            })}
-            {filtered.length === 0 && (
-              <div className="fd-card px-6 py-14 text-center">
-                <p className="fd-display text-2xl mb-1" style={{ color: 'var(--ink)' }}>Nothing here.</p>
-                <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>
-                  No requests match this filter.
-                </p>
-              </div>
-            )}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ─── Root ──────────────────────────────────────────────────────────────────
-
-export default function ReservationsPage() {
-  const [mode, setMode] = useState<'loading' | 'demo' | 'real'>(
-    isSupabaseConfigured ? 'loading' : 'demo',
-  );
-  const [appointments, setAppointments] = useState<DbAppointment[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [businessId, setBusinessId] = useState<string>('');
-
-  useEffect(() => {
-    if (!isSupabaseConfigured) return;
-
-    async function load() {
-      const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) {
-        setMode('demo');
-        return;
-      }
-      const business = await getActiveBusiness(supabase);
-      if (!business) {
-        setMode('demo');
-        return;
-      }
-      setBusinessId(business.id);
-      const { data, error } = await supabase
-        .from('appointments')
-        .select('*')
-        .eq('business_id', business.id)
-        .order('created_at', { ascending: false });
-      if (error) {
-        setLoadError(error.message);
-      } else {
-        setAppointments((data as DbAppointment[]) ?? []);
-      }
-      setMode('real');
+  async function handleAdd(input: NewAppointmentInput) {
+    setError(null);
+    if (demo) {
+      const row: DbAppointment = {
+        id: `local-${Date.now()}`,
+        business_id: 'demo',
+        customer_name: input.customer_name,
+        customer_phone: input.customer_phone || null,
+        appointment_date: input.appointment_date,
+        appointment_time: input.appointment_time,
+        service_type: input.service_type || null,
+        special_request: input.special_request || null,
+        status: input.status,
+        staff_notes: 'Added manually by staff',
+        call_id: null,
+        created_at: new Date().toISOString(),
+      };
+      setAppointments((list) => [...list, row]);
+      focusOn(row);
+      return;
     }
+    const supabase = createClient();
+    const { data, error: insErr } = await supabase
+      .from('appointments')
+      .insert({
+        business_id: businessId,
+        customer_name: input.customer_name,
+        customer_phone: input.customer_phone || null,
+        appointment_date: input.appointment_date,
+        appointment_time: input.appointment_time,
+        service_type: input.service_type || null,
+        special_request: input.special_request || null,
+        status: input.status,
+        staff_notes: 'Added manually by staff',
+        call_id: null,
+      })
+      .select()
+      .single();
+    if (insErr) throw new Error(insErr.message);
+    const row = data as DbAppointment;
+    setAppointments((list) => [...list, row]);
+    focusOn(row);
+  }
 
-    load();
-  }, []);
+  // Jump the week view to an appointment and select it.
+  function focusOn(a: DbAppointment) {
+    const d = parseApptDateTime(a);
+    if (d) {
+      setView('week');
+      setAnchor(startOfWeek(d));
+    }
+    setSelectedId(a.id);
+  }
 
-  if (mode === 'loading') {
+  function handleSelect(id: string) {
+    setSelectedId(id);
+    const appt = appointments.find((a) => a.id === id);
+    const d = appt ? parseApptDateTime(appt) : null;
+    if (d && view === 'week') setAnchor(startOfWeek(d));
+  }
+
+  const weekLabel = useMemo(() => {
+    const end = addDays(anchor, 6);
+    const sameMonth = anchor.getMonth() === end.getMonth();
+    const a = anchor.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const b = end.toLocaleDateString('en-US', sameMonth ? { day: 'numeric' } : { month: 'short', day: 'numeric' });
+    return `${a} – ${b}`;
+  }, [anchor]);
+
+  const monthLabel = anchor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  function shift(dir: -1 | 1) {
+    setAnchor((cur) => addDays(cur, view === 'week' ? dir * 7 : dir * 30));
+  }
+  function goToday() {
+    setAnchor(startOfWeek(today));
+  }
+
+  if (loading) {
     return (
-      <div className="w-full max-w-5xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
-        <div className="h-3 w-32 mb-4 animate-pulse" style={{ backgroundColor: 'var(--hairline)' }} />
+      <div className="w-full max-w-7xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
         <div className="h-12 w-2/3 mb-8 animate-pulse" style={{ backgroundColor: 'var(--hairline)' }} />
-        <div className="space-y-4">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-32 fd-card animate-pulse" />
-          ))}
-        </div>
+        <div className="h-96 fd-card animate-pulse" />
       </div>
     );
   }
 
-  if (mode === 'demo') return <DemoReservationsPage />;
-
   return (
-    <RealReservationsPage
-      appointments={appointments}
-      loadError={loadError}
-      businessId={businessId}
-    />
+    <div className="w-full max-w-7xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
+      <header className="mb-6 flex items-end justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="fd-display text-4xl sm:text-5xl mb-2" style={{ color: 'var(--ink)' }}>
+            Reservations
+          </h1>
+          <p className="text-[15px] max-w-2xl leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
+            Pending and confirmed appointments, laid out by time.
+            {demo && <span style={{ color: 'var(--ink-muted)' }}> · demo</span>}
+          </p>
+        </div>
+        <button className="fd-btn fd-btn-accent" onClick={() => setModalOpen(true)}>
+          + Add appointment
+        </button>
+      </header>
+
+      {/* Pending disclaimer — the front desk never confirms directly (CLAUDE.md rule 15). */}
+      <div
+        className="mb-6 px-4 py-3 flex items-center gap-3 rounded-[10px]"
+        style={{ backgroundColor: 'var(--warn-soft)', border: '1px solid var(--warn)' }}
+      >
+        <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--warn)' }}>
+          Staff reminder
+        </span>
+        <span className="text-[13px]" style={{ color: 'var(--ink-2)' }}>
+          The front desk never confirms appointments directly. All requests stay pending until you confirm.
+        </span>
+      </div>
+
+      {error && (
+        <div className="mb-6 px-4 py-3 text-sm" style={{ border: '1px solid var(--danger)', backgroundColor: 'var(--danger-soft)', color: 'var(--danger)' }}>
+          {error}
+        </div>
+      )}
+
+      {/* Controls */}
+      <div className="flex items-center gap-2 mb-5 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <button onClick={() => setView('week')} className={`fd-tab ${view === 'week' ? 'fd-tab-active' : ''}`}>Week</button>
+          <button onClick={() => setView('month')} className={`fd-tab ${view === 'month' ? 'fd-tab-active' : ''}`}>Month</button>
+        </div>
+        <div className="flex items-center gap-1.5 ml-2">
+          <button onClick={() => shift(-1)} className="fd-btn fd-btn-quiet" aria-label="Previous">‹</button>
+          <button onClick={goToday} className="fd-btn fd-btn-quiet">Today</button>
+          <button onClick={() => shift(1)} className="fd-btn fd-btn-quiet" aria-label="Next">›</button>
+        </div>
+        <span className="ml-auto fd-eyebrow" style={{ color: 'var(--ink-muted)' }}>
+          {view === 'week' ? weekLabel : monthLabel}
+        </span>
+      </div>
+
+      {/* Schedule + list, side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
+        <div>
+          {view === 'week' ? (
+            <WeekGrid anchor={anchor} today={today} appointments={dated} selectedId={selectedId} onSelect={handleSelect} />
+          ) : (
+            <MonthHeatmap
+              anchor={anchor}
+              today={today}
+              appointments={dated}
+              onPickDay={(day) => { setAnchor(startOfWeek(day)); setView('week'); }}
+            />
+          )}
+        </div>
+
+        <ScheduleList
+          dated={dated}
+          undated={undated}
+          selectedId={selectedId}
+          onSelect={handleSelect}
+          onConfirm={(id) => updateStatus(id, 'confirmed')}
+          onDecline={(id) => updateStatus(id, 'declined')}
+          onReopen={(id) => updateStatus(id, 'pending')}
+        />
+      </div>
+
+      <AddAppointmentModal open={modalOpen} onClose={() => setModalOpen(false)} onSubmit={handleAdd} />
+    </div>
   );
 }
