@@ -108,10 +108,16 @@ export default function Sidebar({
   businessName,
   forceDemo = false,
   isSignedIn = false,
+  variant = 'default',
+  onNavigate,
+  onClose,
 }: {
   businessName?: string;
   forceDemo?: boolean;
   isSignedIn?: boolean;
+  variant?: 'default' | 'drawer';
+  onNavigate?: () => void;
+  onClose?: () => void;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -141,8 +147,8 @@ export default function Sidebar({
     <aside className="fd-sidebar w-60 h-full flex flex-col flex-shrink-0">
 
       {/* ── Wordmark ───────────────────────────────────────────────────── */}
-      <div className="h-14 px-5 flex items-center" style={{ borderBottom: '1px solid var(--sidebar-line)' }}>
-        <Link href="/" className="flex items-baseline gap-2 group">
+      <div className="h-14 px-5 flex items-center justify-between" style={{ borderBottom: '1px solid var(--sidebar-line)' }}>
+        <Link href="/" onClick={onNavigate} className="flex items-baseline gap-2 group">
           <span
             className="text-[13px] font-bold tracking-[0.32em] uppercase"
             style={{ color: 'var(--sidebar-strong)' }}
@@ -156,6 +162,19 @@ export default function Sidebar({
             ·
           </span>
         </Link>
+        {variant === 'drawer' && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close navigation menu"
+            className="flex items-center justify-center w-9 h-9 -mr-1.5 rounded-[8px]"
+            style={{ color: 'var(--ink-muted)' }}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* ── Section label ──────────────────────────────────────────────── */}
@@ -178,6 +197,7 @@ export default function Sidebar({
             <Link
               key={item.href}
               href={item.href}
+              onClick={onNavigate}
               className={`group flex items-center gap-3 px-3 py-2 rounded-[4px] text-[13px] transition-colors ${
                 isActive ? 'fd-sidebar-active font-semibold' : 'hover:bg-white/[0.04]'
               }`}

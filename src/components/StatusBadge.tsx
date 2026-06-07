@@ -9,6 +9,8 @@ const PILL_CLASS: Record<Status, string> = {
   resolved:  'fd-pill fd-pill-ok',
   escalated: 'fd-pill fd-pill-danger',
   missed:    'fd-pill fd-pill-muted',
+  awaiting_customer: 'fd-pill fd-pill-info',
+  expired:   'fd-pill fd-pill-muted',
 };
 
 const LABELS: Record<Status, string> = {
@@ -18,6 +20,8 @@ const LABELS: Record<Status, string> = {
   resolved: 'Resolved',
   escalated: 'Escalated',
   missed: 'Missed',
+  awaiting_customer: 'Awaiting customer',
+  expired: 'Expired',
 };
 
 export default function StatusBadge({ status }: { status: Status }) {

@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import {
   type DbAppointment,
   parseApptDateTime,
+  effectiveStatus,
   sameDay,
   weekDays,
 } from '@/lib/appointments';
@@ -30,6 +31,7 @@ function offsetFor(d: Date): number {
 
 function blockColors(status: string): { bg: string; border: string; fg: string } {
   if (status === 'confirmed') return { bg: 'var(--ok-soft)', border: 'var(--ok)', fg: 'var(--ink)' };
+  if (status === 'awaiting_customer') return { bg: 'var(--info-soft)', border: 'var(--info)', fg: 'var(--ink)' };
   return { bg: 'var(--warn-soft)', border: 'var(--warn)', fg: 'var(--ink)' }; // pending
 }
 
@@ -129,7 +131,7 @@ export default function WeekGrid({
                 {/* appointment blocks */}
                 {dayAppts.map((a) => {
                   const d = parseApptDateTime(a)!;
-                  const c = blockColors(a.status);
+                  const c = blockColors(effectiveStatus(a));
                   const isSel = selectedId === a.id;
                   return (
                     <button

@@ -235,7 +235,7 @@ function RequestCard({
         </div>
 
         {/* Type + (optional) total */}
-        <div className="col-span-6 md:col-span-3">
+        <div className="col-span-6 md:col-span-3 min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'var(--ink-muted)' }}>
             Type
           </p>
@@ -248,7 +248,7 @@ function RequestCard({
         </div>
 
         {/* Preferred time / quick info */}
-        <div className="col-span-6 md:col-span-3">
+        <div className="col-span-6 md:col-span-3 min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'var(--ink-muted)' }}>
             Preferred
           </p>

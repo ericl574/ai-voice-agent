@@ -1,10 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { MOCK_RESTAURANT } from '@/lib/mock-data';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
 import type { AgentConfig } from '@/lib/supabase/businesses';
+import {
+  ENABLED_VOICE_OPTIONS,
+  getVoiceById,
+  DEFAULT_VOICE_OPTION,
+} from '@/lib/voice/voices';
 
 const DEFAULT_AGENT_CONFIG: AgentConfig = {
   tone: 'friendly',
@@ -30,13 +35,6 @@ const TIMEZONES = [
   'UTC',
 ];
 
-// Stored value IS the OpenAI Realtime voice id; the route passes it straight to audio.output.voice.
-const VOICE_OPTIONS = [
-  { value: 'alloy', label: 'Voice 1 — neutral' },
-  { value: 'coral', label: 'Voice 2 — warm' },
-  { value: 'sage', label: 'Voice 3 — clear / professional' },
-  { value: 'shimmer', label: 'Voice 4 — brighter' },
-];
 
 function browserTimezone(): string {
   try {
@@ -56,6 +54,59 @@ export default function SettingsPage() {
   // Agent configuration — persisted to businesses.ai_agent_name and businesses.agent_config
   const [agentName, setAgentName] = useState('');
   const [agentConfig, setAgentConfig] = useState<AgentConfig>({ ...DEFAULT_AGENT_CONFIG });
+
+  // Voice preview ("Test voice & speed") — previews the CURRENTLY selected (unsaved) voice + speed.
+  const [previewState, setPreviewState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
+  const [previewError, setPreviewError] = useState('');
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Plays an audio URL with the selected speed. Resolves true if playback started, false on
+  // load/play failure (so the caller can fall back). `revoke` revokes a blob URL when done.
+  function playPreview(url: string, revoke: boolean): Promise<boolean> {
+    return new Promise((resolve) => {
+      const audio = new Audio(url);
+      audio.playbackRate = agentConfig.voice_speed ?? 1.0; // matches Realtime audio.output.speed
+      previewAudioRef.current = audio;
+      const cleanup = () => { if (revoke) URL.revokeObjectURL(url); };
+      audio.onended = () => { setPreviewState('idle'); cleanup(); previewAudioRef.current = null; };
+      audio.onerror = () => { cleanup(); resolve(false); };
+      audio.play().then(() => { setPreviewState('playing'); resolve(true); }).catch(() => { cleanup(); resolve(false); });
+    });
+  }
+
+  async function testVoice() {
+    // Restart if already playing.
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current = null;
+    }
+    setPreviewError('');
+    const option = getVoiceById(agentConfig.voice_id) ?? DEFAULT_VOICE_OPTION;
+
+    // 1. Pre-recorded clip — instant, no network.
+    if (await playPreview(option.previewAudioUrl, false)) return;
+
+    // 2. Fallback: synthesize live (slower) when the static clip isn't available.
+    setPreviewState('loading');
+    try {
+      const res = await fetch('/api/voice-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice: option.runtimeVoiceId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Preview failed (${res.status})`);
+      }
+      const url = URL.createObjectURL(await res.blob());
+      if (!(await playPreview(url, true))) {
+        throw new Error('Could not play the preview audio.');
+      }
+    } catch (err) {
+      setPreviewState('error');
+      setPreviewError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   useEffect(() => {
     if (!isSupabaseConfigured) return;
@@ -173,7 +224,10 @@ export default function SettingsPage() {
         {/* ── AI Assistant (greeting / voice) ─────────────────── */}
         <div className="fd-card overflow-hidden">
           <div className="px-5 py-4 border-b fd-hairline">
-            <h2 className="font-semibold text-gray-900">AI Assistant</h2>
+            <h2 className="font-semibold text-gray-900">AI Agent Configuration</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Voice, greeting, and behavior — saved to your account and used by the Call Simulator and voice agent.
+            </p>
           </div>
           <div className="p-5 space-y-4">
             <div>
@@ -188,8 +242,8 @@ export default function SettingsPage() {
                 className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
               >
                 <option value="">Default</option>
-                {VOICE_OPTIONS.map((v) => (
-                  <option key={v.value} value={v.value}>{v.label}</option>
+                {ENABLED_VOICE_OPTIONS.map((v) => (
+                  <option key={v.id} value={v.id}>{v.displayName}</option>
                 ))}
               </select>
               <p className="text-xs text-gray-400 mt-1">
@@ -217,6 +271,25 @@ export default function SettingsPage() {
                 <span>1.00 normal</span>
                 <span>1.10 faster</span>
                 <span>1.20 fast</span>
+              </div>
+
+              {/* Preview the selected voice + speed (uses current, unsaved values). */}
+              <div className="flex items-center gap-3 mt-3">
+                <button
+                  type="button"
+                  onClick={testVoice}
+                  disabled={previewState === 'loading' || previewState === 'playing'}
+                  className="fd-btn fd-btn-ghost"
+                >
+                  {previewState === 'loading'
+                    ? 'Loading…'
+                    : previewState === 'playing'
+                      ? 'Playing…'
+                      : '▶ Test voice & speed'}
+                </button>
+                {previewState === 'error' && (
+                  <span className="text-xs" style={{ color: 'var(--danger)' }}>{previewError}</span>
+                )}
               </div>
             </div>
             <div>
@@ -252,18 +325,8 @@ export default function SettingsPage() {
                 Told to callers when logging a reservation or service request.
               </p>
             </div>
-          </div>
-        </div>
-
-        {/* ── AI Agent Configuration (persisted) ──────────────── */}
-        <div className="fd-card overflow-hidden">
-          <div className="px-5 py-4 border-b fd-hairline">
-            <h2 className="font-semibold text-gray-900">AI Agent Configuration</h2>
-            <p className="text-xs text-gray-400 mt-0.5">
-              These settings are saved to your account and shape how the AI responds in the Call Simulator and voice agent.
-            </p>
-          </div>
-          <div className="p-5 space-y-5">
+            {/* Divider between voice/greeting and agent behavior */}
+            <div className="border-t fd-hairline" />
 
             {/* Agent Name */}
             <div>
@@ -357,7 +420,7 @@ export default function SettingsPage() {
               <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
                 Information to Collect from Callers
               </label>
-              <div className="grid grid-cols-2 gap-y-2 gap-x-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-4">
                 {(
                   [
                     { key: 'collect_name', label: 'Customer name' },

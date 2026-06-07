@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
-import Sidebar from '@/components/Sidebar';
-import DemoBanner from '@/components/DemoBanner';
+import DashboardShell from '@/components/DashboardShell';
 import { createClient } from '@/lib/supabase/server';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
 
@@ -31,12 +30,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'var(--paper)' }}>
-      <Sidebar businessName={businessName} forceDemo={isDemoMode} isSignedIn={isSignedIn} />
-      <div className="flex-1 flex flex-col overflow-y-auto">
-        {(isDemoMode || !isSignedIn) && <DemoBanner isSignedIn={isSignedIn} />}
-        <main className="flex-1 fd-canvas">{children}</main>
-      </div>
-    </div>
+    <DashboardShell
+      businessName={businessName}
+      forceDemo={isDemoMode}
+      isSignedIn={isSignedIn}
+      showDemoBanner={isDemoMode || !isSignedIn}
+    >
+      {children}
+    </DashboardShell>
   );
 }

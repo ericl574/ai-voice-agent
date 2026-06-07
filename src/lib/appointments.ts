@@ -25,6 +25,19 @@ export interface DbAppointment {
   call_id?: string | null;
   created_at: string;
   updated_at?: string | null;
+  // Auto-confirm (SMS card link) flow
+  confirmation_token?: string | null;
+  expires_at?: string | null;
+  confirmed_at?: string | null;
+}
+
+// The status to display/act on. An 'awaiting_customer' reservation whose window has lapsed reads
+// as 'expired' even before a server job flips it, so the dashboard and confirm page agree.
+export function effectiveStatus(appt: DbAppointment): string {
+  if (appt.status === 'awaiting_customer' && appt.expires_at) {
+    if (new Date(appt.expires_at).getTime() < Date.now()) return 'expired';
+  }
+  return appt.status;
 }
 
 // ─── Display helpers ─────────────────────────────────────────────────────────

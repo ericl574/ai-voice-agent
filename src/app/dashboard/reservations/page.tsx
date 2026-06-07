@@ -2,13 +2,14 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
-import { getActiveBusiness } from '@/lib/supabase/businesses';
+import { getActiveBusiness, type AgentConfig } from '@/lib/supabase/businesses';
 import { todayInTimeZone } from '@/lib/call-pipeline/time';
 import { MOCK_RESERVATIONS, RequestStatus } from '@/lib/mock-data';
 import {
   type DbAppointment,
   mockToAppointments,
   parseApptDateTime,
+  effectiveStatus,
   startOfWeek,
   addDays,
 } from '@/lib/appointments';
@@ -39,6 +40,10 @@ export default function ReservationsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Reservation confirmation mode lives here now (persisted in agent_config).
+  const [agentConfig, setAgentConfig] = useState<AgentConfig>({});
+  const mode: 'staff' | 'auto' = agentConfig.reservation_confirmation_mode === 'auto' ? 'auto' : 'staff';
+  const windowHours = agentConfig.confirmation_window_hours ?? 24;
 
   // Load real appointments (or fall back to demo).
   useEffect(() => {
@@ -54,6 +59,7 @@ export default function ReservationsPage() {
         return;
       }
       setBusinessId(business.id);
+      setAgentConfig((business.agent_config as AgentConfig | null) ?? {});
       setToday(dateFromYMD(todayInTimeZone(business.timezone)));
       const { data, error: loadErr } = await supabase
         .from('appointments')
@@ -67,9 +73,13 @@ export default function ReservationsPage() {
     load();
   }, []);
 
-  // Active = pending + confirmed (declined excluded from schedule + list).
+  // Active = pending + confirmed + awaiting_customer (declined/expired excluded). effectiveStatus
+  // turns an awaiting reservation past its window into 'expired', so it drops off automatically.
   const active = useMemo(
-    () => appointments.filter((a) => a.status === 'pending' || a.status === 'confirmed'),
+    () => appointments.filter((a) => {
+      const s = effectiveStatus(a);
+      return s === 'pending' || s === 'confirmed' || s === 'awaiting_customer';
+    }),
     [appointments],
   );
   const dated = useMemo(
@@ -104,6 +114,19 @@ export default function ReservationsPage() {
       setError(`Failed to update status: ${updErr.message}`);
       setAppointments((list) => list.map((a) => (a.id === id ? { ...a, status: prev ?? a.status } : a)));
     }
+  }
+
+  // Persist a change to the reservation confirmation mode/window (merges into agent_config).
+  async function setConfirmation(next: Partial<AgentConfig>) {
+    const merged = { ...agentConfig, ...next };
+    setAgentConfig(merged);
+    if (demo) return;
+    const supabase = createClient();
+    const { error: cfgErr } = await supabase
+      .from('businesses')
+      .update({ agent_config: merged })
+      .eq('id', businessId);
+    if (cfgErr) setError(`Failed to save confirmation setting: ${cfgErr.message}`);
   }
 
   async function handleAdd(input: NewAppointmentInput) {
@@ -210,17 +233,62 @@ export default function ReservationsPage() {
         </button>
       </header>
 
-      {/* Pending disclaimer — the front desk never confirms directly (CLAUDE.md rule 15). */}
+      {/* Confirmation mode (moved here from Settings) + a mode-aware disclaimer. */}
       <div
-        className="mb-6 px-4 py-3 flex items-center gap-3 rounded-[10px]"
-        style={{ backgroundColor: 'var(--warn-soft)', border: '1px solid var(--warn)' }}
+        className="mb-6 rounded-[10px] overflow-hidden"
+        style={{ border: '1px solid var(--hairline)' }}
       >
-        <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--warn)' }}>
-          Staff reminder
-        </span>
-        <span className="text-[13px]" style={{ color: 'var(--ink-2)' }}>
-          The front desk never confirms appointments directly. All requests stay pending until you confirm.
-        </span>
+        <div
+          className="px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-2"
+          style={{ backgroundColor: 'var(--surface-soft)', borderBottom: '1px solid var(--hairline)' }}
+        >
+          <span className="fd-eyebrow" style={{ color: 'var(--ink-muted)' }}>Confirmation</span>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setConfirmation({ reservation_confirmation_mode: 'staff' })}
+              className={`fd-tab ${mode === 'staff' ? 'fd-tab-active' : ''}`}
+            >
+              Staff confirms
+            </button>
+            <button
+              onClick={() => setConfirmation({ reservation_confirmation_mode: 'auto' })}
+              className={`fd-tab ${mode === 'auto' ? 'fd-tab-active' : ''}`}
+            >
+              Automatic (text + card)
+            </button>
+          </div>
+          {mode === 'auto' && (
+            <label className="flex items-center gap-2 text-[13px] ml-auto" style={{ color: 'var(--ink-soft)' }}>
+              Window
+              <input
+                type="number"
+                min={1}
+                max={168}
+                value={windowHours}
+                onChange={(e) =>
+                  setConfirmation({
+                    confirmation_window_hours: Math.max(1, Math.min(168, Number(e.target.value) || 24)),
+                  })
+                }
+                className="fd-input w-20"
+              />
+              hrs
+            </label>
+          )}
+        </div>
+        <div
+          className="px-4 py-3 flex items-center gap-3"
+          style={{ backgroundColor: 'var(--warn-soft)' }}
+        >
+          <span className="text-[11px] font-semibold uppercase tracking-wide flex-shrink-0" style={{ color: 'var(--warn)' }}>
+            {mode === 'auto' ? 'Auto-confirm' : 'Staff reminder'}
+          </span>
+          <span className="text-[13px]" style={{ color: 'var(--ink-2)' }}>
+            {mode === 'auto'
+              ? 'Callers are texted a secure link to confirm by adding a card on file. Reservations show “Awaiting customer” until they complete it, then become Confirmed; unconfirmed ones expire after the window. The card is never collected on the call.'
+              : 'The front desk never confirms appointments directly. All requests stay pending until you confirm.'}
+          </span>
+        </div>
       </div>
 
       {error && (
@@ -247,7 +315,9 @@ export default function ReservationsPage() {
 
       {/* Schedule + list, side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
-        <div>
+        {/* The 7-day time grid needs width — hidden on phones (<md), where the agenda list below
+            becomes the primary schedule. The month heatmap is text-based and shown at all sizes. */}
+        <div className={view === 'week' ? 'hidden md:block' : ''}>
           {view === 'week' ? (
             <WeekGrid anchor={anchor} today={today} appointments={dated} selectedId={selectedId} onSelect={handleSelect} />
           ) : (

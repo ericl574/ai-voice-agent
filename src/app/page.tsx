@@ -463,7 +463,7 @@ export default async function LandingPage() {
                     </div>
 
                     {/* Detail chips */}
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div className="bg-gray-50 rounded-lg px-3 py-2.5">
                         <p className="text-xs text-gray-400 mb-0.5">Service</p>
                         <p className="text-sm font-semibold text-gray-900">Oil Change</p>

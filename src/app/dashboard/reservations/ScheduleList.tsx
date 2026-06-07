@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import StatusBadge from '@/components/StatusBadge';
 import { RequestStatus } from '@/lib/mock-data';
 import {
@@ -8,6 +9,7 @@ import {
   customerInitial,
   partyOrService,
   parseApptDateTime,
+  effectiveStatus,
 } from '@/lib/appointments';
 
 function timeLabel(appt: DbAppointment): string {
@@ -32,8 +34,23 @@ function Row({
   onReopen: () => void;
 }) {
   const av = avatarFor(appt.customer_name);
-  const status = appt.status as RequestStatus;
+  const status = effectiveStatus(appt) as RequestStatus;
   const isPending = status === 'pending';
+  const isAwaiting = status === 'awaiting_customer';
+  const [copied, setCopied] = useState(false);
+
+  async function copyLink(e: React.MouseEvent) {
+    e.stopPropagation();
+    const link = `${window.location.origin}/confirm/${appt.confirmation_token ?? 'demo'}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard blocked — no-op; staff can still read the status.
+    }
+  }
+
   return (
     <button
       onClick={onSelect}
@@ -62,7 +79,7 @@ function Row({
       </div>
       {selected && (
         <div className="flex gap-1.5 mt-2.5">
-          {isPending ? (
+          {isPending && (
             <>
               <span
                 role="button"
@@ -81,7 +98,28 @@ function Row({
                 Decline
               </span>
             </>
-          ) : (
+          )}
+          {isAwaiting && (
+            <>
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={copyLink}
+                className="fd-btn fd-btn-accent flex-1 text-center"
+              >
+                {copied ? 'Copied!' : 'Copy confirm link'}
+              </span>
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); onDecline(); }}
+                className="fd-btn fd-btn-ghost flex-1 text-center"
+              >
+                Decline
+              </span>
+            </>
+          )}
+          {!isPending && !isAwaiting && (
             <span
               role="button"
               tabIndex={0}

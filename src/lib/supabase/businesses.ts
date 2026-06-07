@@ -15,6 +15,12 @@ export interface AgentConfig {
   business_hours?: string;        // free-form text, e.g. "Mon–Fri 9am–6pm, Sat 10am–4pm"
   walk_in_allowed?: boolean;
   appointments_require_confirmation?: boolean;
+  // Reservation confirmation mode (Settings page):
+  //  'staff' (default) — current behavior: reservations land pending; staff confirm manually.
+  //  'auto'  — reservation is auto-taken but the caller must confirm via an SMS link by adding a
+  //            card on file; status is 'awaiting_customer' until they complete it, then 'confirmed'.
+  reservation_confirmation_mode?: 'staff' | 'auto';
+  confirmation_window_hours?: number; // hours the caller has to complete the card step (default 24)
   // Editable, vertical-aware chip arrays (owner can add/remove/customize). Empty/undefined
   // → the prompt builder falls back to the vertical's suggested defaults.
   main_request_types?: string[];  // request types this front desk handles

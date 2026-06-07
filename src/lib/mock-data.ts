@@ -11,7 +11,12 @@ export type BusinessType =
 
 export type CallType = 'reservation' | 'order' | 'inquiry' | 'complaint';
 export type CallStatus = 'resolved' | 'escalated' | 'missed';
-export type RequestStatus = 'pending' | 'confirmed' | 'declined';
+export type RequestStatus =
+  | 'pending'
+  | 'confirmed'
+  | 'declined'
+  | 'awaiting_customer' // auto mode: caller must confirm via SMS card link
+  | 'expired';          // auto mode: caller never completed the card step in time
 
 export interface Call {
   id: string;
@@ -236,6 +241,18 @@ export const MOCK_RESERVATIONS: Reservation[] = [
     status: 'declined',
     notes: 'Requested date fully booked.',
     callId: 'call-011',
+  },
+  {
+    id: 'res-006',
+    requestedAt: '2026-06-06 09:12 AM',
+    guestName: 'Olivia Chen',
+    phone: '(555) 802-4417',
+    partySize: 4,
+    requestedDate: 'Jun 7, 2026',
+    requestedTime: '6:30 PM',
+    status: 'awaiting_customer',
+    notes: 'Auto-confirm mode — texted card link, awaiting customer.',
+    callId: 'call-012',
   },
 ];
 

@@ -178,6 +178,9 @@ export default function VoicePage() {
   // Count of recoverable "active response in progress" errors this call — each one is a caller
   // barge-in the server rejected (a possible dropped turn). Logged as a summary at cleanup.
   const activeResponseErrorCountRef = useRef(0);
+  // True when a caller turn was rejected because a response was already active. Once that response
+  // finishes we ask the server for a fresh response so the caller's turn is actually answered.
+  const pendingResponseRef = useRef(false);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const postCallGenRef = useRef(0);
   // Caller mic recording — MediaRecorder is the source of truth for post-call transcription.
@@ -399,6 +402,17 @@ export default function VoicePage() {
     ) {
       responseInProgressRef.current = false;
       console.log(`[FD debug] ${type} — response active cleared`);
+      // Recover a barged-over caller turn: a caller spoke while this response was active, so the
+      // server rejected the auto-response for it. Now that the response is done, ask for a fresh one
+      // so the caller's question is actually answered instead of silently dropped.
+      if (pendingResponseRef.current) {
+        pendingResponseRef.current = false;
+        const dc = dcRef.current;
+        if (dc && dc.readyState === 'open') {
+          console.log('[FD debug] re-issuing response.create for barged-over caller turn');
+          dc.send(JSON.stringify({ type: 'response.create' }));
+        }
+      }
     }
 
     if (type === 'error') {
@@ -414,6 +428,7 @@ export default function VoicePage() {
 
       if (isActiveResponseError) {
         responseInProgressRef.current = true;
+        pendingResponseRef.current = true; // answer this caller turn once the active response ends
         activeResponseErrorCountRef.current += 1; // a caller barge-in the server rejected
         console.log(
           `[FD debug] Realtime error (recoverable — keeping call alive): ${message} | count this call: ${activeResponseErrorCountRef.current}`,
@@ -486,6 +501,7 @@ export default function VoicePage() {
       `[FD debug] call summary — active-response (possible dropped) turns: ${activeResponseErrorCountRef.current}`,
     );
     responseInProgressRef.current = false;
+    pendingResponseRef.current = false;
     clearConnectTimeout();
     if (autoEndTimerRef.current) {
       clearTimeout(autoEndTimerRef.current);
@@ -515,6 +531,7 @@ export default function VoicePage() {
     endReasonRef.current = 'unknown';
     responseInProgressRef.current = false;
     activeResponseErrorCountRef.current = 0;
+    pendingResponseRef.current = false;
     setStatus('requesting');
 
     // 1. Request microphone access
@@ -853,11 +870,20 @@ export default function VoicePage() {
     setExtraction('running');
     setExtractionErrorMsg(null);
     try {
-      const res = await fetch('/api/post-call', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ call_id: callId, business_id: businessId, transcript }),
-      });
+      // Bound the request so a hung extraction can't leave the UI stuck on "Analyzing transcript…".
+      const ctrl = new AbortController();
+      const timeout = setTimeout(() => ctrl.abort(), 90_000);
+      let res: Response;
+      try {
+        res = await fetch('/api/post-call', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ call_id: callId, business_id: businessId, transcript }),
+          signal: ctrl.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
       const data = await res.json();
       console.log('[FD debug] post-call response — status:', res.status, '| data:', JSON.stringify(data).substring(0, 500));
       if (gen !== postCallGenRef.current) return;
@@ -884,7 +910,10 @@ export default function VoicePage() {
       }
     } catch (err: unknown) {
       if (gen !== postCallGenRef.current) return;
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg =
+        err instanceof DOMException && err.name === 'AbortError'
+          ? 'Analysis timed out after 90 seconds'
+          : err instanceof Error ? err.message : String(err);
       setExtractionErrorMsg(msg);
       setExtraction('error');
     }
@@ -903,6 +932,7 @@ export default function VoicePage() {
     endReasonRef.current = 'unknown';
     responseInProgressRef.current = false;
     activeResponseErrorCountRef.current = 0;
+    pendingResponseRef.current = false;
     if (autoEndTimerRef.current) {
       clearTimeout(autoEndTimerRef.current);
       autoEndTimerRef.current = null;
@@ -1219,7 +1249,7 @@ export default function VoicePage() {
                     className={`flex ${entry.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
-                      className="max-w-[80%] px-4 py-2.5 text-sm rounded"
+                      className="max-w-[85%] sm:max-w-[80%] px-4 py-2.5 text-sm rounded"
                       style={{
                         backgroundColor: entry.role === 'user' ? 'var(--ink)' : 'var(--accent-soft)',
                         color: entry.role === 'user' ? 'var(--surface)' : 'var(--ink)',

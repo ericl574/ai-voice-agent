@@ -427,13 +427,13 @@ function ProfileTab({
         </div>
         <div className="px-5 py-4">
           {isDemo ? (
-            <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
               <InfoPair label="Business name" value={localName} />
               <InfoPair label="Phone" value={localPhone} />
               <InfoPair label="Location" value={[localCity, localRegion].filter(Boolean).join(', ')} />
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="col-span-2">
                 <label className={LABEL_CLASS}>Business name</label>
                 <input
@@ -645,7 +645,7 @@ function ProfileTab({
       )}
 
       {!isDemo && (
-        <div className="fixed bottom-0 left-64 right-0 bg-white border-t fd-hairline shadow-sm z-20">
+        <div className="fixed bottom-0 left-0 lg:left-60 right-0 bg-white border-t fd-hairline shadow-sm z-20">
           <div className="px-6 py-3 flex items-center gap-4">
             <span className="text-sm min-w-[120px]">
               {saved ? (

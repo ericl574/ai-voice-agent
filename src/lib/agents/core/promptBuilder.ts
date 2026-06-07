@@ -82,6 +82,7 @@ ${profileConfigSection}`.trim();
   const hours = agentConfig?.business_hours || 'not specified — let the caller know staff can confirm';
   const walkin = agentConfig?.walk_in_allowed ?? false;
   const requiresConfirmation = agentConfig?.appointments_require_confirmation ?? true;
+  const autoConfirm = agentConfig?.reservation_confirmation_mode === 'auto';
   const callbackExp = agentConfig?.callback_expectation || 'staff will follow up during business hours';
   const handoffRule = agentConfig?.staff_handoff_rule || 'Escalate urgent, angry, or complex calls to staff.';
 
@@ -112,7 +113,11 @@ Hours: ${hours}
 ${walkin ? 'Walk-ins: Welcome.' : 'Appointments: Preferred. Walk-ins subject to availability.'}
 
 APPOINTMENTS:
-${requiresConfirmation ? 'NEVER confirm appointments yourself. Always say staff will confirm and provide the callback expectation.' : 'You may acknowledge appointment requests.'}
+${autoConfirm
+    ? 'After collecting the reservation details, tell the caller you will text them a link to confirm their reservation by adding a card on file, and that the reservation is held until they complete that step. NEVER ask for or collect credit card details on this call — the card is added securely through the texted link only.'
+    : requiresConfirmation
+      ? 'NEVER confirm appointments yourself. Always say staff will confirm and provide the callback expectation.'
+      : 'You may acknowledge appointment requests.'}
 Callback expectation: ${callbackExp}
 
 ESCALATION:

@@ -7,6 +7,9 @@ import {
   type ExtractionResult,
 } from '@/lib/call-pipeline/extraction';
 import { todayInTimeZone, DEFAULT_BUSINESS_TIMEZONE } from '@/lib/call-pipeline/time';
+import type { AgentConfig } from '@/lib/supabase/businesses';
+import { sendReservationSms, reservationConfirmUrl } from '@/lib/sms/sendReservationSms';
+import { randomUUID } from 'crypto';
 
 // ── Extraction prompt ────────────────────────────────────────────────────────
 
@@ -122,7 +125,7 @@ export async function POST(req: NextRequest) {
   // correct local day — not the server/UTC day.
   const { data: bizRow } = await supabase
     .from('businesses')
-    .select('timezone')
+    .select('timezone, name, phone, agent_config')
     .eq('id', business_id)
     .single();
   const businessTimezone = (bizRow?.timezone as string) || DEFAULT_BUSINESS_TIMEZONE;
@@ -135,32 +138,69 @@ export async function POST(req: NextRequest) {
   let extraction: ExtractionResult;
   let extractionSource: 'openai' | 'fallback' = 'openai';
 
-  try {
-    const oaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: buildPrompt(today, businessTimezone) },
-          { role: 'user', content: `Transcript:\n${transcriptText}` },
-        ],
-        max_tokens: 600,
-        temperature: 0,
-      }),
-    });
-
-    if (!oaiRes.ok) {
-      const errText = await oaiRes.text();
-      throw new Error(`OpenAI ${oaiRes.status}: ${errText}`);
+  // One extraction attempt, bounded by a 30s timeout. A transient failure (timeout, 429, or 5xx)
+  // is retried once before falling back — so a one-off API hiccup doesn't silently drop a booking.
+  const extractOnce = async (): Promise<ExtractionResult> => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 30_000);
+    try {
+      const oaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: buildPrompt(today, businessTimezone) },
+            { role: 'user', content: `Transcript:\n${transcriptText}` },
+          ],
+          max_tokens: 600,
+          temperature: 0,
+        }),
+        signal: ctrl.signal,
+      });
+      if (!oaiRes.ok) {
+        const errText = await oaiRes.text();
+        const e = new Error(`OpenAI ${oaiRes.status}: ${errText}`) as Error & { status?: number };
+        e.status = oaiRes.status;
+        throw e;
+      }
+      const oaiData = await oaiRes.json();
+      return JSON.parse(oaiData.choices[0].message.content) as ExtractionResult;
+    } finally {
+      clearTimeout(t);
     }
+  };
 
-    const oaiData = await oaiRes.json();
-    extraction = JSON.parse(oaiData.choices[0].message.content) as ExtractionResult;
+  if (!callerText.trim()) {
+    // No caller speech was captured (silent/garbled mic, empty recording). Do NOT ask the model to
+    // infer intent from the assistant-only lines — it would hallucinate an appointment or a false
+    // "no conversation" summary. Save a safe, no-action result instead.
+    extractionSource = 'fallback';
+    extraction = {
+      summary: 'No caller speech was captured on this call.',
+      intent: 'other',
+      caller_name: null,
+      caller_phone: null,
+      appointment: null,
+      service_request: null,
+      next_action: 'No caller audio was understood — review the recording manually.',
+    };
+  } else try {
+    try {
+      extraction = await extractOnce();
+    } catch (err1: unknown) {
+      // Retry once on transient errors (timeout/abort → no status; 429; 5xx). Don't retry 4xx.
+      const status = (err1 as { status?: number }).status;
+      const transient = status === undefined || status === 429 || status >= 500;
+      if (!transient) throw err1;
+      console.warn('[FD] extraction transient failure — retrying once:', err1 instanceof Error ? err1.message : err1);
+      await new Promise((r) => setTimeout(r, 600));
+      extraction = await extractOnce();
+    }
   } catch (err: unknown) {
     // OpenAI call failed — use a safe empty extraction and let keyword fallback handle it
     const msg = err instanceof Error ? err.message : String(err);
@@ -228,20 +268,54 @@ export async function POST(req: NextRequest) {
   // ── Create appointment ────────────────────────────────────────────────────
 
   if (extraction.appointment?.should_create && !existingAppt) {
+    const agentConfig = (bizRow?.agent_config as AgentConfig | null) ?? null;
+    const callerPhone = extraction.caller_phone ?? null;
+    // Auto mode: take the reservation but require the caller to confirm via an SMS card link.
+    // Needs a phone to text — without one we fall back to the staff-confirm (pending) flow.
+    const autoConfirm =
+      agentConfig?.reservation_confirmation_mode === 'auto' && !!callerPhone;
+    const windowHours = agentConfig?.confirmation_window_hours ?? 24;
+
+    const token = autoConfirm ? randomUUID() : null;
+    const expiresAt = autoConfirm
+      ? new Date(Date.now() + windowHours * 3600_000).toISOString()
+      : null;
+
     const { error: apptErr } = await supabase.from('appointments').insert({
       business_id,
       call_id,
       customer_name: extraction.caller_name ?? null,
-      customer_phone: extraction.caller_phone ?? null,
+      customer_phone: callerPhone,
       appointment_date: extraction.appointment.requested_date ?? null,
       appointment_time: extraction.appointment.requested_time ?? null,
       service_type: extraction.appointment.service ?? 'Appointment request',
       special_request: extraction.appointment.notes ?? null,
-      status: 'pending',
-      staff_notes: `Auto-created from call transcript. ${extraction.next_action}`,
+      status: autoConfirm ? 'awaiting_customer' : 'pending',
+      staff_notes: autoConfirm
+        ? `Auto-created from call transcript. Awaiting customer card confirmation. ${extraction.next_action}`
+        : `Auto-created from call transcript. ${extraction.next_action}`,
+      ...(autoConfirm ? { confirmation_token: token, expires_at: expiresAt } : {}),
     });
     if (!apptErr) {
       appointmentCreated = true;
+      // Fire the (stubbed) confirmation SMS. Never blocks or fails the pipeline.
+      if (autoConfirm && token) {
+        const origin = new URL(req.url).origin;
+        try {
+          await sendReservationSms({
+            toPhone: callerPhone,
+            businessName: (bizRow?.name as string) || 'Our team',
+            businessPhone: (bizRow?.phone as string) ?? null,
+            customerName: extraction.caller_name ?? null,
+            date: extraction.appointment.requested_date ?? null,
+            time: extraction.appointment.requested_time ?? null,
+            windowHours,
+            confirmUrl: reservationConfirmUrl(origin, token),
+          });
+        } catch (smsErr) {
+          console.warn('[FD] reservation SMS stub failed (non-fatal):', smsErr);
+        }
+      }
     } else {
       appointmentError = apptErr.message;
     }

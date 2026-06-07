@@ -438,7 +438,7 @@ function OverviewLayout({
       </section>
 
       {/* ── KPI block ──────────────────────────────────────────────────── */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-16">
+      <section className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-16">
         <KpiCard label="Calls today" value={callsHandled} sub={callsSub} />
         <KpiCard label="Needs attention" value={needsAttention} sub="across new requests" accent />
         <KpiCard label="Appointments" value={appointmentCount} sub="awaiting confirmation" />
@@ -711,7 +711,7 @@ function DashboardPageInner() {
           <div className="h-6 w-28 animate-pulse" style={{ backgroundColor: 'var(--hairline)' }} />
         </div>
         <div className="h-16 sm:h-24 w-3/4 animate-pulse mb-14" style={{ backgroundColor: 'var(--hairline)' }} />
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-px" style={{ backgroundColor: 'var(--hairline)' }}>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-px" style={{ backgroundColor: 'var(--hairline)' }}>
           {[1, 2, 3, 4].map((i) => (
             <div key={i} className="h-40" style={{ backgroundColor: 'var(--surface)' }} />
           ))}

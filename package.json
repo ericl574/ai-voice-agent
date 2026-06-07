@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "qa:call-pipeline": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/qa-call-pipeline.ts"
+    "qa:call-pipeline": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/qa-call-pipeline.ts",
+    "voice:samples": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/generate-voice-samples.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",

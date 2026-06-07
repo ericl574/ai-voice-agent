@@ -275,7 +275,7 @@ export default function SimulatorPage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-6 max-w-2xl">
+    <div className="p-4 sm:p-6 max-w-2xl">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Call Simulator</h1>
         <p className="text-sm text-gray-500 mt-1">
@@ -322,7 +322,7 @@ export default function SimulatorPage() {
         </div>
 
         {/* ── Chat area ── */}
-        <div className="p-5 min-h-64 max-h-96 overflow-y-auto space-y-3">
+        <div className="p-4 sm:p-5 min-h-[40vh] max-h-[60vh] sm:max-h-96 overflow-y-auto space-y-3">
           {simState === 'idle' && (
             <div className="flex flex-col items-center justify-center h-48 gap-4 text-center">
               <div className="w-14 h-14 bg-orange-50 rounded-full flex items-center justify-center">
@@ -364,7 +364,7 @@ export default function SimulatorPage() {
                   </div>
                 )}
                 <div
-                  className={`max-w-xs rounded-2xl px-4 py-2 text-sm ${
+                  className={`max-w-[85%] sm:max-w-xs rounded-2xl px-4 py-2 text-sm ${
                     msg.role === 'ai'
                       ? 'bg-gray-100 text-gray-800 rounded-tl-sm'
                       : 'bg-orange-500 text-white rounded-tr-sm'

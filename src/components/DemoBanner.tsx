@@ -4,7 +4,7 @@ import { MOCK_RESTAURANT } from '@/lib/mock-data';
 export default function DemoBanner({ isSignedIn = false }: { isSignedIn?: boolean }) {
   return (
     <div
-      className="h-11 px-6 flex items-center justify-between flex-shrink-0"
+      className="h-11 px-4 sm:px-6 flex items-center justify-between flex-shrink-0"
       style={{
         backgroundColor: 'var(--paper-dim)',
         borderBottom: '1px solid var(--hairline)',
