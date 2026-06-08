@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import StatusBadge from '@/components/StatusBadge';
 import { RequestStatus } from '@/lib/mock-data';
 import {
@@ -25,6 +25,7 @@ function Row({
   onConfirm,
   onDecline,
   onReopen,
+  innerRef,
 }: {
   appt: DbAppointment;
   selected: boolean;
@@ -32,6 +33,7 @@ function Row({
   onConfirm: () => void;
   onDecline: () => void;
   onReopen: () => void;
+  innerRef?: (el: HTMLButtonElement | null) => void;
 }) {
   const av = avatarFor(appt.customer_name);
   const status = effectiveStatus(appt) as RequestStatus;
@@ -53,6 +55,7 @@ function Row({
 
   return (
     <button
+      ref={innerRef}
       onClick={onSelect}
       className="w-full text-left rounded-[8px] px-3 py-2.5 transition-colors"
       style={{
@@ -152,6 +155,14 @@ export default function ScheduleList({
   onDecline: (id: string) => void;
   onReopen: (id: string) => void;
 }) {
+  // Scroll the selected row into view when selection changes (e.g. from clicking a grid block).
+  const rowRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  useEffect(() => {
+    if (selectedId && rowRefs.current[selectedId]) {
+      rowRefs.current[selectedId]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [selectedId]);
+
   return (
     <div className="fd-card overflow-hidden flex flex-col" style={{ maxHeight: '72vh' }}>
       <div
@@ -174,6 +185,7 @@ export default function ScheduleList({
             key={a.id}
             appt={a}
             selected={selectedId === a.id}
+            innerRef={(el) => { rowRefs.current[a.id] = el; }}
             onSelect={() => onSelect(a.id)}
             onConfirm={() => onConfirm(a.id)}
             onDecline={() => onDecline(a.id)}
@@ -192,6 +204,7 @@ export default function ScheduleList({
                   key={a.id}
                   appt={a}
                   selected={selectedId === a.id}
+                  innerRef={(el) => { rowRefs.current[a.id] = el; }}
                   onSelect={() => onSelect(a.id)}
                   onConfirm={() => onConfirm(a.id)}
                   onDecline={() => onDecline(a.id)}

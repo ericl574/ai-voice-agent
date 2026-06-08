@@ -6,6 +6,7 @@ import { REALTIME_TRANSCRIPTION_MODEL, TRANSCRIPTION_LANGUAGE_HINT } from '@/lib
 import { buildSystemPrompt } from '@/lib/agents/core/promptBuilder';
 import { getVertical } from '@/lib/agents/verticals/registry';
 import type { KnowledgeRow } from '@/lib/agents/core/types';
+import { rateLimit, clientKey } from '@/lib/rate-limit';
 
 const MODEL = 'gpt-realtime';
 
@@ -13,12 +14,23 @@ export async function GET() {
   return NextResponse.json({ configured: !!process.env.OPENAI_API_KEY });
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
       { error: 'OPENAI_API_KEY is not configured on the server.' },
       { status: 503 },
+    );
+  }
+
+  // Throttle paid session minting (best-effort per-instance) so a runaway client can't open
+  // unbounded Realtime sessions. ~12/min/client.
+  const rl = rateLimit(`voice-session:${clientKey(req)}`, 12, 60_000);
+  if (!rl.ok) {
+    console.warn('[FD] voice-session rate limited:', clientKey(req));
+    return NextResponse.json(
+      { error: 'Too many requests — please wait a moment and try again.' },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
     );
   }
 

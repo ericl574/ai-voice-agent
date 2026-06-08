@@ -167,7 +167,7 @@ export default function Sidebar({
             type="button"
             onClick={onClose}
             aria-label="Close navigation menu"
-            className="flex items-center justify-center w-9 h-9 -mr-1.5 rounded-[8px]"
+            className="flex items-center justify-center w-11 h-11 -mr-2 rounded-[8px]"
             style={{ color: 'var(--ink-muted)' }}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

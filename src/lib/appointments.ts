@@ -42,20 +42,6 @@ export function effectiveStatus(appt: DbAppointment): string {
 
 // ─── Display helpers ─────────────────────────────────────────────────────────
 
-export function formatCreatedAt(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-  } catch {
-    return iso;
-  }
-}
-
 export function partyOrService(appt: DbAppointment): string {
   if (appt.party_size != null) return `${appt.party_size} guest${appt.party_size !== 1 ? 's' : ''}`;
   if (appt.service_type) return appt.service_type;
@@ -67,11 +53,6 @@ export function requestedWhen(appt: DbAppointment): { date: string; time: string
   const date = appt.appointment_date ?? appt.requested_date ?? '';
   const time = appt.appointment_time ?? appt.requested_time ?? '';
   return { date, time };
-}
-
-export function notesText(appt: DbAppointment): string {
-  const parts = [appt.special_request, appt.staff_notes, appt.notes].filter(Boolean);
-  return parts.join(' · ');
 }
 
 export function customerInitial(name: string | null | undefined): string {

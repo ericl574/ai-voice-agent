@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
+import { isSupabaseConfigured } from '@/lib/supabase/client';
 
 interface Reservation {
   customer_name: string | null;
@@ -63,10 +63,10 @@ export default function ConfirmReservationPage() {
 
     async function load() {
       try {
-        const supabase = createClient();
-        const { data, error } = await supabase.rpc('get_reservation_for_confirmation', { p_token: token });
-        if (error) { setErrorMsg(error.message); setPhase('error'); return; }
-        const row = (Array.isArray(data) ? data[0] : data) as Reservation | undefined;
+        const res = await fetch(`/api/reservations/confirm?token=${encodeURIComponent(token)}`);
+        const data = await res.json();
+        if (!res.ok) { setErrorMsg(data.error ?? 'Could not load reservation'); setPhase('error'); return; }
+        const row = data.reservation as Reservation | null;
         if (!row) { setPhase('invalid'); return; }
         setReservation(row);
         if (row.status === 'confirmed') setPhase('confirmed');
@@ -91,10 +91,14 @@ export default function ConfirmReservationPage() {
         setPhase('confirmed');
         return;
       }
-      const supabase = createClient();
-      const { data, error } = await supabase.rpc('confirm_reservation', { p_token: token });
-      if (error) { setErrorMsg(error.message); setPhase('error'); return; }
-      const result = String(data);
+      const res = await fetch('/api/reservations/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setErrorMsg(data.error ?? 'Could not confirm'); setPhase('error'); return; }
+      const result = String(data.result);
       if (result === 'confirmed' || result === 'already_confirmed') setPhase('confirmed');
       else if (result === 'expired') setPhase('expired');
       else setPhase('invalid');
@@ -127,17 +131,11 @@ export default function ConfirmReservationPage() {
           {(phase === 'awaiting') && reservation && (
             <>
               <ReservationSummary r={reservation} />
+              {/* No payment processor is wired up yet, so we do NOT collect card data. The caller
+                  simply confirms; honest copy below. Card-on-file capture lands with Stripe later. */}
               <form onSubmit={handleConfirm} className="mt-5 space-y-3">
                 <p className="text-[13px]" style={{ color: 'var(--ink-soft)' }}>
-                  Add a card to hold your reservation. You won’t be charged now.
-                </p>
-                <input className="fd-input w-full" placeholder="Card number" inputMode="numeric" autoComplete="off" />
-                <div className="grid grid-cols-2 gap-3">
-                  <input className="fd-input w-full" placeholder="MM / YY" autoComplete="off" />
-                  <input className="fd-input w-full" placeholder="CVC" inputMode="numeric" autoComplete="off" />
-                </div>
-                <p className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                  Demo only — no real card is processed or stored.
+                  Please review the details above and confirm your reservation. No card is needed for now.
                 </p>
                 {errorMsg && <p className="text-[13px]" style={{ color: 'var(--danger)' }}>{errorMsg}</p>}
                 <button type="submit" disabled={submitting} className="fd-btn fd-btn-accent w-full">
@@ -151,7 +149,7 @@ export default function ConfirmReservationPage() {
             <Result
               title="Reservation confirmed"
               tone="ok"
-              message="Thanks! Your reservation is confirmed and your card is on file. We look forward to seeing you."
+              message="Thanks! Your reservation is confirmed. We look forward to seeing you — the team will follow up if anything's needed."
             >
               {reservation && <ReservationSummary r={reservation} className="mt-4" />}
             </Result>

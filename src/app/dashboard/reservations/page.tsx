@@ -90,15 +90,28 @@ export default function ReservationsPage() {
   );
   const undated = useMemo(() => active.filter((a) => parseApptDateTime(a) == null), [active]);
 
-  // On first load, anchor the week to the most recent dated appointment so the view isn't empty.
+  // List order: nearest upcoming on top → furthest future, then past appointments at the bottom.
+  // (`dated` stays ascending for the grid + anchor logic, which don't care about list order.)
+  const listOrder = useMemo(() => {
+    const todayMs = today.getTime();
+    const upcoming = dated.filter((a) => parseApptDateTime(a)!.getTime() >= todayMs);
+    const past = dated.filter((a) => parseApptDateTime(a)!.getTime() < todayMs);
+    return [...upcoming, ...past];
+  }, [dated, today]);
+
+  // On first load, anchor the week to the NEAREST upcoming appointment (so the view opens near
+  // today, not weeks out). If everything is in the past, fall back to the most recent one so the
+  // view isn't empty. (`dated` is sorted ascending by datetime.)
   useEffect(() => {
     if (loading || anchorInitialized) return;
     if (dated.length > 0) {
-      const latest = parseApptDateTime(dated[dated.length - 1])!;
-      setAnchor(startOfWeek(latest));
+      const todayMs = today.getTime();
+      const upcoming = dated.find((a) => parseApptDateTime(a)!.getTime() >= todayMs);
+      const target = upcoming ?? dated[dated.length - 1];
+      setAnchor(startOfWeek(parseApptDateTime(target)!));
     }
     setAnchorInitialized(true);
-  }, [loading, anchorInitialized, dated]);
+  }, [loading, anchorInitialized, dated, today]);
 
   async function updateStatus(id: string, newStatus: RequestStatus) {
     const prev = appointments.find((a) => a.id === id)?.status;
@@ -116,17 +129,27 @@ export default function ReservationsPage() {
     }
   }
 
-  // Persist a change to the reservation confirmation mode/window (merges into agent_config).
+  // Persist a change to the reservation confirmation mode/window. Re-fetches the row's CURRENT
+  // agent_config first and merges only the two confirmation keys, so a config change made elsewhere
+  // (Settings/voice) after this page loaded isn't clobbered by our stale snapshot.
   async function setConfirmation(next: Partial<AgentConfig>) {
-    const merged = { ...agentConfig, ...next };
-    setAgentConfig(merged);
+    setAgentConfig((prev) => ({ ...prev, ...next })); // optimistic local update
     if (demo) return;
     const supabase = createClient();
+    const { data: row, error: readErr } = await supabase
+      .from('businesses')
+      .select('agent_config')
+      .eq('id', businessId)
+      .single();
+    if (readErr) { setError(`Failed to save confirmation setting: ${readErr.message}`); return; }
+    const fresh = ((row?.agent_config as AgentConfig | null) ?? {});
+    const merged = { ...fresh, ...next };
     const { error: cfgErr } = await supabase
       .from('businesses')
       .update({ agent_config: merged })
       .eq('id', businessId);
-    if (cfgErr) setError(`Failed to save confirmation setting: ${cfgErr.message}`);
+    if (cfgErr) { setError(`Failed to save confirmation setting: ${cfgErr.message}`); return; }
+    setAgentConfig(merged); // sync local to the persisted truth
   }
 
   async function handleAdd(input: NewAppointmentInput) {
@@ -183,11 +206,17 @@ export default function ReservationsPage() {
     setSelectedId(a.id);
   }
 
+  // Selecting an appointment (from the grid OR the list) navigates the schedule to its date: switch
+  // to Week view and anchor on that week. WeekGrid scrolls its block into view on selectedId change,
+  // and ScheduleList scrolls its row into view — so the two panes stay in sync both ways.
   function handleSelect(id: string) {
     setSelectedId(id);
     const appt = appointments.find((a) => a.id === id);
     const d = appt ? parseApptDateTime(appt) : null;
-    if (d && view === 'week') setAnchor(startOfWeek(d));
+    if (d) {
+      setView('week');
+      setAnchor(startOfWeek(d));
+    }
   }
 
   const weekLabel = useMemo(() => {
@@ -285,7 +314,7 @@ export default function ReservationsPage() {
           </span>
           <span className="text-[13px]" style={{ color: 'var(--ink-2)' }}>
             {mode === 'auto'
-              ? 'Callers are texted a secure link to confirm by adding a card on file. Reservations show “Awaiting customer” until they complete it, then become Confirmed; unconfirmed ones expire after the window. The card is never collected on the call.'
+              ? 'Auto-confirm reservations show “Awaiting customer” with a confirmation link. Automatic texting isn’t live yet — use “Copy confirm link” on each awaiting reservation to send it. They become Confirmed once the customer confirms, and expire after the window.'
               : 'The front desk never confirms appointments directly. All requests stay pending until you confirm.'}
           </span>
         </div>
@@ -331,7 +360,7 @@ export default function ReservationsPage() {
         </div>
 
         <ScheduleList
-          dated={dated}
+          dated={listOrder}
           undated={undated}
           selectedId={selectedId}
           onSelect={handleSelect}

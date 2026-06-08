@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import DemoBanner from '@/components/DemoBanner';
@@ -22,16 +22,30 @@ export default function DashboardShell({
 }) {
   const [navOpen, setNavOpen] = useState(false);
   const pathname = usePathname();
+  const hamburgerRef = useRef<HTMLButtonElement>(null);
+  const drawerRef = useRef<HTMLDivElement>(null);
+
+  function closeNav() {
+    setNavOpen(false);
+    hamburgerRef.current?.focus(); // restore focus to the trigger
+  }
 
   // Close the drawer on navigation.
   useEffect(() => { setNavOpen(false); }, [pathname]);
 
-  // Close on Escape; lock body scroll while the drawer is open.
+  // While the drawer is open: lock background scroll, close on Escape, and move focus into it.
   useEffect(() => {
     if (!navOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setNavOpen(false); };
+    drawerRef.current?.focus();
+    // Safe body scroll lock with restore (belt-and-suspenders alongside the inner overflow toggle).
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeNav(); };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
   }, [navOpen]);
 
   return (
@@ -47,33 +61,43 @@ export default function DashboardShell({
           <div
             className="fixed inset-0 z-40"
             style={{ backgroundColor: 'rgba(29,29,31,0.42)' }}
-            onClick={() => setNavOpen(false)}
+            onClick={closeNav}
             aria-hidden="true"
           />
-          <div className="fixed inset-y-0 left-0 z-50 h-full shadow-2xl">
+          <div
+            ref={drawerRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navigation menu"
+            tabIndex={-1}
+            className="fixed inset-y-0 left-0 z-50 h-full shadow-2xl outline-none"
+          >
             <Sidebar
               businessName={businessName}
               forceDemo={forceDemo}
               isSignedIn={isSignedIn}
               variant="drawer"
-              onNavigate={() => setNavOpen(false)}
-              onClose={() => setNavOpen(false)}
+              onNavigate={closeNav}
+              onClose={closeNav}
             />
           </div>
         </div>
       )}
 
-      <div className="flex-1 flex flex-col overflow-y-auto min-w-0">
+      {/* Background scroll is locked (overflow-hidden) while the drawer is open. */}
+      <div className={`flex-1 flex flex-col min-w-0 ${navOpen ? 'overflow-hidden' : 'overflow-y-auto'}`}>
         {/* Mobile top bar with hamburger */}
         <div
           className="lg:hidden sticky top-0 z-30 flex items-center gap-3 h-14 px-4 flex-shrink-0"
           style={{ backgroundColor: 'var(--surface)', borderBottom: '1px solid var(--hairline)' }}
         >
           <button
+            ref={hamburgerRef}
             type="button"
             onClick={() => setNavOpen(true)}
             aria-label="Open navigation menu"
-            className="flex items-center justify-center -ml-1 w-10 h-10 rounded-[8px]"
+            aria-expanded={navOpen}
+            className="flex items-center justify-center -ml-1 w-11 h-11 rounded-[8px]"
             style={{ color: 'var(--ink)' }}
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">

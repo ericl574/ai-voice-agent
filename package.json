@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "qa:call-pipeline": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/qa-call-pipeline.ts",
+    "qa:units": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/qa-units.ts",
     "voice:samples": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/generate-voice-samples.ts"
   },
   "dependencies": {

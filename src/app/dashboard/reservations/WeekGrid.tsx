@@ -32,6 +32,7 @@ function offsetFor(d: Date): number {
 function blockColors(status: string): { bg: string; border: string; fg: string } {
   if (status === 'confirmed') return { bg: 'var(--ok-soft)', border: 'var(--ok)', fg: 'var(--ink)' };
   if (status === 'awaiting_customer') return { bg: 'var(--info-soft)', border: 'var(--info)', fg: 'var(--ink)' };
+  if (status === 'expired') return { bg: 'var(--paper-dim)', border: 'var(--hairline-strong)', fg: 'var(--ink-soft)' };
   return { bg: 'var(--warn-soft)', border: 'var(--warn)', fg: 'var(--ink)' }; // pending
 }
 
@@ -128,11 +129,16 @@ export default function WeekGrid({
                   />
                 ))}
 
-                {/* appointment blocks */}
+                {/* appointment blocks — same-hour bookings are laid out side-by-side so each stays
+                    visible and clickable instead of stacking on top of one another. */}
                 {dayAppts.map((a) => {
                   const d = parseApptDateTime(a)!;
                   const c = blockColors(effectiveStatus(a));
                   const isSel = selectedId === a.id;
+                  // Co-located blocks share the same hour row; split the column width among them.
+                  const slot = dayAppts.filter((o) => parseApptDateTime(o)!.getHours() === d.getHours());
+                  const idx = slot.indexOf(a);
+                  const count = slot.length;
                   return (
                     <button
                       key={a.id}
@@ -142,8 +148,8 @@ export default function WeekGrid({
                       style={{
                         position: 'absolute',
                         top: offsetFor(d) + 1,
-                        left: 3,
-                        right: 3,
+                        left: `calc(${(idx / count) * 100}% + 2px)`,
+                        width: `calc(${100 / count}% - 4px)`,
                         height: ROW_HEIGHT - 4,
                         backgroundColor: c.bg,
                         border: `1px solid ${c.border}`,

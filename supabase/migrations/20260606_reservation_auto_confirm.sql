@@ -25,7 +25,6 @@ returns table (
   customer_name text,
   appointment_date text,
   appointment_time text,
-  party_size int,
   service_type text,
   status text,
   expires_at timestamptz,
@@ -35,11 +34,12 @@ language sql
 security definer
 set search_path = public
 as $$
+  -- Only columns guaranteed on the generalized appointments table. (party_size is a
+  -- restaurant-specific field and is intentionally NOT referenced so this applies on any schema.)
   select a.id,
          a.customer_name,
          a.appointment_date::text,
          a.appointment_time::text,
-         a.party_size,
          a.service_type,
          a.status,
          a.expires_at,

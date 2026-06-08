@@ -5,6 +5,7 @@ import {
   PREVIEW_SAMPLE_TEXT,
   PREVIEW_TTS_MODEL,
 } from '@/lib/voice/voices';
+import { rateLimit, clientKey } from '@/lib/rate-limit';
 
 // Live FALLBACK for the Settings "Test voice & speed" button — used only when the pre-generated
 // static clip (public/voice-samples/<voice>.mp3) is missing. Synthesizes the sample line in the
@@ -20,6 +21,14 @@ export async function POST(req: NextRequest) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return NextResponse.json({ error: 'Voice preview is unavailable — OpenAI key not configured.' }, { status: 503 });
+  }
+
+  const rl = rateLimit(`voice-preview:${clientKey(req)}`, 20, 60_000);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'Too many requests — please wait a moment.' },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
+    );
   }
 
   let body: { voice?: string };

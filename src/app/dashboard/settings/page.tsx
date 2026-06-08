@@ -456,8 +456,8 @@ export default function SettingsPage() {
             <label className="flex items-center gap-3 cursor-pointer">
               <input
                 type="checkbox"
-                checked={business.notifyEmail}
-                onChange={(e) => setBusiness((r) => ({ ...r, notifyEmail: e.target.checked }))}
+                checked={agentConfig.notify_email ?? false}
+                onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_email: e.target.checked }))}
                 className="w-4 h-4 accent-orange-500"
               />
               <span className="text-sm text-gray-700">Email notifications for new requests</span>
@@ -465,12 +465,15 @@ export default function SettingsPage() {
             <label className="flex items-center gap-3 cursor-pointer">
               <input
                 type="checkbox"
-                checked={business.notifySms}
-                onChange={(e) => setBusiness((r) => ({ ...r, notifySms: e.target.checked }))}
+                checked={agentConfig.notify_sms ?? false}
+                onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_sms: e.target.checked }))}
                 className="w-4 h-4 accent-orange-500"
               />
               <span className="text-sm text-gray-700">SMS notifications for new requests</span>
             </label>
+            <p className="text-xs text-gray-400 pt-1">
+              Your preference is saved — automatic alerts aren&rsquo;t delivered yet (coming soon).
+            </p>
           </div>
         </div>
 

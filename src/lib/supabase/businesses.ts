@@ -21,6 +21,10 @@ export interface AgentConfig {
   //            card on file; status is 'awaiting_customer' until they complete it, then 'confirmed'.
   reservation_confirmation_mode?: 'staff' | 'auto';
   confirmation_window_hours?: number; // hours the caller has to complete the card step (default 24)
+  // Staff notification preferences for new captured requests. Persisted now; automatic delivery is
+  // not wired yet (no provider) — these store the owner's intent for when the notifier ships.
+  notify_email?: boolean;
+  notify_sms?: boolean;
   // Editable, vertical-aware chip arrays (owner can add/remove/customize). Empty/undefined
   // → the prompt builder falls back to the vertical's suggested defaults.
   main_request_types?: string[];  // request types this front desk handles
