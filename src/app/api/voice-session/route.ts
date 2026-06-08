@@ -138,7 +138,10 @@ export async function POST(req: Request) {
             },
               turn_detection: {
                 type: 'server_vad',
-                threshold: 0.65,
+                // 0.70 (was 0.65) — slightly higher bar so background noise is less likely to be
+                // committed as a caller turn. prefix_padding 300ms + silence 1000ms unchanged so
+                // short replies ("yes", "Friday", "2 PM") still register quickly.
+                threshold: 0.70,
                 prefix_padding_ms: 300,
                 silence_duration_ms: 1000,
                 create_response: true,

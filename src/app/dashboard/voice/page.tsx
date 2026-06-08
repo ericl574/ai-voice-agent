@@ -6,6 +6,7 @@ import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
 import { useDashboardMode } from '@/lib/dashboard-mode';
 import { looksLikePhone } from '@/lib/call-pipeline/extraction';
+import { looksLikeNoiseOrEmpty } from '@/lib/call-pipeline/noise';
 
 type CallStatus =
   | 'idle'
@@ -258,6 +259,16 @@ export default function VoicePage() {
       const itemId = event.item_id as string;
       const text = ((event.transcript as string) ?? '').trim();
       if (!text) return;
+      // Drop obvious noise/junk caller fragments (silence hallucinations, lone fillers, bare
+      // punctuation) BEFORE they reach the transcript, the save path, or end-call detection — so
+      // noise doesn't create fake caller turns, pollute saved transcripts, or hang up the call on a
+      // hallucinated "thank you". The reserved empty placeholder stays empty (not rendered, not
+      // saved). Conservative: real short replies are kept. See looksLikeNoiseOrEmpty.
+      if (looksLikeNoiseOrEmpty(text)) {
+        console.log('[FD debug] caller fragment filtered as noise/junk:', JSON.stringify(text));
+        return;
+      }
+      console.log('[FD debug] caller fragment accepted:', JSON.stringify(text));
       setTranscript((prev) =>
         prev.find((e) => e.id === itemId)
           ? prev.map((e) => (e.id === itemId ? { ...e, text } : e))
@@ -846,7 +857,9 @@ export default function VoicePage() {
       // entry in `transcript` state via `conversation.item.input_audio_transcription.completed`.
       // Insert in the order they were captured so created_at reflects conversation order.
       const turnRows = entries
-        .filter((e) => e.text.trim().length > 0)
+        // Skip empty turns, and skip obvious caller noise/junk as defense-in-depth (the live
+        // handler already drops most). Never filter assistant turns.
+        .filter((e) => e.text.trim().length > 0 && (e.role === 'assistant' || !looksLikeNoiseOrEmpty(e.text)))
         .map((e) => ({
           call_id: callRow.id,
           role: e.role === 'assistant' ? 'assistant' : 'customer',

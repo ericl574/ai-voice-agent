@@ -15,6 +15,8 @@ import {
   ENABLED_VOICE_OPTIONS,
 } from '../src/lib/voice/voices.ts';
 
+import { looksLikeNoiseOrEmpty } from '../src/lib/call-pipeline/noise.ts';
+
 // ── Minimal test runner (mirrors qa-call-pipeline.ts) ────────────────────────
 
 let passed = 0;
@@ -133,6 +135,38 @@ test('ENABLED_VOICE_OPTIONS — all enabled + have preview urls', () => {
     assert(v.enabled, `${v.id} enabled`);
     assert(v.previewAudioUrl.startsWith('/voice-samples/'), `${v.id} preview url`);
   }
+});
+
+// ── looksLikeNoiseOrEmpty — noisy-call fragment filtering ─────────────────────
+
+test('looksLikeNoiseOrEmpty — filters empty / whitespace', () => {
+  assert(looksLikeNoiseOrEmpty('') === true, 'empty');
+  assert(looksLikeNoiseOrEmpty('   ') === true, 'whitespace');
+});
+
+test('looksLikeNoiseOrEmpty — filters punctuation-only', () => {
+  for (const s of ['.', '...', '?', '?!', '-', '. . .']) {
+    assert(looksLikeNoiseOrEmpty(s) === true, `punctuation: ${JSON.stringify(s)}`);
+  }
+});
+
+test('looksLikeNoiseOrEmpty — filters known fillers / silence hallucinations (exact only)', () => {
+  for (const s of ['uh', 'um', 'hmm', 'You', 'you', 'Thanks for watching', 'thank you for watching.', '[BLANK_AUDIO]', '(inaudible)']) {
+    assert(looksLikeNoiseOrEmpty(s) === true, `junk: ${JSON.stringify(s)}`);
+  }
+});
+
+test('looksLikeNoiseOrEmpty — KEEPS valid short replies', () => {
+  for (const s of ['yes', 'no', 'yep', 'no thanks', 'ok', 'okay', 'Friday', 'Monday', 'tomorrow', 'today', '2 PM', '7:30', 'Eric', "that's all", 'sounds good', 'thank you', 'thanks', 'bye', '555-1234', '5551234']) {
+    assert(looksLikeNoiseOrEmpty(s) === false, `should keep: ${JSON.stringify(s)}`);
+  }
+});
+
+test('looksLikeNoiseOrEmpty — junk token only filtered as whole fragment, not as substring', () => {
+  // "you" is filtered alone, but a real sentence containing it is kept.
+  assert(looksLikeNoiseOrEmpty('you') === true, 'lone you');
+  assert(looksLikeNoiseOrEmpty('can you book me for Friday') === false, 'sentence with you');
+  assert(looksLikeNoiseOrEmpty('thank you so much, see you Friday') === false, 'closing sentence');
 });
 
 // ── Results ──────────────────────────────────────────────────────────────────
