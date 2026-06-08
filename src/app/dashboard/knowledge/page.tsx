@@ -8,6 +8,7 @@ import {
   MOCK_RESTAURANT,
 } from '@/lib/mock-data';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
+import { useDashboardMode } from '@/lib/dashboard-mode';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
 import type { AgentConfig } from '@/lib/supabase/businesses';
 import { BUSINESS_TYPE_OPTIONS, getVertical } from '@/lib/agents/verticals/registry';
@@ -1074,28 +1075,30 @@ function InstructionsTab({
 // ─── Root component ───────────────────────────────────────────────────────────
 
 export default function KnowledgePage() {
+  // Server-resolved demo flag (single source of truth); seeds mock data when in demo mode.
+  const { isDemo: forceDemo } = useDashboardMode();
   const [mode, setMode] = useState<'loading' | 'demo' | 'real'>(
-    isSupabaseConfigured ? 'loading' : 'demo'
+    forceDemo ? 'demo' : 'loading'
   );
   const [tab, setTab] = useState<Tab>('profile');
   const [businessId, setBusinessId] = useState('');
-  const [businessName, setBusinessName] = useState(isSupabaseConfigured ? '' : MOCK_RESTAURANT.name);
-  const [businessType, setBusinessType] = useState<string>(isSupabaseConfigured ? 'restaurant' : MOCK_RESTAURANT.businessType);
-  const [businessPhone, setBusinessPhone] = useState(isSupabaseConfigured ? '' : MOCK_RESTAURANT.phone);
+  const [businessName, setBusinessName] = useState(forceDemo ? MOCK_RESTAURANT.name : '');
+  const [businessType, setBusinessType] = useState<string>(forceDemo ? MOCK_RESTAURANT.businessType : 'restaurant');
+  const [businessPhone, setBusinessPhone] = useState(forceDemo ? MOCK_RESTAURANT.phone : '');
   const [businessCity, setBusinessCity] = useState('');
   const [businessRegion, setBusinessRegion] = useState('');
   const [agentConfig, setAgentConfig] = useState<AgentConfig>(
-    isSupabaseConfigured
-      ? DEFAULT_CONFIG
-      : { ...DEFAULT_CONFIG, ...MOCK_AGENT_CONFIG, custom_instructions: MOCK_CUSTOM_INSTRUCTIONS }
+    forceDemo
+      ? { ...DEFAULT_CONFIG, ...MOCK_AGENT_CONFIG, custom_instructions: MOCK_CUSTOM_INSTRUCTIONS }
+      : DEFAULT_CONFIG
   );
   const [items, setItems] = useState<KnowledgeItem[]>(
-    isSupabaseConfigured ? [] : (MOCK_KNOWLEDGE as KnowledgeItem[])
+    forceDemo ? (MOCK_KNOWLEDGE as KnowledgeItem[]) : []
   );
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) return;
+    if (forceDemo || !isSupabaseConfigured) return;
 
     async function load() {
       const supabase = createClient();
@@ -1128,7 +1131,7 @@ export default function KnowledgePage() {
     }
 
     load();
-  }, []);
+  }, [forceDemo]);
 
   if (mode === 'loading') {
     return (

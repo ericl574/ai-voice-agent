@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, useCallback, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { MOCK_CALLS, MOCK_RESERVATIONS, MOCK_ORDERS, MOCK_RESTAURANT } from '@/lib/mock-data';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
+import { useDashboardMode, demoHref } from '@/lib/dashboard-mode';
 
 // ─── DB types ─────────────────────────────────────────────────────────────────
 
@@ -215,6 +215,7 @@ const BADGE_COLOR: Record<BadgeColor, string> = {
 };
 
 function PriorityRow({ action, index = 0 }: { action: PriorityAction; index?: number }) {
+  const { isDemo } = useDashboardMode();
   return (
     <div
       className="grid grid-cols-[40px_1fr] sm:grid-cols-[44px_1fr_auto] gap-x-4 gap-y-3 px-5 py-4 items-start"
@@ -247,7 +248,7 @@ function PriorityRow({ action, index = 0 }: { action: PriorityAction; index?: nu
         <span className="text-[12px] whitespace-nowrap order-2 sm:order-1" style={{ color: 'var(--ink-muted)' }}>
           {action.time}
         </span>
-        <Link href={action.actionHref} className="fd-btn fd-btn-accent order-1 sm:order-2 whitespace-nowrap">
+        <Link href={demoHref(action.actionHref, isDemo)} className="fd-btn fd-btn-accent order-1 sm:order-2 whitespace-nowrap">
           {action.actionLabel} →
         </Link>
       </div>
@@ -289,6 +290,7 @@ function GlanceGrid({
   appointmentCount: number;
   requestCount: number;
 }) {
+  const { isDemo } = useDashboardMode();
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
       {GLANCE_ITEMS.map((item) => {
@@ -301,7 +303,7 @@ function GlanceGrid({
         return (
           <Link
             key={item.href}
-            href={item.href}
+            href={demoHref(item.href, isDemo)}
             className="group fd-card p-5 transition-colors hover:border-[#D2D2D7]"
           >
             <div className="flex items-start justify-between mb-3">
@@ -356,6 +358,8 @@ function OverviewLayout({
   onRefresh,
   refreshing,
   loadError,
+  ctaLabel,
+  ctaHref,
 }: {
   greeting: string;
   statusPill: React.ReactNode;
@@ -368,8 +372,11 @@ function OverviewLayout({
   onRefresh?: () => void;
   refreshing?: boolean;
   loadError?: string | null;
+  ctaLabel: string;
+  ctaHref: string;
 }) {
   const { lead, name } = splitGreeting(greeting);
+  const { isDemo } = useDashboardMode();
 
   return (
     <div className="w-full max-w-[1180px] mx-auto px-6 sm:px-10 lg:px-12 pt-8 pb-20 fd-stagger">
@@ -387,8 +394,8 @@ function OverviewLayout({
               {refreshing ? 'Updating…' : 'Refresh'}
             </button>
           )}
-          <Link href="/dashboard/simulator" className="fd-btn fd-btn-primary">
-            Try our service →
+          <Link href={demoHref(ctaHref, isDemo)} className="fd-btn fd-btn-primary">
+            {ctaLabel} →
           </Link>
         </div>
       </div>
@@ -457,7 +464,7 @@ function OverviewLayout({
             </p>
           </div>
           {needsAttention > 0 && (
-            <Link href="/dashboard/calls" className="text-[13px] font-medium whitespace-nowrap" style={{ color: 'var(--accent)' }}>
+            <Link href={demoHref('/dashboard/calls', isDemo)} className="text-[13px] font-medium whitespace-nowrap" style={{ color: 'var(--accent)' }}>
               See all {needsAttention} →
             </Link>
           )}
@@ -542,6 +549,8 @@ function DemoOverviewPage() {
       priorityActions={DEMO_ACTIONS}
       onRefresh={handleDemoRefresh}
       refreshing={refreshing}
+      ctaLabel="Try our service"
+      ctaHref="/dashboard/voice"
     />
   );
 }
@@ -597,6 +606,8 @@ function RealOverviewPage({
       onRefresh={onRefresh}
       refreshing={refreshing}
       loadError={loadError}
+      ctaLabel="Test the call"
+      ctaHref="/dashboard/voice"
     />
   );
 }
@@ -613,12 +624,12 @@ const EMPTY_STATS: RealStats = {
   pendingRequests: [],
 };
 
-function DashboardPageInner() {
-  const searchParams = useSearchParams();
-  const forceDemo = searchParams.get('demo') === '1';
+export default function DashboardPage() {
+  // Demo vs real is the server-resolved single source of truth (see DashboardModeProvider).
+  const { isDemo: forceDemo } = useDashboardMode();
 
   const [mode, setMode] = useState<'loading' | 'demo' | 'real'>(
-    !isSupabaseConfigured || forceDemo ? 'demo' : 'loading',
+    forceDemo ? 'demo' : 'loading',
   );
   const [stats, setStats] = useState<RealStats>(EMPTY_STATS);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -729,13 +740,5 @@ function DashboardPageInner() {
       onRefresh={handleRefresh}
       refreshing={refreshing}
     />
-  );
-}
-
-export default function DashboardPage() {
-  return (
-    <Suspense>
-      <DashboardPageInner />
-    </Suspense>
   );
 }

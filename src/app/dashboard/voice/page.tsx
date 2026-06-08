@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
+import { useDashboardMode } from '@/lib/dashboard-mode';
 import { looksLikePhone } from '@/lib/call-pipeline/extraction';
 
 type CallStatus =
@@ -143,6 +144,9 @@ type ExtractionState = null | 'running' | PostCallResult | 'error';
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function VoicePage() {
+  // Demo mode (server-resolved) forces the not-saved experience even for a logged-in user, so the
+  // demo CTA → this page stays fully in demo. The live test call still works; it just isn't saved.
+  const { isDemo } = useDashboardMode();
   // Config / auth
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [userSignedIn, setUserSignedIn] = useState<boolean | null>(null);
@@ -212,7 +216,8 @@ export default function VoicePage() {
 
   // Check auth and active business
   useEffect(() => {
-    if (!isSupabaseConfigured) {
+    // In demo mode, never resolve a real business — keep the page in its not-saved demo state.
+    if (isDemo || !isSupabaseConfigured) {
       setUserSignedIn(false);
       return;
     }
@@ -226,7 +231,7 @@ export default function VoicePage() {
         });
       }
     });
-  }, []);
+  }, [isDemo]);
 
   // ── OpenAI Realtime event handler ────────────────────────────────────────
 
@@ -944,7 +949,7 @@ export default function VoicePage() {
   const isLive = status === 'connected';
   const isConnecting = status === 'requesting' || status === 'connecting';
   const isBusy = status === 'stopping' || status === 'saving' || status === 'transcribing';
-  const canSave = !!businessId && isSupabaseConfigured;
+  const canSave = !!businessId && isSupabaseConfigured && !isDemo;
 
   // Caller turns are inserted as empty placeholders the moment the item joins the conversation
   // (for correct ordering) and filled when transcription lands — hide the not-yet-filled ones.

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { getActiveBusiness, type AgentConfig } from '@/lib/supabase/businesses';
+import { useDashboardMode } from '@/lib/dashboard-mode';
 import { todayInTimeZone } from '@/lib/call-pipeline/time';
 import { MOCK_RESERVATIONS, RequestStatus } from '@/lib/mock-data';
 import {
@@ -26,12 +27,13 @@ function dateFromYMD(s: string): Date {
 }
 
 export default function ReservationsPage() {
-  const [loading, setLoading] = useState(isSupabaseConfigured);
-  const [demo, setDemo] = useState(!isSupabaseConfigured);
+  const { isDemo } = useDashboardMode();
+  const [loading, setLoading] = useState(!isDemo);
+  const [demo, setDemo] = useState(isDemo);
   const [businessId, setBusinessId] = useState('');
   const [today, setToday] = useState<Date>(() => new Date());
   const [appointments, setAppointments] = useState<DbAppointment[]>(
-    isSupabaseConfigured ? [] : mockToAppointments(MOCK_RESERVATIONS),
+    isDemo ? mockToAppointments(MOCK_RESERVATIONS) : [],
   );
 
   const [view, setView] = useState<View>('week');
@@ -47,7 +49,7 @@ export default function ReservationsPage() {
 
   // Load real appointments (or fall back to demo).
   useEffect(() => {
-    if (!isSupabaseConfigured) return;
+    if (isDemo || !isSupabaseConfigured) return;
     async function load() {
       const supabase = createClient();
       const { data: { session } } = await supabase.auth.getSession();
@@ -71,7 +73,7 @@ export default function ReservationsPage() {
       setLoading(false);
     }
     load();
-  }, []);
+  }, [isDemo]);
 
   // Active = pending + confirmed + awaiting_customer (declined/expired excluded). effectiveStatus
   // turns an awaiting reservation past its window into 'expired', so it drops off automatically.

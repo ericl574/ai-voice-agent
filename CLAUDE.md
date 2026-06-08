@@ -4,6 +4,7 @@
 > - Design system & UI conventions → `docs/design-system.md`
 > - Call pipeline architecture → `docs/call-pipeline.md`
 > - AI collaboration workflow → `docs/ai-collaboration-workflow.md`
+> - Demo/real architecture & known debt → `docs/demo-architecture-debt.md`
 
 ## Product Vision
 

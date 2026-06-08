@@ -5,6 +5,7 @@ import { MOCK_CALLS } from '@/lib/mock-data';
 import StatusBadge from '@/components/StatusBadge';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
+import { useDashboardMode } from '@/lib/dashboard-mode';
 import type { CallType } from '@/lib/mock-data';
 
 // ─── DB types ──────────────────────────────────────────────────────────────
@@ -610,14 +611,15 @@ function RealCallHistoryPage({
 // ─── Root ──────────────────────────────────────────────────────────────────
 
 export default function CallHistoryPage() {
+  const { isDemo } = useDashboardMode();
   const [mode, setMode] = useState<'loading' | 'demo' | 'real'>(
-    isSupabaseConfigured ? 'loading' : 'demo'
+    isDemo ? 'demo' : 'loading'
   );
   const [calls, setCalls] = useState<DbCall[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) return;
+    if (isDemo || !isSupabaseConfigured) return;
 
     async function load() {
       const supabase = createClient();
@@ -652,7 +654,7 @@ export default function CallHistoryPage() {
     }
 
     load();
-  }, []);
+  }, [isDemo]);
 
   if (mode === 'loading') {
     return (

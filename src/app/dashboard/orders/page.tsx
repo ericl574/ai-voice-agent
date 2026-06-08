@@ -5,6 +5,7 @@ import StatusBadge from '@/components/StatusBadge';
 import { MOCK_ORDERS, RequestStatus } from '@/lib/mock-data';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
+import { useDashboardMode } from '@/lib/dashboard-mode';
 
 // ─── DB types ──────────────────────────────────────────────────────────────
 
@@ -494,15 +495,16 @@ function RealServiceRequestsPage({
 // ─── Root ──────────────────────────────────────────────────────────────────
 
 export default function OrdersPage() {
+  const { isDemo } = useDashboardMode();
   const [mode, setMode] = useState<'loading' | 'demo' | 'real'>(
-    isSupabaseConfigured ? 'loading' : 'demo',
+    isDemo ? 'demo' : 'loading',
   );
   const [requests, setRequests] = useState<DbServiceRequest[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [businessId, setBusinessId] = useState<string>('');
 
   useEffect(() => {
-    if (!isSupabaseConfigured) return;
+    if (isDemo || !isSupabaseConfigured) return;
 
     async function load() {
       const supabase = createClient();
@@ -533,7 +535,7 @@ export default function OrdersPage() {
     }
 
     load();
-  }, []);
+  }, [isDemo]);
 
   if (mode === 'loading') {
     return (

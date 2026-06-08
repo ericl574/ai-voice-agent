@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { MOCK_RESTAURANT, MOCK_RESERVATIONS, MOCK_ORDERS } from '@/lib/mock-data';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
+import { demoHref } from '@/lib/dashboard-mode';
 
 const DEMO_APPT_COUNT = MOCK_RESERVATIONS.filter((r) => r.status === 'pending').length;
 const DEMO_ORDER_COUNT = MOCK_ORDERS.filter((o) => o.status === 'pending').length;
@@ -140,7 +141,9 @@ export default function Sidebar({
     router.refresh();
   }
 
-  const isDemo = forceDemo || !userEmail;
+  // Demo vs real is resolved server-side and passed in via props — never derive it from the
+  // client-only `userEmail`, which starts null and would flash demo identity on a real dashboard.
+  const isDemo = forceDemo || !isSignedIn;
   const displayName = isDemo ? MOCK_RESTAURANT.name : (businessName ?? MOCK_RESTAURANT.name);
 
   return (
@@ -196,7 +199,7 @@ export default function Sidebar({
           return (
             <Link
               key={item.href}
-              href={item.href}
+              href={demoHref(item.href, isDemo)}
               onClick={onNavigate}
               className={`group flex items-center gap-3 px-3 py-2 rounded-[4px] text-[13px] transition-colors ${
                 isActive ? 'fd-sidebar-active font-semibold' : 'hover:bg-white/[0.04]'

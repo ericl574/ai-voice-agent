@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import DemoBanner from '@/components/DemoBanner';
+import { DashboardModeProvider } from '@/lib/dashboard-mode';
 
 // Responsive dashboard chrome: a persistent sidebar at lg+ and a hamburger + slide-in drawer below
 // 1024px (phones + iPad portrait). Server layout passes the resolved business/demo flags in.
@@ -30,6 +31,9 @@ export default function DashboardShell({
     hamburgerRef.current?.focus(); // restore focus to the trigger
   }
 
+  // Single source of truth for demo vs real, resolved on the server and shared with every page.
+  const isDemo = forceDemo || !isSignedIn;
+
   // Close the drawer on navigation.
   useEffect(() => { setNavOpen(false); }, [pathname]);
 
@@ -49,6 +53,7 @@ export default function DashboardShell({
   }, [navOpen]);
 
   return (
+    <DashboardModeProvider value={{ isDemo, isSignedIn, businessName }}>
     <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'var(--paper)' }}>
       {/* Persistent sidebar — desktop / laptop / iPad landscape */}
       <div className="hidden lg:block h-full flex-shrink-0">
@@ -113,5 +118,6 @@ export default function DashboardShell({
         <main className="flex-1 fd-canvas min-w-0">{children}</main>
       </div>
     </div>
+    </DashboardModeProvider>
   );
 }

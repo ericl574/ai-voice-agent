@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { MOCK_RESTAURANT } from '@/lib/mock-data';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
+import { useDashboardMode } from '@/lib/dashboard-mode';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
 import type { AgentConfig } from '@/lib/supabase/businesses';
 import {
@@ -45,6 +46,7 @@ function browserTimezone(): string {
 }
 
 export default function SettingsPage() {
+  const { isDemo } = useDashboardMode();
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -109,7 +111,9 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
-    if (!isSupabaseConfigured) return;
+    // Demo mode never loads the real business — keep the mock profile and make saves a no-op
+    // (businessId stays null, so handleSave skips the DB write).
+    if (isDemo || !isSupabaseConfigured) return;
     const supabase = createClient();
     getActiveBusiness(supabase).then((b) => {
       if (!b) return;
@@ -128,7 +132,7 @@ export default function SettingsPage() {
         setAgentConfig((prev) => ({ ...prev, ...(b.agent_config as AgentConfig) }));
       }
     });
-  }, []);
+  }, [isDemo]);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
