@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import Link from 'next/link';
 import HeroVideoPlaylist from '@/components/HeroVideoPlaylist';
+import CallSimulatorDemo from '@/components/CallSimulatorDemo';
 import { createClient } from '@/lib/supabase/server';
 
 // ── Feature cards ─────────────────────────────────────────────────────────────
@@ -295,10 +296,10 @@ export default async function LandingPage() {
                 </svg>
               </Link>
               <Link
-                href="/dashboard/simulator"
+                href="#call-demo"
                 className="inline-flex items-center justify-center gap-2 border border-white/30 hover:border-white/60 bg-white/10 hover:bg-white/15 text-white font-semibold px-8 py-3.5 rounded-lg transition-colors text-base backdrop-blur-sm"
               >
-                Try Call Simulator
+                Watch a demo call
               </Link>
             </div>
           </div>
@@ -341,6 +342,22 @@ export default async function LandingPage() {
                 </div>
               ))}
             </div>
+          </div>
+        </section>
+
+        {/* ── Live call demo ───────────────────────────────────────────────── */}
+        <section id="call-demo" className="scroll-mt-20 bg-gray-50 py-20">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6">
+            <div className="text-center mb-12">
+              <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-3">
+                Watch the AI take a call
+              </h2>
+              <p className="text-gray-500 max-w-xl mx-auto">
+                Watch a sample call play out — or <span className="font-semibold text-gray-700">Try It Yourself</span>,
+                pick your business type, and talk to the AI agent live.
+              </p>
+            </div>
+            <CallSimulatorDemo />
           </div>
         </section>
 
@@ -628,7 +645,7 @@ export default async function LandingPage() {
               Ready to see your AI front desk in action?
             </h2>
             <p className="text-gray-500 mb-8 max-w-lg mx-auto">
-              Explore the demo dashboard or try the call simulator — no sign-up required.
+              Explore the demo dashboard or watch a live call demo — no sign-up required.
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <Link
@@ -641,10 +658,10 @@ export default async function LandingPage() {
                 </svg>
               </Link>
               <Link
-                href="/dashboard/simulator"
+                href="#call-demo"
                 className="inline-flex items-center justify-center gap-2 border border-gray-200 hover:border-gray-300 bg-white text-gray-700 font-semibold px-8 py-3 rounded-lg transition-colors"
               >
-                Try Call Simulator
+                Watch a demo call
               </Link>
             </div>
           </div>

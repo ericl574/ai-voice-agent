@@ -230,7 +230,7 @@ export default function SettingsPage() {
           <div className="px-5 py-4 border-b fd-hairline">
             <h2 className="font-semibold text-gray-900">AI Agent Configuration</h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Voice, greeting, and behavior — saved to your account and used by the Call Simulator and voice agent.
+              Voice, greeting, and behavior — saved to your account and used by your voice agent.
             </p>
           </div>
           <div className="p-5 space-y-4">
@@ -345,7 +345,7 @@ export default function SettingsPage() {
                 className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
               />
               <p className="text-xs text-gray-400 mt-1">
-                Name your AI front desk agent. Used in the simulator greeting and future voice calls.
+                Name your AI front desk agent. Used in the agent greeting and voice calls.
               </p>
             </div>
 
@@ -379,7 +379,7 @@ export default function SettingsPage() {
                 className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
               />
               <p className="text-xs text-gray-400 mt-1">
-                Told to callers after logging a request. Shown in the simulator call summary.
+                Told to callers after logging a request. Shown in the call summary.
               </p>
             </div>
 

@@ -34,9 +34,19 @@ export async function POST(req: Request) {
     );
   }
 
+  // Optional service type for the public "try our service" landing demo (no auth). Only honored
+  // when there is no authenticated business. Safely ignored if the body is empty/invalid.
+  let requestedVertical: string | null = null;
+  try {
+    const body = await req.json();
+    if (body && typeof body.businessType === 'string') requestedVertical = body.businessType;
+  } catch {
+    // no/invalid JSON body — fine, this endpoint also accepts an empty POST
+  }
+
   // Build the prompt from the authenticated user's business data. The default (signed-out,
-  // missing profile, or DB error) resolves to the generic vertical — made explicit and logged.
-  let systemInstructions = buildSystemPrompt(null, null, []);
+  // missing profile, or DB error) resolves to the requested vertical, else the generic vertical.
+  let systemInstructions = buildSystemPrompt(null, null, [], requestedVertical);
   // Voice settings applied to the Realtime session's audio.output. Defaults preserve current
   // behavior: no voice override (server default) and normal (1.0) speed.
   let voiceId: string | undefined;
@@ -74,7 +84,7 @@ export async function POST(req: Request) {
         console.log('[FD] voice session vertical: generic (no business profile)');
       }
     } else {
-      console.log('[FD] voice session vertical: generic (signed-out)');
+      console.log(`[FD] voice session vertical: ${requestedVertical ?? 'generic'} (signed-out demo)`);
     }
   } catch {
     // Fall through to generic instructions — never block a voice session due to a DB error

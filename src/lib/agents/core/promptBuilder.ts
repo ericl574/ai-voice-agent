@@ -63,8 +63,12 @@ export function buildSystemPrompt(
   business: Business | null,
   agentConfig: AgentConfig | null,
   knowledge: KnowledgeRow[],
+  // Used only when there is no business (e.g. the public landing "try our service" demo, where the
+  // visitor picks a service type). Lets a signed-out session adopt a vertical-specific prompt
+  // instead of always falling back to generic. Ignored when `business` is provided.
+  verticalOverride?: string | null,
 ): string {
-  const profile = getVertical(business?.business_type);
+  const profile = getVertical(business?.business_type ?? verticalOverride);
   const verticalSection = renderVerticalSection(profile);
   const profileConfigSection = renderProfileConfigSection(profile, agentConfig);
 
