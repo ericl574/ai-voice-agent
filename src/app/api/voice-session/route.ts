@@ -4,6 +4,7 @@ import { getActiveBusiness } from '@/lib/supabase/businesses';
 import type { AgentConfig } from '@/lib/supabase/businesses';
 import { REALTIME_TRANSCRIPTION_MODEL, TRANSCRIPTION_LANGUAGE_HINT } from '@/lib/call-pipeline/constants';
 import { buildSystemPrompt } from '@/lib/agents/core/promptBuilder';
+import { getDemoBusiness } from '@/lib/agents/demoBusinesses';
 import { getVertical } from '@/lib/agents/verticals/registry';
 import type { KnowledgeRow } from '@/lib/agents/core/types';
 import { rateLimit, clientKey } from '@/lib/rate-limit';
@@ -34,11 +35,14 @@ export async function POST(req: Request) {
     );
   }
 
-  // Optional service type for the public "try our service" landing demo (no auth). Only honored
-  // when there is no authenticated business. Safely ignored if the body is empty/invalid.
+  // Body: `{ demo, businessType }`. The public landing "Try our service" demo sends `demo: true`
+  // plus the picked service. Safely ignored if the body is empty/invalid (dashboard test posts
+  // nothing).
+  let isDemo = false;
   let requestedVertical: string | null = null;
   try {
     const body = await req.json();
+    if (body && body.demo === true) isDemo = true;
     if (body && typeof body.businessType === 'string') requestedVertical = body.businessType;
   } catch {
     // no/invalid JSON body — fine, this endpoint also accepts an empty POST
@@ -51,6 +55,17 @@ export async function POST(req: Request) {
   // behavior: no voice override (server default) and normal (1.0) speed.
   let voiceId: string | undefined;
   let voiceSpeed = 1.0;
+
+  // Landing demo: ALWAYS use the selected service's demo business and NEVER read the visitor's
+  // account — even if they happen to be signed in. This keeps each service isolated and correct
+  // (a Clinic demo must not adopt a signed-in restaurant's identity or mention takeout).
+  if (isDemo) {
+    const demo = getDemoBusiness(requestedVertical);
+    systemInstructions = demo
+      ? buildSystemPrompt(demo.business, demo.agentConfig, demo.knowledge)
+      : buildSystemPrompt(null, null, [], requestedVertical);
+    console.log(`[FD] voice session vertical: ${requestedVertical ?? 'generic'} (isolated demo${demo ? '' : ' — no demo business, generic fallback'})`);
+  } else
   try {
     const supabase = await createClient();
     const {

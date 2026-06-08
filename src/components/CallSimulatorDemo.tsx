@@ -155,7 +155,7 @@ export default function CallSimulatorDemo() {
       const tokenRes = await fetch('/api/voice-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ businessType: selectedService }),
+        body: JSON.stringify({ demo: true, businessType: selectedService }),
       });
       if (!tokenRes.ok) {
         const body = await tokenRes.json().catch(() => ({ error: 'Server error' }));
