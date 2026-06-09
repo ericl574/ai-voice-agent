@@ -17507,3 +17507,1196 @@ Route (app)
 ƒ  (Dynamic)  server-rendered on demand
 [2026-06-08 18:19:42] PASS: build
 [2026-06-08 18:19:42] RESULT: all passed
+[2026-06-08 18:45:39] ────────────────────────────────────────────
+[2026-06-08 18:45:39] Triggered by: /Users/ericl/Desktop/my_life/projects/ai-voice-agent/src/lib/call-pipeline/transcript.ts
+[2026-06-08 18:45:39] Running: npm run qa:call-pipeline
+[2026-06-08 18:45:39] 
+> ai-voice-agent@0.1.0 qa:call-pipeline
+> node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/qa-call-pipeline.ts
+
+
+── FrontDesk Call-Pipeline QA ──────────────────────────────────
+
+Suite 1: Appointment classification
+  ✓  "I want to make an appointment tomorrow at 5 PM" → appointment_request, appointment.should_create=true, service_request=false
+  ✓  "Can I come in tomorrow at 5?" → appointment_request even without explicit service type
+  ✓  "I would like to book a time for next week" → appointment.should_create=true
+  ✓  "I need to schedule something" (no time given) → appointment_request — time ref not required
+
+Suite 2: Service request classification
+  ✓  "I need help with a service issue. Can someone follow up?" → service_request=true, appointment=false
+  ✓  Appointment intent wins over service keyword ("schedule an appointment for a repair")
+  ✓  Keyword fallback corrects OpenAI service_request misclassification → appointment_request, service_request cleared
+  ✓  Appointment keyword win clears pre-existing service_request.should_create from AI, regardless of prior intent
+
+Suite 3: General question — no record creation
+  ✓  "What time are you open?" → other/general_question, no appointment, no service_request
+  ✓  Front desk "service" keyword must not trigger service_request when caller says nothing actionable
+
+Suite 4: Role mapping
+  ✓  roleLabel("assistant") → "Front desk"
+  ✓  roleLabel("ai") → "Front desk"
+  ✓  roleLabel("agent") → "Front desk"
+  ✓  roleLabel("front_desk") → "Front desk"
+  ✓  roleLabel("caller") → "Caller"
+  ✓  roleLabel("user") → "Caller"
+  ✓  roleLabel("customer") → "Caller"
+  ✓  Assistant roles never resolve to "Caller" or "You"
+
+Suite 5: Null name/phone when caller does not provide them
+  ✓  Caller who does not state name or phone → caller_name=null, caller_phone=null
+  ✓  Fallback pipeline never invents caller_name or caller_phone
+
+Suite 6: callerLinesOnly — keyword isolation
+  ✓  callerLinesOnly excludes front desk lines
+  ✓  Front desk "service" keyword does not trigger hasServiceKeywords after callerLinesOnly
+  ✓  "appointment" in caller line triggers hasAppointmentKeywords
+  ✓  "appointment" only in front desk line does not trigger hasAppointmentKeywords
+  ✓  "come in" in caller line triggers hasAppointmentKeywords (no explicit "appointment" word needed)
+
+Suite 7: Multilingual — Chinese and mixed-language
+  ✓  "我想预约明天下午五点。" → appointment_request, appointment.should_create=true
+  ✓  "我想 book an appointment tomorrow at 5" (mixed) → appointment_request
+  ✓  "你们几点开门？" (Chinese general question) → no appointment, no service_request
+  ✓  hasAppointmentKeywords matches 预约 (Chinese appointment word)
+
+Suite 8: Semantic extraction path — non-keyword intent preservation
+  ✓  "Can I come by tomorrow around five?" — model detects implicit visit+time → appointment preserved
+  ✓  "Do you have time Friday afternoon?" — model detects implicit scheduling intent → appointment preserved
+  ✓  "我明天下午能过去吗？" — model detects Chinese implicit visit intent → appointment preserved
+  ✓  "明天五点可以吗？" — model detects Chinese time-availability query → appointment preserved
+  ✓  Model appointment_request wins over service keywords present in caller text
+  ✓  Pure service request (no visit intent) is preserved without upgrading to appointment
+  ✓  General question (no visit/service intent) — model result produces no records
+
+Suite 9: looksLikePhone — phone-turn detection
+  ✓  phone numbers (various formats) → true
+  ✓  time/date/word turns → false
+  ✓  too-short / too-long digit runs → false
+
+────────────────────────────────────────────────────────────────
+
+✓  All 39 tests passed.
+[2026-06-08 18:45:39] PASS: qa:call-pipeline
+[2026-06-08 18:45:39] Running: npm run build
+[2026-06-08 18:45:39] 
+> ai-voice-agent@0.1.0 build
+> next build
+
+▲ Next.js 16.2.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 7.3s
+  Running TypeScript ...
+  Finished TypeScript in 4.3s ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/20) ...
+  Generating static pages using 7 workers (5/20) 
+  Generating static pages using 7 workers (10/20) 
+  Generating static pages using 7 workers (15/20) 
+✓ Generating static pages using 7 workers (20/20) in 189ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /api/debug/save-audio-source
+├ ƒ /api/post-call
+├ ƒ /api/reservations/confirm
+├ ƒ /api/transcribe-call
+├ ƒ /api/voice-preview
+├ ƒ /api/voice-session
+├ ƒ /confirm/[token]
+├ ƒ /dashboard
+├ ƒ /dashboard/calls
+├ ƒ /dashboard/knowledge
+├ ƒ /dashboard/orders
+├ ƒ /dashboard/reservations
+├ ƒ /dashboard/settings
+├ ƒ /dashboard/voice
+├ ○ /login
+├ ○ /onboarding
+└ ○ /signup
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+[2026-06-08 18:45:39] PASS: build
+[2026-06-08 18:45:39] RESULT: all passed
+[2026-06-08 18:45:59] ────────────────────────────────────────────
+[2026-06-08 18:45:59] Triggered by: /Users/ericl/Desktop/my_life/projects/ai-voice-agent/src/lib/call-pipeline/transcript.ts
+[2026-06-08 18:45:59] Running: npm run qa:call-pipeline
+[2026-06-08 18:45:59] 
+> ai-voice-agent@0.1.0 qa:call-pipeline
+> node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/qa-call-pipeline.ts
+
+
+── FrontDesk Call-Pipeline QA ──────────────────────────────────
+
+Suite 1: Appointment classification
+  ✓  "I want to make an appointment tomorrow at 5 PM" → appointment_request, appointment.should_create=true, service_request=false
+  ✓  "Can I come in tomorrow at 5?" → appointment_request even without explicit service type
+  ✓  "I would like to book a time for next week" → appointment.should_create=true
+  ✓  "I need to schedule something" (no time given) → appointment_request — time ref not required
+
+Suite 2: Service request classification
+  ✓  "I need help with a service issue. Can someone follow up?" → service_request=true, appointment=false
+  ✓  Appointment intent wins over service keyword ("schedule an appointment for a repair")
+  ✓  Keyword fallback corrects OpenAI service_request misclassification → appointment_request, service_request cleared
+  ✓  Appointment keyword win clears pre-existing service_request.should_create from AI, regardless of prior intent
+
+Suite 3: General question — no record creation
+  ✓  "What time are you open?" → other/general_question, no appointment, no service_request
+  ✓  Front desk "service" keyword must not trigger service_request when caller says nothing actionable
+
+Suite 4: Role mapping
+  ✓  roleLabel("assistant") → "Front desk"
+  ✓  roleLabel("ai") → "Front desk"
+  ✓  roleLabel("agent") → "Front desk"
+  ✓  roleLabel("front_desk") → "Front desk"
+  ✓  roleLabel("caller") → "Caller"
+  ✓  roleLabel("user") → "Caller"
+  ✓  roleLabel("customer") → "Caller"
+  ✓  Assistant roles never resolve to "Caller" or "You"
+
+Suite 5: Null name/phone when caller does not provide them
+  ✓  Caller who does not state name or phone → caller_name=null, caller_phone=null
+  ✓  Fallback pipeline never invents caller_name or caller_phone
+
+Suite 6: callerLinesOnly — keyword isolation
+  ✓  callerLinesOnly excludes front desk lines
+  ✓  Front desk "service" keyword does not trigger hasServiceKeywords after callerLinesOnly
+  ✓  "appointment" in caller line triggers hasAppointmentKeywords
+  ✓  "appointment" only in front desk line does not trigger hasAppointmentKeywords
+  ✓  "come in" in caller line triggers hasAppointmentKeywords (no explicit "appointment" word needed)
+
+Suite 7: Multilingual — Chinese and mixed-language
+  ✓  "我想预约明天下午五点。" → appointment_request, appointment.should_create=true
+  ✓  "我想 book an appointment tomorrow at 5" (mixed) → appointment_request
+  ✓  "你们几点开门？" (Chinese general question) → no appointment, no service_request
+  ✓  hasAppointmentKeywords matches 预约 (Chinese appointment word)
+
+Suite 8: Semantic extraction path — non-keyword intent preservation
+  ✓  "Can I come by tomorrow around five?" — model detects implicit visit+time → appointment preserved
+  ✓  "Do you have time Friday afternoon?" — model detects implicit scheduling intent → appointment preserved
+  ✓  "我明天下午能过去吗？" — model detects Chinese implicit visit intent → appointment preserved
+  ✓  "明天五点可以吗？" — model detects Chinese time-availability query → appointment preserved
+  ✓  Model appointment_request wins over service keywords present in caller text
+  ✓  Pure service request (no visit intent) is preserved without upgrading to appointment
+  ✓  General question (no visit/service intent) — model result produces no records
+
+Suite 9: looksLikePhone — phone-turn detection
+  ✓  phone numbers (various formats) → true
+  ✓  time/date/word turns → false
+  ✓  too-short / too-long digit runs → false
+
+────────────────────────────────────────────────────────────────
+
+✓  All 39 tests passed.
+[2026-06-08 18:45:59] PASS: qa:call-pipeline
+[2026-06-08 18:45:59] Running: npm run build
+[2026-06-08 18:45:59] 
+> ai-voice-agent@0.1.0 build
+> next build
+
+▲ Next.js 16.2.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 3.9s
+  Running TypeScript ...
+  Finished TypeScript in 2.5s ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/20) ...
+  Generating static pages using 7 workers (5/20) 
+  Generating static pages using 7 workers (10/20) 
+  Generating static pages using 7 workers (15/20) 
+✓ Generating static pages using 7 workers (20/20) in 220ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /api/debug/save-audio-source
+├ ƒ /api/post-call
+├ ƒ /api/reservations/confirm
+├ ƒ /api/transcribe-call
+├ ƒ /api/voice-preview
+├ ƒ /api/voice-session
+├ ƒ /confirm/[token]
+├ ƒ /dashboard
+├ ƒ /dashboard/calls
+├ ƒ /dashboard/knowledge
+├ ƒ /dashboard/orders
+├ ƒ /dashboard/reservations
+├ ƒ /dashboard/settings
+├ ƒ /dashboard/voice
+├ ○ /login
+├ ○ /onboarding
+└ ○ /signup
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+[2026-06-08 18:45:59] PASS: build
+[2026-06-08 18:45:59] RESULT: all passed
+[2026-06-08 18:46:18] ────────────────────────────────────────────
+[2026-06-08 18:46:18] Triggered by: /Users/ericl/Desktop/my_life/projects/ai-voice-agent/src/app/dashboard/voice/page.tsx
+[2026-06-08 18:46:18] Running: npm run qa:call-pipeline
+[2026-06-08 18:46:18] 
+> ai-voice-agent@0.1.0 qa:call-pipeline
+> node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/qa-call-pipeline.ts
+
+
+── FrontDesk Call-Pipeline QA ──────────────────────────────────
+
+Suite 1: Appointment classification
+  ✓  "I want to make an appointment tomorrow at 5 PM" → appointment_request, appointment.should_create=true, service_request=false
+  ✓  "Can I come in tomorrow at 5?" → appointment_request even without explicit service type
+  ✓  "I would like to book a time for next week" → appointment.should_create=true
+  ✓  "I need to schedule something" (no time given) → appointment_request — time ref not required
+
+Suite 2: Service request classification
+  ✓  "I need help with a service issue. Can someone follow up?" → service_request=true, appointment=false
+  ✓  Appointment intent wins over service keyword ("schedule an appointment for a repair")
+  ✓  Keyword fallback corrects OpenAI service_request misclassification → appointment_request, service_request cleared
+  ✓  Appointment keyword win clears pre-existing service_request.should_create from AI, regardless of prior intent
+
+Suite 3: General question — no record creation
+  ✓  "What time are you open?" → other/general_question, no appointment, no service_request
+  ✓  Front desk "service" keyword must not trigger service_request when caller says nothing actionable
+
+Suite 4: Role mapping
+  ✓  roleLabel("assistant") → "Front desk"
+  ✓  roleLabel("ai") → "Front desk"
+  ✓  roleLabel("agent") → "Front desk"
+  ✓  roleLabel("front_desk") → "Front desk"
+  ✓  roleLabel("caller") → "Caller"
+  ✓  roleLabel("user") → "Caller"
+  ✓  roleLabel("customer") → "Caller"
+  ✓  Assistant roles never resolve to "Caller" or "You"
+
+Suite 5: Null name/phone when caller does not provide them
+  ✓  Caller who does not state name or phone → caller_name=null, caller_phone=null
+  ✓  Fallback pipeline never invents caller_name or caller_phone
+
+Suite 6: callerLinesOnly — keyword isolation
+  ✓  callerLinesOnly excludes front desk lines
+  ✓  Front desk "service" keyword does not trigger hasServiceKeywords after callerLinesOnly
+  ✓  "appointment" in caller line triggers hasAppointmentKeywords
+  ✓  "appointment" only in front desk line does not trigger hasAppointmentKeywords
+  ✓  "come in" in caller line triggers hasAppointmentKeywords (no explicit "appointment" word needed)
+
+Suite 7: Multilingual — Chinese and mixed-language
+  ✓  "我想预约明天下午五点。" → appointment_request, appointment.should_create=true
+  ✓  "我想 book an appointment tomorrow at 5" (mixed) → appointment_request
+  ✓  "你们几点开门？" (Chinese general question) → no appointment, no service_request
+  ✓  hasAppointmentKeywords matches 预约 (Chinese appointment word)
+
+Suite 8: Semantic extraction path — non-keyword intent preservation
+  ✓  "Can I come by tomorrow around five?" — model detects implicit visit+time → appointment preserved
+  ✓  "Do you have time Friday afternoon?" — model detects implicit scheduling intent → appointment preserved
+  ✓  "我明天下午能过去吗？" — model detects Chinese implicit visit intent → appointment preserved
+  ✓  "明天五点可以吗？" — model detects Chinese time-availability query → appointment preserved
+  ✓  Model appointment_request wins over service keywords present in caller text
+  ✓  Pure service request (no visit intent) is preserved without upgrading to appointment
+  ✓  General question (no visit/service intent) — model result produces no records
+
+Suite 9: looksLikePhone — phone-turn detection
+  ✓  phone numbers (various formats) → true
+  ✓  time/date/word turns → false
+  ✓  too-short / too-long digit runs → false
+
+────────────────────────────────────────────────────────────────
+
+✓  All 39 tests passed.
+[2026-06-08 18:46:18] PASS: qa:call-pipeline
+[2026-06-08 18:46:18] Running: npm run build
+[2026-06-08 18:46:18] 
+> ai-voice-agent@0.1.0 build
+> next build
+
+▲ Next.js 16.2.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 9.2s
+  Running TypeScript ...
+  Finished TypeScript in 3.7s ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/20) ...
+  Generating static pages using 7 workers (5/20) 
+  Generating static pages using 7 workers (10/20) 
+  Generating static pages using 7 workers (15/20) 
+✓ Generating static pages using 7 workers (20/20) in 187ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /api/debug/save-audio-source
+├ ƒ /api/post-call
+├ ƒ /api/reservations/confirm
+├ ƒ /api/transcribe-call
+├ ƒ /api/voice-preview
+├ ƒ /api/voice-session
+├ ƒ /confirm/[token]
+├ ƒ /dashboard
+├ ƒ /dashboard/calls
+├ ƒ /dashboard/knowledge
+├ ƒ /dashboard/orders
+├ ƒ /dashboard/reservations
+├ ƒ /dashboard/settings
+├ ƒ /dashboard/voice
+├ ○ /login
+├ ○ /onboarding
+└ ○ /signup
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+[2026-06-08 18:46:18] PASS: build
+[2026-06-08 18:46:18] RESULT: all passed
+[2026-06-08 18:46:48] ────────────────────────────────────────────
+[2026-06-08 18:46:48] Triggered by: /Users/ericl/Desktop/my_life/projects/ai-voice-agent/src/app/dashboard/voice/page.tsx
+[2026-06-08 18:46:48] Running: npm run qa:call-pipeline
+[2026-06-08 18:46:48] 
+> ai-voice-agent@0.1.0 qa:call-pipeline
+> node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/qa-call-pipeline.ts
+
+
+── FrontDesk Call-Pipeline QA ──────────────────────────────────
+
+Suite 1: Appointment classification
+  ✓  "I want to make an appointment tomorrow at 5 PM" → appointment_request, appointment.should_create=true, service_request=false
+  ✓  "Can I come in tomorrow at 5?" → appointment_request even without explicit service type
+  ✓  "I would like to book a time for next week" → appointment.should_create=true
+  ✓  "I need to schedule something" (no time given) → appointment_request — time ref not required
+
+Suite 2: Service request classification
+  ✓  "I need help with a service issue. Can someone follow up?" → service_request=true, appointment=false
+  ✓  Appointment intent wins over service keyword ("schedule an appointment for a repair")
+  ✓  Keyword fallback corrects OpenAI service_request misclassification → appointment_request, service_request cleared
+  ✓  Appointment keyword win clears pre-existing service_request.should_create from AI, regardless of prior intent
+
+Suite 3: General question — no record creation
+  ✓  "What time are you open?" → other/general_question, no appointment, no service_request
+  ✓  Front desk "service" keyword must not trigger service_request when caller says nothing actionable
+
+Suite 4: Role mapping
+  ✓  roleLabel("assistant") → "Front desk"
+  ✓  roleLabel("ai") → "Front desk"
+  ✓  roleLabel("agent") → "Front desk"
+  ✓  roleLabel("front_desk") → "Front desk"
+  ✓  roleLabel("caller") → "Caller"
+  ✓  roleLabel("user") → "Caller"
+  ✓  roleLabel("customer") → "Caller"
+  ✓  Assistant roles never resolve to "Caller" or "You"
+
+Suite 5: Null name/phone when caller does not provide them
+  ✓  Caller who does not state name or phone → caller_name=null, caller_phone=null
+  ✓  Fallback pipeline never invents caller_name or caller_phone
+
+Suite 6: callerLinesOnly — keyword isolation
+  ✓  callerLinesOnly excludes front desk lines
+  ✓  Front desk "service" keyword does not trigger hasServiceKeywords after callerLinesOnly
+  ✓  "appointment" in caller line triggers hasAppointmentKeywords
+  ✓  "appointment" only in front desk line does not trigger hasAppointmentKeywords
+  ✓  "come in" in caller line triggers hasAppointmentKeywords (no explicit "appointment" word needed)
+
+Suite 7: Multilingual — Chinese and mixed-language
+  ✓  "我想预约明天下午五点。" → appointment_request, appointment.should_create=true
+  ✓  "我想 book an appointment tomorrow at 5" (mixed) → appointment_request
+  ✓  "你们几点开门？" (Chinese general question) → no appointment, no service_request
+  ✓  hasAppointmentKeywords matches 预约 (Chinese appointment word)
+
+Suite 8: Semantic extraction path — non-keyword intent preservation
+  ✓  "Can I come by tomorrow around five?" — model detects implicit visit+time → appointment preserved
+  ✓  "Do you have time Friday afternoon?" — model detects implicit scheduling intent → appointment preserved
+  ✓  "我明天下午能过去吗？" — model detects Chinese implicit visit intent → appointment preserved
+  ✓  "明天五点可以吗？" — model detects Chinese time-availability query → appointment preserved
+  ✓  Model appointment_request wins over service keywords present in caller text
+  ✓  Pure service request (no visit intent) is preserved without upgrading to appointment
+  ✓  General question (no visit/service intent) — model result produces no records
+
+Suite 9: looksLikePhone — phone-turn detection
+  ✓  phone numbers (various formats) → true
+  ✓  time/date/word turns → false
+  ✓  too-short / too-long digit runs → false
+
+────────────────────────────────────────────────────────────────
+
+✓  All 39 tests passed.
+[2026-06-08 18:46:48] PASS: qa:call-pipeline
+[2026-06-08 18:46:48] Running: npm run build
+[2026-06-08 18:46:48] 
+> ai-voice-agent@0.1.0 build
+> next build
+
+▲ Next.js 16.2.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 5.0s
+  Running TypeScript ...
+  Finished TypeScript in 2.7s ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/20) ...
+  Generating static pages using 7 workers (5/20) 
+  Generating static pages using 7 workers (10/20) 
+  Generating static pages using 7 workers (15/20) 
+✓ Generating static pages using 7 workers (20/20) in 190ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /api/debug/save-audio-source
+├ ƒ /api/post-call
+├ ƒ /api/reservations/confirm
+├ ƒ /api/transcribe-call
+├ ƒ /api/voice-preview
+├ ƒ /api/voice-session
+├ ƒ /confirm/[token]
+├ ƒ /dashboard
+├ ƒ /dashboard/calls
+├ ƒ /dashboard/knowledge
+├ ƒ /dashboard/orders
+├ ƒ /dashboard/reservations
+├ ƒ /dashboard/settings
+├ ƒ /dashboard/voice
+├ ○ /login
+├ ○ /onboarding
+└ ○ /signup
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+[2026-06-08 18:46:48] PASS: build
+[2026-06-08 18:46:48] RESULT: all passed
+[2026-06-08 18:47:52] ────────────────────────────────────────────
+[2026-06-08 18:47:52] Triggered by: /Users/ericl/Desktop/my_life/projects/ai-voice-agent/src/lib/call-pipeline/extraction.ts
+[2026-06-08 18:47:52] Running: npm run qa:call-pipeline
+[2026-06-08 18:47:52] 
+> ai-voice-agent@0.1.0 qa:call-pipeline
+> node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/qa-call-pipeline.ts
+
+
+── FrontDesk Call-Pipeline QA ──────────────────────────────────
+
+Suite 1: Appointment classification
+  ✓  "I want to make an appointment tomorrow at 5 PM" → appointment_request, appointment.should_create=true, service_request=false
+  ✓  "Can I come in tomorrow at 5?" → appointment_request even without explicit service type
+  ✓  "I would like to book a time for next week" → appointment.should_create=true
+  ✓  "I need to schedule something" (no time given) → appointment_request — time ref not required
+
+Suite 2: Service request classification
+  ✓  "I need help with a service issue. Can someone follow up?" → service_request=true, appointment=false
+  ✓  Appointment intent wins over service keyword ("schedule an appointment for a repair")
+  ✓  Keyword fallback corrects OpenAI service_request misclassification → appointment_request, service_request cleared
+  ✓  Appointment keyword win clears pre-existing service_request.should_create from AI, regardless of prior intent
+
+Suite 3: General question — no record creation
+  ✓  "What time are you open?" → other/general_question, no appointment, no service_request
+  ✓  Front desk "service" keyword must not trigger service_request when caller says nothing actionable
+
+Suite 4: Role mapping
+  ✓  roleLabel("assistant") → "Front desk"
+  ✓  roleLabel("ai") → "Front desk"
+  ✓  roleLabel("agent") → "Front desk"
+  ✓  roleLabel("front_desk") → "Front desk"
+  ✓  roleLabel("caller") → "Caller"
+  ✓  roleLabel("user") → "Caller"
+  ✓  roleLabel("customer") → "Caller"
+  ✓  Assistant roles never resolve to "Caller" or "You"
+
+Suite 5: Null name/phone when caller does not provide them
+  ✓  Caller who does not state name or phone → caller_name=null, caller_phone=null
+  ✓  Fallback pipeline never invents caller_name or caller_phone
+
+Suite 6: callerLinesOnly — keyword isolation
+  ✓  callerLinesOnly excludes front desk lines
+  ✓  Front desk "service" keyword does not trigger hasServiceKeywords after callerLinesOnly
+  ✓  "appointment" in caller line triggers hasAppointmentKeywords
+  ✓  "appointment" only in front desk line does not trigger hasAppointmentKeywords
+  ✓  "come in" in caller line triggers hasAppointmentKeywords (no explicit "appointment" word needed)
+
+Suite 7: Multilingual — Chinese and mixed-language
+  ✓  "我想预约明天下午五点。" → appointment_request, appointment.should_create=true
+  ✓  "我想 book an appointment tomorrow at 5" (mixed) → appointment_request
+  ✓  "你们几点开门？" (Chinese general question) → no appointment, no service_request
+  ✓  hasAppointmentKeywords matches 预约 (Chinese appointment word)
+
+Suite 8: Semantic extraction path — non-keyword intent preservation
+  ✓  "Can I come by tomorrow around five?" — model detects implicit visit+time → appointment preserved
+  ✓  "Do you have time Friday afternoon?" — model detects implicit scheduling intent → appointment preserved
+  ✓  "我明天下午能过去吗？" — model detects Chinese implicit visit intent → appointment preserved
+  ✓  "明天五点可以吗？" — model detects Chinese time-availability query → appointment preserved
+  ✓  Model appointment_request wins over service keywords present in caller text
+  ✓  Pure service request (no visit intent) is preserved without upgrading to appointment
+  ✓  General question (no visit/service intent) — model result produces no records
+
+Suite 9: looksLikePhone — phone-turn detection
+  ✓  phone numbers (various formats) → true
+  ✓  time/date/word turns → false
+  ✓  too-short / too-long digit runs → false
+
+────────────────────────────────────────────────────────────────
+
+✓  All 39 tests passed.
+[2026-06-08 18:47:52] PASS: qa:call-pipeline
+[2026-06-08 18:47:52] Running: npm run build
+[2026-06-08 18:47:52] 
+> ai-voice-agent@0.1.0 build
+> next build
+
+▲ Next.js 16.2.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 4.8s
+  Running TypeScript ...
+  Finished TypeScript in 2.6s ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/20) ...
+  Generating static pages using 7 workers (5/20) 
+  Generating static pages using 7 workers (10/20) 
+  Generating static pages using 7 workers (15/20) 
+✓ Generating static pages using 7 workers (20/20) in 179ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /api/debug/save-audio-source
+├ ƒ /api/post-call
+├ ƒ /api/reservations/confirm
+├ ƒ /api/transcribe-call
+├ ƒ /api/voice-preview
+├ ƒ /api/voice-session
+├ ƒ /confirm/[token]
+├ ƒ /dashboard
+├ ƒ /dashboard/calls
+├ ƒ /dashboard/knowledge
+├ ƒ /dashboard/orders
+├ ƒ /dashboard/reservations
+├ ƒ /dashboard/settings
+├ ƒ /dashboard/voice
+├ ○ /login
+├ ○ /onboarding
+└ ○ /signup
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+[2026-06-08 18:47:52] PASS: build
+[2026-06-08 18:47:52] RESULT: all passed
+[2026-06-08 18:48:21] ────────────────────────────────────────────
+[2026-06-08 18:48:21] Triggered by: /Users/ericl/Desktop/my_life/projects/ai-voice-agent/scripts/qa-call-pipeline.ts
+[2026-06-08 18:48:21] Running: npm run qa:call-pipeline
+[2026-06-08 18:48:21] 
+> ai-voice-agent@0.1.0 qa:call-pipeline
+> node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/qa-call-pipeline.ts
+
+
+── FrontDesk Call-Pipeline QA ──────────────────────────────────
+
+Suite 1: Appointment classification
+  ✓  "I want to make an appointment tomorrow at 5 PM" → appointment_request, appointment.should_create=true, service_request=false
+  ✓  "Can I come in tomorrow at 5?" → appointment_request even without explicit service type
+  ✓  "I would like to book a time for next week" → appointment.should_create=true
+  ✓  "I need to schedule something" (no time given) → appointment_request — time ref not required
+
+Suite 2: Service request classification
+  ✓  "I need help with a service issue. Can someone follow up?" → service_request=true, appointment=false
+  ✓  Appointment intent wins over service keyword ("schedule an appointment for a repair")
+  ✓  Keyword fallback corrects OpenAI service_request misclassification → appointment_request, service_request cleared
+  ✓  Appointment keyword win clears pre-existing service_request.should_create from AI, regardless of prior intent
+
+Suite 3: General question — no record creation
+  ✓  "What time are you open?" → other/general_question, no appointment, no service_request
+  ✓  Front desk "service" keyword must not trigger service_request when caller says nothing actionable
+
+Suite 4: Role mapping
+  ✓  roleLabel("assistant") → "Front desk"
+  ✓  roleLabel("ai") → "Front desk"
+  ✓  roleLabel("agent") → "Front desk"
+  ✓  roleLabel("front_desk") → "Front desk"
+  ✓  roleLabel("caller") → "Caller"
+  ✓  roleLabel("user") → "Caller"
+  ✓  roleLabel("customer") → "Caller"
+  ✓  Assistant roles never resolve to "Caller" or "You"
+
+Suite 5: Null name/phone when caller does not provide them
+  ✓  Caller who does not state name or phone → caller_name=null, caller_phone=null
+  ✓  Fallback pipeline never invents caller_name or caller_phone
+
+Suite 6: callerLinesOnly — keyword isolation
+  ✓  callerLinesOnly excludes front desk lines
+  ✓  Front desk "service" keyword does not trigger hasServiceKeywords after callerLinesOnly
+  ✓  "appointment" in caller line triggers hasAppointmentKeywords
+  ✓  "appointment" only in front desk line does not trigger hasAppointmentKeywords
+  ✓  "come in" in caller line triggers hasAppointmentKeywords (no explicit "appointment" word needed)
+
+Suite 7: Multilingual — Chinese and mixed-language
+  ✓  "我想预约明天下午五点。" → appointment_request, appointment.should_create=true
+  ✓  "我想 book an appointment tomorrow at 5" (mixed) → appointment_request
+  ✓  "你们几点开门？" (Chinese general question) → no appointment, no service_request
+  ✓  hasAppointmentKeywords matches 预约 (Chinese appointment word)
+
+Suite 8: Semantic extraction path — non-keyword intent preservation
+  ✓  "Can I come by tomorrow around five?" — model detects implicit visit+time → appointment preserved
+  ✓  "Do you have time Friday afternoon?" — model detects implicit scheduling intent → appointment preserved
+  ✓  "我明天下午能过去吗？" — model detects Chinese implicit visit intent → appointment preserved
+  ✓  "明天五点可以吗？" — model detects Chinese time-availability query → appointment preserved
+  ✓  Model appointment_request wins over service keywords present in caller text
+  ✓  Pure service request (no visit intent) is preserved without upgrading to appointment
+  ✓  General question (no visit/service intent) — model result produces no records
+
+Suite 9: looksLikePhone — phone-turn detection
+  ✓  phone numbers (various formats) → true
+  ✓  time/date/word turns → false
+  ✓  too-short / too-long digit runs → false
+
+────────────────────────────────────────────────────────────────
+
+✓  All 39 tests passed.
+[2026-06-08 18:48:21] PASS: qa:call-pipeline
+[2026-06-08 18:48:21] Running: npm run build
+[2026-06-08 18:48:21] 
+> ai-voice-agent@0.1.0 build
+> next build
+
+▲ Next.js 16.2.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 3.9s
+  Running TypeScript ...
+  Finished TypeScript in 2.8s ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/20) ...
+  Generating static pages using 7 workers (5/20) 
+  Generating static pages using 7 workers (10/20) 
+  Generating static pages using 7 workers (15/20) 
+✓ Generating static pages using 7 workers (20/20) in 195ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /api/debug/save-audio-source
+├ ƒ /api/post-call
+├ ƒ /api/reservations/confirm
+├ ƒ /api/transcribe-call
+├ ƒ /api/voice-preview
+├ ƒ /api/voice-session
+├ ƒ /confirm/[token]
+├ ƒ /dashboard
+├ ƒ /dashboard/calls
+├ ƒ /dashboard/knowledge
+├ ƒ /dashboard/orders
+├ ƒ /dashboard/reservations
+├ ƒ /dashboard/settings
+├ ƒ /dashboard/voice
+├ ○ /login
+├ ○ /onboarding
+└ ○ /signup
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+[2026-06-08 18:48:21] PASS: build
+[2026-06-08 18:48:21] RESULT: all passed
+[2026-06-08 18:48:40] ────────────────────────────────────────────
+[2026-06-08 18:48:40] Triggered by: /Users/ericl/Desktop/my_life/projects/ai-voice-agent/scripts/qa-call-pipeline.ts
+[2026-06-08 18:48:40] Running: npm run qa:call-pipeline
+[2026-06-08 18:48:40] 
+> ai-voice-agent@0.1.0 qa:call-pipeline
+> node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/qa-call-pipeline.ts
+
+
+── FrontDesk Call-Pipeline QA ──────────────────────────────────
+
+Suite 1: Appointment classification
+  ✓  "I want to make an appointment tomorrow at 5 PM" → appointment_request, appointment.should_create=true, service_request=false
+  ✓  "Can I come in tomorrow at 5?" → appointment_request even without explicit service type
+  ✓  "I would like to book a time for next week" → appointment.should_create=true
+  ✓  "I need to schedule something" (no time given) → appointment_request — time ref not required
+
+Suite 2: Service request classification
+  ✓  "I need help with a service issue. Can someone follow up?" → service_request=true, appointment=false
+  ✓  Appointment intent wins over service keyword ("schedule an appointment for a repair")
+  ✓  Keyword fallback corrects OpenAI service_request misclassification → appointment_request, service_request cleared
+  ✓  Appointment keyword win clears pre-existing service_request.should_create from AI, regardless of prior intent
+
+Suite 3: General question — no record creation
+  ✓  "What time are you open?" → other/general_question, no appointment, no service_request
+  ✓  Front desk "service" keyword must not trigger service_request when caller says nothing actionable
+
+Suite 4: Role mapping
+  ✓  roleLabel("assistant") → "Front desk"
+  ✓  roleLabel("ai") → "Front desk"
+  ✓  roleLabel("agent") → "Front desk"
+  ✓  roleLabel("front_desk") → "Front desk"
+  ✓  roleLabel("caller") → "Caller"
+  ✓  roleLabel("user") → "Caller"
+  ✓  roleLabel("customer") → "Caller"
+  ✓  Assistant roles never resolve to "Caller" or "You"
+
+Suite 5: Null name/phone when caller does not provide them
+  ✓  Caller who does not state name or phone → caller_name=null, caller_phone=null
+  ✓  Fallback pipeline never invents caller_name or caller_phone
+
+Suite 6: callerLinesOnly — keyword isolation
+  ✓  callerLinesOnly excludes front desk lines
+  ✓  Front desk "service" keyword does not trigger hasServiceKeywords after callerLinesOnly
+  ✓  "appointment" in caller line triggers hasAppointmentKeywords
+  ✓  "appointment" only in front desk line does not trigger hasAppointmentKeywords
+  ✓  "come in" in caller line triggers hasAppointmentKeywords (no explicit "appointment" word needed)
+
+Suite 7: Multilingual — Chinese and mixed-language
+  ✓  "我想预约明天下午五点。" → appointment_request, appointment.should_create=true
+  ✓  "我想 book an appointment tomorrow at 5" (mixed) → appointment_request
+  ✓  "你们几点开门？" (Chinese general question) → no appointment, no service_request
+  ✓  hasAppointmentKeywords matches 预约 (Chinese appointment word)
+
+Suite 8: Semantic extraction path — non-keyword intent preservation
+  ✓  "Can I come by tomorrow around five?" — model detects implicit visit+time → appointment preserved
+  ✓  "Do you have time Friday afternoon?" — model detects implicit scheduling intent → appointment preserved
+  ✓  "我明天下午能过去吗？" — model detects Chinese implicit visit intent → appointment preserved
+  ✓  "明天五点可以吗？" — model detects Chinese time-availability query → appointment preserved
+  ✓  Model appointment_request wins over service keywords present in caller text
+  ✓  Pure service request (no visit intent) is preserved without upgrading to appointment
+  ✓  General question (no visit/service intent) — model result produces no records
+
+Suite 9: looksLikePhone — phone-turn detection
+  ✓  phone numbers (various formats) → true
+  ✓  time/date/word turns → false
+  ✓  too-short / too-long digit runs → false
+
+Suite 10: role-label contract (buildTranscript ↔ callerLinesOnly)
+  ✓  canonical labels are the expected strings
+  ✓  callerLinesOnly isolates exactly the caller lines from buildTranscript output
+
+────────────────────────────────────────────────────────────────
+
+✓  All 41 tests passed.
+[2026-06-08 18:48:40] PASS: qa:call-pipeline
+[2026-06-08 18:48:40] Running: npm run build
+[2026-06-08 18:48:40] 
+> ai-voice-agent@0.1.0 build
+> next build
+
+▲ Next.js 16.2.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 3.8s
+  Running TypeScript ...
+  Finished TypeScript in 2.5s ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/20) ...
+  Generating static pages using 7 workers (5/20) 
+  Generating static pages using 7 workers (10/20) 
+  Generating static pages using 7 workers (15/20) 
+✓ Generating static pages using 7 workers (20/20) in 192ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /api/debug/save-audio-source
+├ ƒ /api/post-call
+├ ƒ /api/reservations/confirm
+├ ƒ /api/transcribe-call
+├ ƒ /api/voice-preview
+├ ƒ /api/voice-session
+├ ƒ /confirm/[token]
+├ ƒ /dashboard
+├ ƒ /dashboard/calls
+├ ƒ /dashboard/knowledge
+├ ƒ /dashboard/orders
+├ ƒ /dashboard/reservations
+├ ƒ /dashboard/settings
+├ ƒ /dashboard/voice
+├ ○ /login
+├ ○ /onboarding
+└ ○ /signup
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+[2026-06-08 18:48:40] PASS: build
+[2026-06-08 18:48:40] RESULT: all passed
+[2026-06-08 20:03:22] ────────────────────────────────────────────
+[2026-06-08 20:03:22] Triggered by: /Users/ericl/Desktop/my_life/projects/ai-voice-agent/src/lib/call-pipeline/constants.ts
+[2026-06-08 20:03:22] Running: npm run qa:call-pipeline
+[2026-06-08 20:03:22] 
+> ai-voice-agent@0.1.0 qa:call-pipeline
+> node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/qa-call-pipeline.ts
+
+
+── FrontDesk Call-Pipeline QA ──────────────────────────────────
+
+Suite 1: Appointment classification
+  ✓  "I want to make an appointment tomorrow at 5 PM" → appointment_request, appointment.should_create=true, service_request=false
+  ✓  "Can I come in tomorrow at 5?" → appointment_request even without explicit service type
+  ✓  "I would like to book a time for next week" → appointment.should_create=true
+  ✓  "I need to schedule something" (no time given) → appointment_request — time ref not required
+
+Suite 2: Service request classification
+  ✓  "I need help with a service issue. Can someone follow up?" → service_request=true, appointment=false
+  ✓  Appointment intent wins over service keyword ("schedule an appointment for a repair")
+  ✓  Keyword fallback corrects OpenAI service_request misclassification → appointment_request, service_request cleared
+  ✓  Appointment keyword win clears pre-existing service_request.should_create from AI, regardless of prior intent
+
+Suite 3: General question — no record creation
+  ✓  "What time are you open?" → other/general_question, no appointment, no service_request
+  ✓  Front desk "service" keyword must not trigger service_request when caller says nothing actionable
+
+Suite 4: Role mapping
+  ✓  roleLabel("assistant") → "Front desk"
+  ✓  roleLabel("ai") → "Front desk"
+  ✓  roleLabel("agent") → "Front desk"
+  ✓  roleLabel("front_desk") → "Front desk"
+  ✓  roleLabel("caller") → "Caller"
+  ✓  roleLabel("user") → "Caller"
+  ✓  roleLabel("customer") → "Caller"
+  ✓  Assistant roles never resolve to "Caller" or "You"
+
+Suite 5: Null name/phone when caller does not provide them
+  ✓  Caller who does not state name or phone → caller_name=null, caller_phone=null
+  ✓  Fallback pipeline never invents caller_name or caller_phone
+
+Suite 6: callerLinesOnly — keyword isolation
+  ✓  callerLinesOnly excludes front desk lines
+  ✓  Front desk "service" keyword does not trigger hasServiceKeywords after callerLinesOnly
+  ✓  "appointment" in caller line triggers hasAppointmentKeywords
+  ✓  "appointment" only in front desk line does not trigger hasAppointmentKeywords
+  ✓  "come in" in caller line triggers hasAppointmentKeywords (no explicit "appointment" word needed)
+
+Suite 7: Multilingual — Chinese and mixed-language
+  ✓  "我想预约明天下午五点。" → appointment_request, appointment.should_create=true
+  ✓  "我想 book an appointment tomorrow at 5" (mixed) → appointment_request
+  ✓  "你们几点开门？" (Chinese general question) → no appointment, no service_request
+  ✓  hasAppointmentKeywords matches 预约 (Chinese appointment word)
+
+Suite 8: Semantic extraction path — non-keyword intent preservation
+  ✓  "Can I come by tomorrow around five?" — model detects implicit visit+time → appointment preserved
+  ✓  "Do you have time Friday afternoon?" — model detects implicit scheduling intent → appointment preserved
+  ✓  "我明天下午能过去吗？" — model detects Chinese implicit visit intent → appointment preserved
+  ✓  "明天五点可以吗？" — model detects Chinese time-availability query → appointment preserved
+  ✓  Model appointment_request wins over service keywords present in caller text
+  ✓  Pure service request (no visit intent) is preserved without upgrading to appointment
+  ✓  General question (no visit/service intent) — model result produces no records
+
+Suite 9: looksLikePhone — phone-turn detection
+  ✓  phone numbers (various formats) → true
+  ✓  time/date/word turns → false
+  ✓  too-short / too-long digit runs → false
+
+Suite 10: role-label contract (buildTranscript ↔ callerLinesOnly)
+  ✓  canonical labels are the expected strings
+  ✓  callerLinesOnly isolates exactly the caller lines from buildTranscript output
+
+────────────────────────────────────────────────────────────────
+
+✓  All 41 tests passed.
+[2026-06-08 20:03:22] PASS: qa:call-pipeline
+[2026-06-08 20:03:22] Running: npm run build
+[2026-06-08 20:03:22] 
+> ai-voice-agent@0.1.0 build
+> next build
+
+▲ Next.js 16.2.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 5.4s
+  Running TypeScript ...
+  Finished TypeScript in 2.8s ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/20) ...
+  Generating static pages using 7 workers (5/20) 
+  Generating static pages using 7 workers (10/20) 
+  Generating static pages using 7 workers (15/20) 
+✓ Generating static pages using 7 workers (20/20) in 179ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /api/debug/save-audio-source
+├ ƒ /api/post-call
+├ ƒ /api/reservations/confirm
+├ ƒ /api/transcribe-call
+├ ƒ /api/voice-preview
+├ ƒ /api/voice-session
+├ ƒ /confirm/[token]
+├ ƒ /dashboard
+├ ƒ /dashboard/calls
+├ ƒ /dashboard/knowledge
+├ ƒ /dashboard/orders
+├ ƒ /dashboard/reservations
+├ ƒ /dashboard/settings
+├ ƒ /dashboard/voice
+├ ○ /login
+├ ○ /onboarding
+└ ○ /signup
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+[2026-06-08 20:03:22] PASS: build
+[2026-06-08 20:03:22] RESULT: all passed
+[2026-06-09 00:32:00] ────────────────────────────────────────────
+[2026-06-09 00:32:00] Triggered by: /Users/ericl/Desktop/my_life/projects/ai-voice-agent/src/lib/call-pipeline/noise.ts
+[2026-06-09 00:32:00] Running: npm run qa:call-pipeline
+[2026-06-09 00:32:00] 
+> ai-voice-agent@0.1.0 qa:call-pipeline
+> node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/qa-call-pipeline.ts
+
+
+── FrontDesk Call-Pipeline QA ──────────────────────────────────
+
+Suite 1: Appointment classification
+  ✓  "I want to make an appointment tomorrow at 5 PM" → appointment_request, appointment.should_create=true, service_request=false
+  ✓  "Can I come in tomorrow at 5?" → appointment_request even without explicit service type
+  ✓  "I would like to book a time for next week" → appointment.should_create=true
+  ✓  "I need to schedule something" (no time given) → appointment_request — time ref not required
+
+Suite 2: Service request classification
+  ✓  "I need help with a service issue. Can someone follow up?" → service_request=true, appointment=false
+  ✓  Appointment intent wins over service keyword ("schedule an appointment for a repair")
+  ✓  Keyword fallback corrects OpenAI service_request misclassification → appointment_request, service_request cleared
+  ✓  Appointment keyword win clears pre-existing service_request.should_create from AI, regardless of prior intent
+
+Suite 3: General question — no record creation
+  ✓  "What time are you open?" → other/general_question, no appointment, no service_request
+  ✓  Front desk "service" keyword must not trigger service_request when caller says nothing actionable
+
+Suite 4: Role mapping
+  ✓  roleLabel("assistant") → "Front desk"
+  ✓  roleLabel("ai") → "Front desk"
+  ✓  roleLabel("agent") → "Front desk"
+  ✓  roleLabel("front_desk") → "Front desk"
+  ✓  roleLabel("caller") → "Caller"
+  ✓  roleLabel("user") → "Caller"
+  ✓  roleLabel("customer") → "Caller"
+  ✓  Assistant roles never resolve to "Caller" or "You"
+
+Suite 5: Null name/phone when caller does not provide them
+  ✓  Caller who does not state name or phone → caller_name=null, caller_phone=null
+  ✓  Fallback pipeline never invents caller_name or caller_phone
+
+Suite 6: callerLinesOnly — keyword isolation
+  ✓  callerLinesOnly excludes front desk lines
+  ✓  Front desk "service" keyword does not trigger hasServiceKeywords after callerLinesOnly
+  ✓  "appointment" in caller line triggers hasAppointmentKeywords
+  ✓  "appointment" only in front desk line does not trigger hasAppointmentKeywords
+  ✓  "come in" in caller line triggers hasAppointmentKeywords (no explicit "appointment" word needed)
+
+Suite 7: Multilingual — Chinese and mixed-language
+  ✓  "我想预约明天下午五点。" → appointment_request, appointment.should_create=true
+  ✓  "我想 book an appointment tomorrow at 5" (mixed) → appointment_request
+  ✓  "你们几点开门？" (Chinese general question) → no appointment, no service_request
+  ✓  hasAppointmentKeywords matches 预约 (Chinese appointment word)
+
+Suite 8: Semantic extraction path — non-keyword intent preservation
+  ✓  "Can I come by tomorrow around five?" — model detects implicit visit+time → appointment preserved
+  ✓  "Do you have time Friday afternoon?" — model detects implicit scheduling intent → appointment preserved
+  ✓  "我明天下午能过去吗？" — model detects Chinese implicit visit intent → appointment preserved
+  ✓  "明天五点可以吗？" — model detects Chinese time-availability query → appointment preserved
+  ✓  Model appointment_request wins over service keywords present in caller text
+  ✓  Pure service request (no visit intent) is preserved without upgrading to appointment
+  ✓  General question (no visit/service intent) — model result produces no records
+
+Suite 9: looksLikePhone — phone-turn detection
+  ✓  phone numbers (various formats) → true
+  ✓  time/date/word turns → false
+  ✓  too-short / too-long digit runs → false
+
+Suite 10: role-label contract (buildTranscript ↔ callerLinesOnly)
+  ✓  canonical labels are the expected strings
+  ✓  callerLinesOnly isolates exactly the caller lines from buildTranscript output
+
+────────────────────────────────────────────────────────────────
+
+✓  All 41 tests passed.
+[2026-06-09 00:32:00] PASS: qa:call-pipeline
+[2026-06-09 00:32:00] Running: npm run build
+[2026-06-09 00:32:00] 
+> ai-voice-agent@0.1.0 build
+> next build
+
+▲ Next.js 16.2.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 9.9s
+  Running TypeScript ...
+  Finished TypeScript in 3.2s ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/20) ...
+  Generating static pages using 7 workers (5/20) 
+  Generating static pages using 7 workers (10/20) 
+  Generating static pages using 7 workers (15/20) 
+✓ Generating static pages using 7 workers (20/20) in 198ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /api/debug/save-audio-source
+├ ƒ /api/post-call
+├ ƒ /api/reservations/confirm
+├ ƒ /api/transcribe-call
+├ ƒ /api/voice-preview
+├ ƒ /api/voice-session
+├ ƒ /confirm/[token]
+├ ƒ /dashboard
+├ ƒ /dashboard/calls
+├ ƒ /dashboard/knowledge
+├ ƒ /dashboard/orders
+├ ƒ /dashboard/reservations
+├ ƒ /dashboard/settings
+├ ƒ /dashboard/voice
+├ ○ /login
+├ ○ /onboarding
+└ ○ /signup
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+[2026-06-09 00:32:00] PASS: build
+[2026-06-09 00:32:00] RESULT: all passed
+[2026-06-09 00:32:26] ────────────────────────────────────────────
+[2026-06-09 00:32:26] Triggered by: /Users/ericl/Desktop/my_life/projects/ai-voice-agent/src/lib/call-pipeline/constants.ts
+[2026-06-09 00:32:26] Running: npm run qa:call-pipeline
+[2026-06-09 00:32:26] 
+> ai-voice-agent@0.1.0 qa:call-pipeline
+> node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/qa-call-pipeline.ts
+
+
+── FrontDesk Call-Pipeline QA ──────────────────────────────────
+
+Suite 1: Appointment classification
+  ✓  "I want to make an appointment tomorrow at 5 PM" → appointment_request, appointment.should_create=true, service_request=false
+  ✓  "Can I come in tomorrow at 5?" → appointment_request even without explicit service type
+  ✓  "I would like to book a time for next week" → appointment.should_create=true
+  ✓  "I need to schedule something" (no time given) → appointment_request — time ref not required
+
+Suite 2: Service request classification
+  ✓  "I need help with a service issue. Can someone follow up?" → service_request=true, appointment=false
+  ✓  Appointment intent wins over service keyword ("schedule an appointment for a repair")
+  ✓  Keyword fallback corrects OpenAI service_request misclassification → appointment_request, service_request cleared
+  ✓  Appointment keyword win clears pre-existing service_request.should_create from AI, regardless of prior intent
+
+Suite 3: General question — no record creation
+  ✓  "What time are you open?" → other/general_question, no appointment, no service_request
+  ✓  Front desk "service" keyword must not trigger service_request when caller says nothing actionable
+
+Suite 4: Role mapping
+  ✓  roleLabel("assistant") → "Front desk"
+  ✓  roleLabel("ai") → "Front desk"
+  ✓  roleLabel("agent") → "Front desk"
+  ✓  roleLabel("front_desk") → "Front desk"
+  ✓  roleLabel("caller") → "Caller"
+  ✓  roleLabel("user") → "Caller"
+  ✓  roleLabel("customer") → "Caller"
+  ✓  Assistant roles never resolve to "Caller" or "You"
+
+Suite 5: Null name/phone when caller does not provide them
+  ✓  Caller who does not state name or phone → caller_name=null, caller_phone=null
+  ✓  Fallback pipeline never invents caller_name or caller_phone
+
+Suite 6: callerLinesOnly — keyword isolation
+  ✓  callerLinesOnly excludes front desk lines
+  ✓  Front desk "service" keyword does not trigger hasServiceKeywords after callerLinesOnly
+  ✓  "appointment" in caller line triggers hasAppointmentKeywords
+  ✓  "appointment" only in front desk line does not trigger hasAppointmentKeywords
+  ✓  "come in" in caller line triggers hasAppointmentKeywords (no explicit "appointment" word needed)
+
+Suite 7: Multilingual — Chinese and mixed-language
+  ✓  "我想预约明天下午五点。" → appointment_request, appointment.should_create=true
+  ✓  "我想 book an appointment tomorrow at 5" (mixed) → appointment_request
+  ✓  "你们几点开门？" (Chinese general question) → no appointment, no service_request
+  ✓  hasAppointmentKeywords matches 预约 (Chinese appointment word)
+
+Suite 8: Semantic extraction path — non-keyword intent preservation
+  ✓  "Can I come by tomorrow around five?" — model detects implicit visit+time → appointment preserved
+  ✓  "Do you have time Friday afternoon?" — model detects implicit scheduling intent → appointment preserved
+  ✓  "我明天下午能过去吗？" — model detects Chinese implicit visit intent → appointment preserved
+  ✓  "明天五点可以吗？" — model detects Chinese time-availability query → appointment preserved
+  ✓  Model appointment_request wins over service keywords present in caller text
+  ✓  Pure service request (no visit intent) is preserved without upgrading to appointment
+  ✓  General question (no visit/service intent) — model result produces no records
+
+Suite 9: looksLikePhone — phone-turn detection
+  ✓  phone numbers (various formats) → true
+  ✓  time/date/word turns → false
+  ✓  too-short / too-long digit runs → false
+
+Suite 10: role-label contract (buildTranscript ↔ callerLinesOnly)
+  ✓  canonical labels are the expected strings
+  ✓  callerLinesOnly isolates exactly the caller lines from buildTranscript output
+
+────────────────────────────────────────────────────────────────
+
+✓  All 41 tests passed.
+[2026-06-09 00:32:26] PASS: qa:call-pipeline
+[2026-06-09 00:32:26] Running: npm run build
+[2026-06-09 00:32:26] 
+> ai-voice-agent@0.1.0 build
+> next build
+
+▲ Next.js 16.2.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 3.8s
+  Running TypeScript ...
+Failed to type check.
+
+./src/app/api/transcribe-call/route.ts:60:34
+Type error: No overload matches this call.
+  Overload 1 of 3, '(name: string, value: string | Blob): void', gave the following error.
+    Argument of type 'string | null' is not assignable to parameter of type 'string | Blob'.
+      Type 'null' is not assignable to type 'string | Blob'.
+  Overload 2 of 3, '(name: string, value: string): void', gave the following error.
+    Argument of type 'string | null' is not assignable to parameter of type 'string'.
+      Type 'null' is not assignable to type 'string'.
+  Overload 3 of 3, '(name: string, blobValue: Blob, filename?: string | undefined): void', gave the following error.
+    Argument of type 'string | null' is not assignable to parameter of type 'Blob'.
+      Type 'null' is not assignable to type 'Blob'.
+
+  [90m58 |[0m   whisperForm.append([32m'model'[0m, [33mBATCH_TRANSCRIPTION_MODEL[0m);
+  [90m59 |[0m   [90m// Soft language hint — default English, but other languages still transcribe in their o...[0m
+[31m[1m>[0m [90m60 |[0m   whisperForm.append([32m'language'[0m, [33mTRANSCRIPTION_LANGUAGE_HINT[0m);
+  [90m   |[0m                                  [31m[1m^[0m
+  [90m61 |[0m   [90m// verbose_json gives word-level timestamps; json gives {text} — json is sufficient for now[0m
+  [90m62 |[0m   whisperForm.append([32m'response_format'[0m, [32m'json'[0m);
+  [90m63 |[0m
+Next.js build worker exited with code: 1 and signal: null
+[2026-06-09 00:32:26] FAIL: build
+[2026-06-09 00:32:26] RESULT: FAILED — npm run build failed

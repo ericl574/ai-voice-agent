@@ -13,6 +13,7 @@ import {
 } from '../src/lib/call-pipeline/extraction.ts';
 
 import { roleLabel } from '../src/lib/call-pipeline/roles.ts';
+import { buildTranscript, CALLER_LABEL, FRONT_DESK_LABEL } from '../src/lib/call-pipeline/transcript.ts';
 
 // ── Minimal test runner ──────────────────────────────────────────────────────
 
@@ -470,6 +471,30 @@ test('time/date/word turns → false', () => {
 test('too-short / too-long digit runs → false', () => {
   assert(!looksLikePhone('12345'), '5 digits is below phone length');
   assert(!looksLikePhone('1234567890123456'), '16 digits is above phone length');
+});
+
+// ── Suite 10: role-label contract — buildTranscript() <-> callerLinesOnly() ──────
+// These live in two files (transcript.ts owns the canonical labels; extraction.ts re-encodes the
+// `Caller:` prefix as a literal because the Node QA runner can't import across files). This test
+// locks the contract: if one side's label changes, this fails.
+console.log('\nSuite 10: role-label contract (buildTranscript ↔ callerLinesOnly)');
+
+test('canonical labels are the expected strings', () => {
+  eq(FRONT_DESK_LABEL, 'Front desk:', 'front desk label');
+  eq(CALLER_LABEL, 'Caller:', 'caller label');
+});
+
+test('callerLinesOnly isolates exactly the caller lines from buildTranscript output', () => {
+  const transcript = buildTranscript([
+    { role: 'assistant', text: 'Thanks for calling, how can I help?' },
+    { role: 'user', text: "I'd like a table Friday" },
+    { role: 'assistant', text: 'For how many?' },
+    { role: 'user', text: 'Four' },
+  ]);
+  // buildTranscript must emit the labels callerLinesOnly looks for
+  assert(transcript.includes(`${CALLER_LABEL} `), 'transcript has Caller label');
+  assert(transcript.includes(`${FRONT_DESK_LABEL} `), 'transcript has Front desk label');
+  eq(callerLinesOnly(transcript), "I'd like a table Friday Four", 'only caller lines, front-desk excluded');
 });
 
 // ── Results ───────────────────────────────────────────────────────────────────

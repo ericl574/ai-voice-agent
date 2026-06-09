@@ -45,6 +45,11 @@ export function looksLikePhone(text: string): boolean {
   return digits.length / compact.length > 0.5;
 }
 
+// Isolates caller lines from an assembled transcript. The `Caller:` prefix is the canonical
+// CALLER_LABEL owned by src/lib/call-pipeline/transcript.ts; it is duplicated here as a literal
+// only because this module is loaded by the Node QA runner (which can't resolve the cross-file
+// import). A contract test in qa:call-pipeline asserts buildTranscript() <-> callerLinesOnly() stay
+// in sync — update both together.
 export function callerLinesOnly(transcript: string): string {
   return transcript
     .split('\n')

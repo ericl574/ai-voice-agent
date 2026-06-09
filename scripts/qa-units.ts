@@ -171,6 +171,19 @@ test('looksLikeNoiseOrEmpty — junk token only filtered as whole fragment, not 
   assert(looksLikeNoiseOrEmpty('thank you so much, see you Friday') === false, 'closing sentence');
 });
 
+test('looksLikeNoiseOrEmpty — keeps non-Latin caller turns (Unicode-aware)', () => {
+  for (const s of [
+    '我想改预订时间',          // Chinese
+    '明日の予約をしたいです',   // Japanese
+    '내일 예약하고 싶어요',     // Korean
+    'хочу записаться завтра',  // Russian/Cyrillic
+    'أريد حجز موعد غدا',       // Arabic
+    'I want to book 明天上午十点', // code-switched
+  ]) {
+    assert(looksLikeNoiseOrEmpty(s) === false, `non-Latin/code-switched must be kept: ${JSON.stringify(s)}`);
+  }
+});
+
 // ── buildTranscript — Realtime transcript assembly (source of truth) ──────────
 
 test('buildTranscript — interleaved order + role labels', () => {

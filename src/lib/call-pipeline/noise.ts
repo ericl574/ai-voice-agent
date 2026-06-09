@@ -32,15 +32,18 @@ export function looksLikeNoiseOrEmpty(text: string): boolean {
   const trimmed = (text ?? '').trim();
   if (!trimmed) return true;
 
-  // No letters or digits at all → punctuation/symbol-only fragment.
-  if (!/[a-z0-9]/i.test(trimmed)) return true;
+  // No letters or digits at all → punctuation/symbol-only fragment. Unicode-aware: `\p{L}` matches
+  // letters in ANY script (Chinese/Japanese/Korean/Arabic/Cyrillic/…), so non-Latin caller turns
+  // are real content and are NOT treated as noise.
+  if (!/[\p{L}\p{N}]/u.test(trimmed)) return true;
 
-  // Normalize: lowercase, turn any non-alphanumeric into a space, collapse runs of whitespace.
-  // ("Thanks for watching!" → "thanks for watching"; "[BLANK_AUDIO]" → "blank audio";
-  //  "that's all" → "that s all", which is NOT in the set, so it is kept.)
+  // Normalize for the exact-match junk check: lowercase, turn any non-letter/number into a space,
+  // collapse whitespace. Unicode-aware strip preserves non-Latin letters (so e.g. 我想改时间 stays
+  // 我想改时间 → not in the English NOISE_EXACT set → kept). English behavior is unchanged
+  // ("Thanks for watching!" → "thanks for watching"; "that's all" → "that s all", kept).
   const normalized = trimmed
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 

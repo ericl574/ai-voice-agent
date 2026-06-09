@@ -7,7 +7,7 @@ import { getActiveBusiness } from '@/lib/supabase/businesses';
 import { useDashboardMode } from '@/lib/dashboard-mode';
 import { looksLikePhone } from '@/lib/call-pipeline/extraction';
 import { looksLikeNoiseOrEmpty } from '@/lib/call-pipeline/noise';
-import { buildTranscript, countCallerTurns } from '@/lib/call-pipeline/transcript';
+import { buildTranscript, countCallerTurns, FRONT_DESK_LABEL } from '@/lib/call-pipeline/transcript';
 
 type CallStatus =
   | 'idle'
@@ -745,10 +745,6 @@ export default function VoicePage() {
     // (Option A noise/empty filtering applied inside buildTranscript).
     const officialTranscript = buildTranscript(entries, looksLikeNoiseOrEmpty);
     const callerTurns = countCallerTurns(entries, looksLikeNoiseOrEmpty);
-    // assistant-only string is only needed for the batch-fallback assembly (transcribe-call).
-    const assistantTranscript = assistantEntries
-      .map((e) => `Front desk: ${e.text}`)
-      .join('\n');
 
     const callId = await saveCall(
       entries,
@@ -764,8 +760,12 @@ export default function VoicePage() {
       setStatus('saved');
       runPostCall(callId, officialTranscript);
     } else if (callerAudioBlob && callerAudioBlob.size > 500) {
-      // Fallback: no usable Realtime caller turns — transcribe the recorded caller audio.
+      // Fallback ONLY (no usable Realtime caller turns): transcribe the recorded caller audio. The
+      // assistant-only lines are assembled here just to give the batch transcript both sides.
       console.log('[FD debug] stopCall — no Realtime caller turns; falling back to batch transcription');
+      const assistantTranscript = assistantEntries
+        .map((e) => `${FRONT_DESK_LABEL} ${e.text}`)
+        .join('\n');
       await uploadAndTranscribe(callId, callerAudioBlob, assistantTranscript);
     } else {
       console.warn('[FD debug] stopCall — no Realtime caller turns and no caller audio');

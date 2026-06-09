@@ -1,3 +1,12 @@
+// Canonical role-label prefixes for an assembled transcript line. These are an implicit contract
+// shared across the pipeline (assembly here, the batch fallback in /api/transcribe-call, the
+// post-call extraction prompt, and callerLinesOnly() in extraction.ts). Reference these constants
+// from any Next-compiled consumer instead of re-hardcoding the strings. (extraction.ts is imported
+// by the Node QA runner, which can't resolve cross-file relative imports, so it keeps its own
+// `Caller:` regex — a contract test in qa:call-pipeline locks the two in sync.)
+export const FRONT_DESK_LABEL = 'Front desk:';
+export const CALLER_LABEL = 'Caller:';
+
 // A captured conversation turn from the Realtime session (live transcript state).
 export interface TranscriptTurn {
   role: 'user' | 'assistant';
@@ -37,10 +46,10 @@ export function buildTranscript(
     const text = e.text.trim();
     if (!text) continue;
     if (e.role === 'assistant') {
-      lines.push(`Front desk: ${text}`);
+      lines.push(`${FRONT_DESK_LABEL} ${text}`);
     } else {
       if (isNoise(text)) continue; // caller noise/junk — keep it out of the saved transcript
-      lines.push(`Caller: ${text}`);
+      lines.push(`${CALLER_LABEL} ${text}`);
     }
   }
   return lines.join('\n');

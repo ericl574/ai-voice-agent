@@ -36,6 +36,14 @@ navigation never desyncs the sidebar from the page.
    `businessId`, so pages consume one shape. Not required for correctness.
 2. **"Changes aren't saved" affordance could be more uniform.** `DemoBanner` shows in demo, but a
    shared inline notice on each write surface would make the "nothing persists" message consistent.
+3. **Two demo data fixtures.** `src/lib/agents/demoBusinesses.ts` (used to build the live voice
+   demo prompt) and `src/lib/mock-data.ts` `MOCK_RESTAURANT` (dashboard demo UI + the landing
+   scripted call) both model "Bella Notte" separately — a second source of demo truth that can
+   drift. Unifying touches demo UI broadly, so it's deferred, not done.
+4. **Two WebRTC clients.** `src/app/dashboard/voice/page.tsx` and
+   `src/components/CallSimulatorDemo.tsx` each implement the Realtime/WebRTC handshake and diverge
+   on noise/transcript handling (the landing demo doesn't save, so it has neither by design).
+   Consolidating into one shared hook is a larger, riskier change; left alone while both work.
 
 No rewrite was done in this batch — the change was making the existing server-resolved demo flag
 the single source consumed everywhere, plus param-preserving links.

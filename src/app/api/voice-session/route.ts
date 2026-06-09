@@ -153,7 +153,11 @@ export async function POST(req: Request) {
               },
               transcription: {
                 model: REALTIME_TRANSCRIPTION_MODEL,
-                language: TRANSCRIPTION_LANGUAGE_HINT,
+                // Include `language` only when a hint is set. It is null by default so
+                // transcription auto-detects the caller's language (English, Chinese, code-switched,
+                // …). Never pass an empty string. The assistant's default response language is
+                // English via the prompt — independent of this transcription setting.
+                ...(TRANSCRIPTION_LANGUAGE_HINT ? { language: TRANSCRIPTION_LANGUAGE_HINT } : {}),
               },
             },
             // Voice + speaking speed are real Realtime params (applied via API, not the prompt).

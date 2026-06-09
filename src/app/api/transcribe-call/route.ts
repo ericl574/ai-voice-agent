@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { BATCH_TRANSCRIPTION_MODEL, TRANSCRIPTION_LANGUAGE_HINT } from '@/lib/call-pipeline/constants';
+import { CALLER_LABEL } from '@/lib/call-pipeline/transcript';
 
-// Transcribes caller mic audio using OpenAI Whisper, then assembles the official
-// combined transcript (assistant lines + caller block) and persists it to the call record.
-// This is the source of truth for post-call extraction — not browser SpeechRecognition.
+// FALLBACK transcription path. The live Realtime transcript is the primary source of truth (see
+// buildTranscript + docs/call-pipeline.md §4); this route only runs when no usable Realtime caller
+// turns were captured. It transcribes the recorded caller mic audio with batch Whisper and writes
+// calls.transcript ONLY when the existing transcript is empty/placeholder — it must never overwrite
+// a good Realtime transcript.
 
 export async function POST(req: NextRequest) {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -53,8 +56,9 @@ export async function POST(req: NextRequest) {
   const whisperForm = new FormData();
   whisperForm.append('file', audioFile, audioFile.name || 'caller-audio.webm');
   whisperForm.append('model', BATCH_TRANSCRIPTION_MODEL);
-  // Soft language hint — default English, but other languages still transcribe in their own language.
-  whisperForm.append('language', TRANSCRIPTION_LANGUAGE_HINT);
+  // Language hint is unset by default → auto-detect (matches the Realtime path). Only append when
+  // a hint is configured; never append a null/empty value.
+  if (TRANSCRIPTION_LANGUAGE_HINT) whisperForm.append('language', TRANSCRIPTION_LANGUAGE_HINT);
   // verbose_json gives word-level timestamps; json gives {text} — json is sufficient for now
   whisperForm.append('response_format', 'json');
 
@@ -84,7 +88,7 @@ export async function POST(req: NextRequest) {
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean)
-    .map((l) => `Caller: ${l}`)
+    .map((l) => `${CALLER_LABEL} ${l}`)
     .join('\n');
 
   // Place caller block after assistant lines so the extraction model sees both sides
