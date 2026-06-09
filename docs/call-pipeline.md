@@ -5,6 +5,53 @@ saved, readable, two-sided transcript in Call History plus a structured appointm
 extraction. Model is `gpt-realtime` (do not swap without Eric's approval). The values below mirror
 the code — keep this doc in sync when the pipeline changes.
 
+## 0. Voice-bug diagnosis — diagnose by layer, not prompt-first
+
+**Voice bugs are NOT prompt-only by default.** A real-time call is an orchestration of many layers;
+a symptom can originate in any of them. Before changing the prompt, identify which **layer** is
+actually failing.
+
+Orchestration layers (caller speaks → staff sees the result):
+
+```txt
+caller audio input
+→ browser microphone capture        (getUserMedia, echo/noise/gain, mono, start timing, clipping)
+→ noise / background-speech handling (what counts as a real caller turn)
+→ VAD / turn detection              (server_vad threshold, silence_duration, prefix_padding)
+→ endpointing                       (when a caller turn is considered finished)
+→ interruption / barge-in control   (interrupt_response, whether caller speech truncates the reply)
+→ Realtime response creation        (create_response → assistant turn begins)
+→ assistant audio generation        (model speaks)
+→ assistant audio playback          (browser plays it; did it finish or get cut off?)
+→ transcript turn capture           (Realtime events → TranscriptEntry)
+→ saved transcript                  (calls.transcript via buildTranscript; call_messages rows)
+→ post-call extraction              (summary / appointment / service request)
+```
+
+Distinguish, because they have different fixes:
+
+- **Background noise** — non-speech audio (fan, traffic). Should NOT create a caller turn. Fix at
+  VAD / `noise_reduction` / the noise helper, not the prompt.
+- **Background speech** — other people talking near the caller. Hard; conservative VAD + the noise
+  helper reduce it. Not a prompt issue.
+- **Real caller interruption (barge-in)** — the caller intentionally talks over the assistant.
+  Controlled by `interrupt_response` (currently `false`, so the assistant finishes its turn).
+- **Backchannel** — "mhm", "yeah", "ok" while the assistant talks. Should not derail the turn or be
+  treated as a new request.
+
+**Assistant transcript vs what the caller actually heard:** the saved/displayed assistant transcript
+is the *generated* text, which can differ from the *audio the caller heard*. If the transcript shows
+a **full** assistant sentence but the caller heard it **cut off**, that is a **playback /
+interruption / barge-in** problem — diagnose audio playback completion and `interrupt_response`
+**before** touching the prompt.
+
+Design intent: **Realtime is used for speed; orchestration (VAD, endpointing, barge-in, capture)
+provides reliability; higher-accuracy post-turn transcription is the future accuracy path.** Today
+caller turns use `gpt-4o-transcribe` for accuracy (§1); a fuller post-turn reconciliation pass is a
+later option, not built yet.
+
+A concrete diagnosis checklist is at the end of this doc.
+
 ## 1. Session config — `src/app/api/voice-session/route.ts`
 
 Server mints an ephemeral client secret (`POST /v1/realtime/client_secrets`). The OpenAI API
@@ -102,10 +149,45 @@ Call History loads `call_messages` ordered by `created_at` and renders **Front d
 right** (`roleLabel()`), falling back to the raw `calls.transcript` column only when no messages
 exist.
 
+## Cross-cutting rules
+
+- **Business local time:** the prompt injects today + the current local time at session creation via
+  `nowInTimeZone(business.timezone)` (computed once — no live refresh for MVP). The agent uses it for
+  "what time is it?", "today"/"tomorrow", same-day past-time rejection, and business-hours checks,
+  and must **never** ask the caller what time it is. (See §1; `promptBuilder.ts`.)
+- **Language policy:** transcription auto-detects the caller's language (no `language` hint); the
+  assistant's response language is prompt-driven and "newest clear request wins" — full behavior in
+  `docs/agent-behavior.md`.
+- **Ambiguity on critical fields:** for date/time/service/name/phone, prefer the front-desk
+  read-back as the value of record when caller speech-to-text is lossy; clarify once if unclear.
+- **Appointment/request safety:** appointments default `status: 'pending'` (staff confirms); never
+  claim "confirmed"; appointment intent wins over service request; phone optional.
+
+## Voice-bug diagnosis checklist
+
+Work the layers (§0) top-down; capture evidence at each before proposing a fix:
+
+1. **Caller turn missing?** Check the noise helper (`looksLikeNoiseOrEmpty`) — is the text being
+   filtered? The `[FD debug] caller fragment accepted/filtered` log shows it. (Non-Latin text must
+   be kept — the check is Unicode-aware.)
+2. **Caller turn garbled?** Transcription model/quality (`gpt-4o-transcribe`), not the prompt.
+3. **Assistant responded to noise / fired twice?** VAD threshold / `silence_duration` / barge-in —
+   not the prompt.
+4. **Assistant audio cut off but transcript is full?** Playback / `interrupt_response` / barge-in —
+   not the prompt.
+5. **Assistant said the wrong thing / wrong language / wrong industry?** Now it's prompt/behavior —
+   see `docs/agent-behavior.md` and `globalRules.ts`.
+6. **Saved transcript wrong but live was fine?** Source-of-truth assembly (`buildTranscript`) or the
+   batch fallback overwriting — §4.
+7. **Extraction wrong?** Input to extraction is `calls.transcript` — verify it first, then
+   `extraction.ts`.
+
+Only conclude "prompt fix" after layers 1–4 and 6–7 are ruled out.
+
 ## Invariants
 
 - Realtime transcript is primary; batch is fallback and never overwrites it.
 - Both sides appear in Call History for a real two-sided call; caller turns stay separate.
-- Noise filtering uses the single `looksLikeNoiseOrEmpty` helper; never over-aggressive.
+- Noise filtering uses the single `looksLikeNoiseOrEmpty` helper; Unicode-aware; never over-aggressive.
 - Phone optional; appointments default pending; appointment-only ≠ service request.
 - `npm run qa:call-pipeline`, `npm run qa:units`, and `npm run build` must pass before any commit.
