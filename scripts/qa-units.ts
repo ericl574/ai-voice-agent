@@ -16,6 +16,8 @@ import {
 } from '../src/lib/voice/voices.ts';
 
 import { looksLikeNoiseOrEmpty } from '../src/lib/call-pipeline/noise.ts';
+import { buildTranscript, countCallerTurns } from '../src/lib/call-pipeline/transcript.ts';
+import { nowInTimeZone } from '../src/lib/call-pipeline/time.ts';
 
 // ── Minimal test runner (mirrors qa-call-pipeline.ts) ────────────────────────
 
@@ -167,6 +169,76 @@ test('looksLikeNoiseOrEmpty — junk token only filtered as whole fragment, not 
   assert(looksLikeNoiseOrEmpty('you') === true, 'lone you');
   assert(looksLikeNoiseOrEmpty('can you book me for Friday') === false, 'sentence with you');
   assert(looksLikeNoiseOrEmpty('thank you so much, see you Friday') === false, 'closing sentence');
+});
+
+// ── buildTranscript — Realtime transcript assembly (source of truth) ──────────
+
+test('buildTranscript — interleaved order + role labels', () => {
+  const out = buildTranscript([
+    { role: 'assistant', text: 'Thanks for calling, how can I help?' },
+    { role: 'user', text: "I'd like a table Friday" },
+    { role: 'assistant', text: 'For how many?' },
+    { role: 'user', text: 'Four' },
+  ]);
+  eq(
+    out,
+    'Front desk: Thanks for calling, how can I help?\nCaller: I\'d like a table Friday\nFront desk: For how many?\nCaller: Four',
+    'interleaved transcript',
+  );
+});
+
+test('buildTranscript — drops empty placeholders and caller noise/junk', () => {
+  const out = buildTranscript([
+    { role: 'user', text: '' },          // empty placeholder
+    { role: 'user', text: '  ' },        // whitespace
+    { role: 'user', text: 'uh' },        // filler junk
+    { role: 'user', text: '...' },       // punctuation
+    { role: 'user', text: 'you' },       // silence hallucination
+    { role: 'assistant', text: 'Hello' },
+    { role: 'user', text: 'yes' },       // valid short reply — kept
+  ], looksLikeNoiseOrEmpty);
+  eq(out, 'Front desk: Hello\nCaller: yes', 'noise/empty dropped, valid kept');
+});
+
+test('buildTranscript — never filters assistant turns', () => {
+  // "you" would be filtered as a caller turn, but assistant turns are never filtered.
+  const out = buildTranscript([{ role: 'assistant', text: 'you' }], looksLikeNoiseOrEmpty);
+  eq(out, 'Front desk: you', 'assistant kept');
+});
+
+test('countCallerTurns — counts only real caller speech', () => {
+  eq(
+    countCallerTurns([
+      { role: 'user', text: 'yes' },
+      { role: 'user', text: 'uh' },     // junk — not counted
+      { role: 'user', text: '' },        // empty — not counted
+      { role: 'assistant', text: 'ok' }, // assistant — not a caller turn
+      { role: 'user', text: 'Friday' },
+    ], looksLikeNoiseOrEmpty),
+    2,
+    'two real caller turns',
+  );
+});
+
+// ── nowInTimeZone — current business-local time for the prompt ─────────────────
+
+test('nowInTimeZone — America/Vancouver returns a readable stamp', () => {
+  const s = nowInTimeZone('America/Vancouver');
+  assert(s.length > 0, 'non-empty');
+  assert(/\b\d{4}\b/.test(s), `has a 4-digit year: ${s}`);
+  assert(/\b\d{1,2}:\d{2}\s?[AP]M\b/i.test(s), `has a clock time with AM/PM: ${s}`);
+  assert(/\bat\b/.test(s), `has date/time "at" separator: ${s}`);
+});
+
+test('nowInTimeZone — invalid timezone falls back without throwing', () => {
+  let s = '';
+  // Should not throw — falls back to the default business timezone.
+  s = nowInTimeZone('Not/AZone');
+  assert(s.length > 0, 'fallback non-empty');
+  assert(/\b\d{1,2}:\d{2}\s?[AP]M\b/i.test(s), `fallback has a clock time: ${s}`);
+  // Empty / null input also falls back.
+  assert(nowInTimeZone('').length > 0, 'empty tz falls back');
+  assert(nowInTimeZone(null).length > 0, 'null tz falls back');
 });
 
 // ── Results ──────────────────────────────────────────────────────────────────

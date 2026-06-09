@@ -1,181 +1,459 @@
-# FrontDesk AI — Claude Code Project Guide
+# FrontDesk — Claude Code Project Guide
 
-> **Detailed references** (keep this file lean — route depth here):
-> - Design system & UI conventions → `docs/design-system.md`
-> - Call pipeline architecture → `docs/call-pipeline.md`
-> - AI collaboration workflow → `docs/ai-collaboration-workflow.md`
-> - Demo/real architecture & known debt → `docs/demo-architecture-debt.md`
+FrontDesk is a real SaaS MVP for virtual front desk / call handling for local service businesses.
+
+Claude Code is the implementation agent. Eric / ChatGPT act as product manager, QA reviewer, and final approval.
+
+This file is the project constitution. Keep it lean, current, and architecture-focused. Do not use it as a changelog.
+
+## Detailed References
+
+Keep this file lean. Put deep details in docs:
+
+- Design system & UI conventions → `docs/design-system.md`
+- Call pipeline architecture → `docs/call-pipeline.md`
+- AI collaboration workflow → `docs/ai-collaboration-workflow.md`
+- Demo/real architecture & known debt → `docs/demo-architecture-debt.md`
+
+When architecture changes, update the relevant doc in the same task if the change would make the doc misleading.
+
+---
 
 ## Product Vision
 
-FrontDesk AI is a SaaS platform for AI voice agents serving local service businesses. It answers
-common customer questions and collects appointment/service requests for staff review.
+FrontDesk is a SaaS platform for virtual front desk / answering service workflows for local service businesses.
 
-**This platform must NOT be restaurant-only.** Restaurants are the first demo vertical only.
-The platform supports: restaurants, auto repair, salons/spas, clinics, tutoring centers,
-home services, and other local service businesses.
+It answers customer calls naturally, uses business knowledge, captures useful details, creates appointment/service requests when relevant, and gives staff clear next actions.
 
-Supported `business_type` values: `restaurant | auto_repair | salon | clinic | tutoring | home_services | other`
+Customer-facing copy should sell a better front desk service, not an “AI bot.”
 
-## Architecture
+Prefer language like:
 
-### Tech Stack
-- **Next.js 16** (App Router, `src/` directory, `@/*` alias)
-- **TypeScript** (strict mode)
-- **Tailwind CSS v4**
-- **Supabase** — Auth + Postgres + Row Level Security
-- **OpenAI Realtime API** — browser voice (direct WebRTC, server-side key) + Whisper transcription
+- front desk
+- virtual front desk
+- answering service
+- call handling
+- receptionist
+- customer calls
+- appointments
+- service requests
+- follow-up
+- staff dashboard
+- business knowledge
+- Try our service
 
-### Design System
-Apple-inspired "Studio Modernist" look defined in `src/app/globals.css`: Apple system fonts
-(SF Pro / SF Mono via `--font-display/-body/-mono`), neutral gray palette (`--paper #F5F5F7`,
-`--ink #1D1D1F`, warm `--accent #D04F1A`, status tokens), and `fd-*` primitive classes
-(`fd-card`, `fd-btn*`, `fd-pill*`, `fd-eyebrow`, `fd-display`, `fd-tab*`, `fd-input`,
-`fd-stagger`). Reuse these primitives — don't reintroduce ad-hoc `bg-white rounded-xl shadow`
-patterns or raw hexes. **Full conventions: `docs/design-system.md`.**
+Avoid overusing:
 
-### Call Pipeline
-- Session (`/api/voice-session`) sets conservative server VAD (`threshold 0.65`,
-  `silence_duration_ms 1000`) + per-turn caller transcription (`audio.input.transcription`) using
-  `gpt-realtime-whisper` with a soft `language: 'en'` hint. Transcription model + language
-  constants live in `src/lib/call-pipeline/constants.ts`.
-- Realtime events → per-turn `TranscriptEntry`s; `saveCall` writes one `call_messages` row per
-  turn (caller + assistant). Caller turns are **single-source** (OpenAI server-side transcription
-  only — browser SpeechRecognition was removed; it duplicated turns and mislabeled assistant echo).
-- `/api/transcribe-call` transcribes the caller recording with `gpt-4o-transcribe` (+ `en` hint)
-  and writes `calls.transcript` — the source of truth for extraction; it does NOT insert a caller
-  row (avoids duplicating per-turn rows).
-- `/api/post-call` extracts intent (appointment wins over service request; phone optional;
-  appointments default pending). **Full architecture: `docs/call-pipeline.md`.**
+- AI agent
+- chatbot
+- bot
+- simulator
+- automation tool
 
-### Directory Layout
-- `src/app/` — App Router pages and layouts
-- `src/components/` — Shared UI components
-- `src/lib/supabase/client.ts` — browser Supabase client, exports `isSupabaseConfigured`
-- `src/lib/supabase/server.ts` — async server client using Next.js `cookies()`
-- `src/lib/mock-data.ts` — mock data for demo/signed-out mode
-- `src/proxy.ts` — refreshes Supabase session on every request; skips if env vars missing
-- `src/app/api/voice-session/route.ts` — server-side ephemeral token endpoint (Phase 5)
-- `src/app/dashboard/voice/` — browser voice prototype page (Phase 5)
+### Various Fields of Services
 
-### Required Env Vars
-See `.env.example`. Never commit `.env.local` (covered by `.gitignore` via `.env*`).
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `OPENAI_API_KEY` — server-side only, never exposed to browser
+Restaurants are only the first demo vertical. Shared architecture, UI, schema, prompts, and copy must remain generalized.
 
-## Navigation
-- `/` — Landing page
-- `/dashboard` — Overview
-- `/dashboard/voice` — Live browser voice test ("Test the call")
-- `/dashboard/simulator` — AI Call Simulator (mock)
-- `/dashboard/calls` — Call History
-- `/dashboard/reservations` — Appointment Requests
-- `/dashboard/orders` — Service Requests
-- `/dashboard/knowledge` — Knowledge Base
-- `/dashboard/settings` — Settings
+Supported `business_type` values:
 
-## Current Project State (2026-05-28)
+```ts
+restaurant | auto_repair | salon | clinic | tutoring | home_services | other;
+```
 
-- **Live browser voice works and is under active QA** — `OPENAI_API_KEY` is configured; real
-  calls produce transcripts and create pending appointments.
-- **Call pipeline tuned** — conservative server VAD + per-turn caller transcription; both
-  caller and Front desk turns saved as separate `call_messages` rows; Whisper still produces
-  the official `calls.transcript` for extraction. See `docs/call-pipeline.md`.
-- **UI redesigned** to the Apple "Studio Modernist" system (`docs/design-system.md`):
-  - **Done:** Overview, Call History (date-grouped cards + avatars + stat strip), Appointments
-    (full-width cards), Service Requests (full-width cards), Voice test page, shared chrome
-    (Sidebar / DemoBanner / StatusBadge), `globals.css`.
-  - **Partial:** Knowledge / Settings / Simulator — primitives applied (cards/buttons/hairlines)
-    but page headers not yet brought to the `fd-display` treatment.
-  - **Not started:** landing `/`, auth (`/login`, `/signup`, `/onboarding`). Leave the landing
-    `HeroVideoPlaylist` video loop intact.
-- **Uncommitted** — the redesign + pipeline work is in the working tree only (HEAD is the
-  pre-redesign baseline). Commit only when Eric asks.
+Do not hard-code restaurant-only concepts into shared code.
+
+---
+
+## Tech Stack
+
+- Next.js App Router with `src/`
+- TypeScript strict mode
+- Tailwind CSS
+- Supabase Auth + Postgres + RLS
+- OpenAI Realtime API via browser WebRTC
+- Server creates ephemeral Realtime sessions; browser never receives the raw OpenAI API key
+- Vercel deployment
+
+Use the existing configured model and Realtime architecture. Do not change model, provider, or voice platform unless Eric explicitly approves.
 
 ---
 
 ## Permanent Safety Rules
 
-### Secret & Credential Safety
-1. **Never read, print, cat, grep, edit, or stage `.env.local` or any `.env.*` file.**
-2. **Never print or log `OPENAI_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, or any secret value.**
-3. **Never use the Supabase service-role key in frontend code or any client-accessible code path.**
-4. **Never bypass Row Level Security (RLS)** in any query or migration.
-5. The **OpenAI API key must remain server-side only.** The browser receives only an ephemeral
-   client secret from `/api/voice-session` — never the raw key.
+### Secrets
 
-### Database Safety
-6. **Never run destructive database commands** (`supabase db reset`, `DROP TABLE`, `TRUNCATE`,
-   schema-destructive `psql` commands) without explicit Eric approval.
-7. Use `business_id`-scoped queries. Never return unscoped cross-business data.
-8. Maintain existing RLS policies. Do not disable or work around them.
+1. Never read, print, cat, grep, edit, or stage `.env.local` or any `.env.*` file.
+2. Never print or log `OPENAI_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, tokens, or secret values.
+3. The OpenAI API key must stay server-side only.
+4. Browser may receive only an ephemeral client secret from `/api/voice-session`.
+5. Never use Supabase service-role keys in frontend or client-accessible code.
 
-### Git Safety
-9. **Never run destructive git commands** (`git reset --hard`, `git clean -fd`,
-   `git push --force`) without explicit Eric approval.
-10. **Never commit unless Eric explicitly asks.**
-11. Before any commit Eric approves: run `npm run build` and confirm it passes cleanly.
-12. Check `git status --short` before and after meaningful changes.
-13. `.env.local` must never be staged — it is in `.gitignore` via `.env*`.
+### Database / RLS
 
-### Product Safety
-14. **Keep the platform generalized for all service businesses.** Never hard-code
-    restaurant-only concepts into shared UI, schema, or copy.
-15. **Reservations and bookings always default to "pending staff confirmation."**
-    The AI must never claim they are confirmed. The pending disclaimer must always be visible.
-16. **Keep signed-out demo mode working.** All dashboard pages must be accessible without auth.
-    All auth flows guard with `isSupabaseConfigured` — the app must not crash without `.env.local`.
+6. Never bypass Row Level Security.
+7. Use `business_id`-scoped queries for real data.
+8. Never return cross-business data.
+9. Never run destructive database commands without explicit Eric approval:
+   - `supabase db reset`
+   - `DROP TABLE`
+   - `TRUNCATE`
+   - destructive `psql` commands
+   - destructive migrations
 
-### Voice Agent Safety
-17. Use `gpt-realtime-mini` for MVP unless
-    Eric approves another model. Do not silently upgrade to a more expensive model.
-18. **Do not add Retell, Vapi, Twilio, or any other voice platform** without Eric's approval.
-19. The voice page must handle a missing `OPENAI_API_KEY` gracefully — show an error state,
-    never crash or expose the missing-key error in a way that leaks config details.
+### Git
 
-### Code Safety
-20. **Inspect before editing.** Read files first — never guess file structure.
-21. Server components by default. Only add `"use client"` where state/hooks are needed.
-22. No unnecessary dependencies. Use Tailwind and Next.js built-ins.
-23. Responsive UI only. No fixed pixel-heavy layouts — use Tailwind responsive classes.
-24. Prefer safe, focused, minimal changes. Do not refactor beyond what the task requires.
+10. Never commit unless Eric explicitly asks.
+11. Never run destructive git commands without explicit Eric approval:
+
+- `git reset --hard`
+- `git clean -fd`
+- `git push --force`
+
+12. Run `git status --short` before and after meaningful changes.
+13. Before any approved commit, run `npm run build`.
+14. Never stage `.env.local`, `.env.*`, hook logs, temporary debug files, or generated artifacts unless explicitly intended.
+
+### Product
+
+15. Keep demo mode working.
+16. Keep the platform generalized across service businesses.
+
+---
+
+## Anti-Spaghetti Engineering Rules
+
+These rules exist to stop the codebase from becoming a pile of patches.
+
+### 1. Inspect before editing
+
+Before changing files, inspect the current implementation. ALWAYS ASK questions until you are 95% confident you understand exactly!
+
+Do not guess:
+
+- file paths
+- data flow
+- existing helpers
+- existing types
+- existing source of truth
+- existing side effects
+
+### 2. Find the source of truth
+
+Before adding code, identify the current source of truth.
+
+Examples:
+
+- Transcript source of truth
+- Business timezone source of truth
+- Active business source of truth
+- Demo business source of truth
+- Appointment status source of truth
+- Prompt assembly source of truth
+
+Do not create a second source of truth unless explicitly approved.
+
+### 3. Replace, don’t stack
+
+When fixing a wrong path, prefer replacing/removing the wrong path rather than adding a parallel path.
+
+Bad:
+
+- New logic added while old logic still writes conflicting data.
+- New transcript source added while old transcription still overwrites it.
+- New prompt rule added while old conflicting prompt rule remains.
+- New UI state added while old state still controls behavior.
+
+Good:
+
+- Identify old path.
+- Decide whether it remains fallback.
+- If fallback, gate it clearly.
+- If obsolete, remove it.
+- Add tests around the new source of truth.
+
+### 4. No broad refactors during feature fixes
+
+Do not refactor unrelated files just because they look messy.
+
+Allowed:
+
+- small helper extraction if it reduces duplication for the current task
+- small type cleanup needed for the current task
+- removing obsolete code directly related to the fix
+
+Not allowed:
+
+- redesigning unrelated pages
+- restructuring app directories
+- changing schema without approval
+- rewriting working logic for style preference
+
+### 5. Keep changes reversible
+
+For risky behavior changes:
+
+- keep the diff small
+- use clear helper functions
+- avoid hidden side effects
+- make fallback behavior explicit
+- preserve current working paths unless replacing a proven-bad path
+
+### 6. Update docs when architecture changes
+
+If the task changes call pipeline, prompt assembly, demo/real behavior, or data source of truth, update the relevant doc.
+
+Do not leave docs saying the opposite of the code.
+
+### 7. Tests should target the new source of truth
+
+When adding a helper, add deterministic unit tests if practical.
+
+Test:
+
+- happy path
+- edge case
+- regression case that caused the bug
+
+Do not build large new test infrastructure unless approved.
+
+---
+
+## Best MVP Fix Principle
+
+When Eric asks for a fix, prefer the best MVP fix:
+
+- not the tiniest patch if it leaves the core bug alive
+- not the future enterprise architecture
+- the strongest practical fix for a sellable MVP
+
+In reports, avoid long A/B/C menus unless Eric asks. Recommend the best MVP path directly, with tradeoffs.
+
+---
+
+## Current Architecture Notes
+
+### Call Pipeline
+
+The live voice flow uses OpenAI Realtime through browser WebRTC.
+
+High-level flow:
+
+```txt
+User starts call
+→ /api/voice-session creates ephemeral Realtime session
+→ browser WebRTC connects to OpenAI Realtime
+→ Realtime emits caller and assistant transcript turns
+→ dashboard saves call row + call_messages
+→ post-call extraction creates summary / appointment / service request
+→ dashboard pages display staff next actions
+```
+
+### Transcript source of truth
+
+Realtime transcript turns are the primary source of truth for saved call transcript and post-call extraction.
+
+`calls.transcript` should be assembled from Realtime turns in chronological order:
+
+```txt
+Front desk: ...
+Caller: ...
+Front desk: ...
+Caller: ...
+```
+
+Rules:
+
+- Preserve conversation order.
+- Preserve role labels.
+- Drop empty placeholders.
+- Drop obvious caller noise/junk using the approved noise helper.
+- Never filter assistant turns.
+- Do not duplicate turns.
+
+Batch transcription is fallback only when no usable Realtime caller turns were captured.
+
+`/api/transcribe-call` must not overwrite a good Realtime transcript.
+
+### Noise handling
+
+The app uses conservative noisy-call handling.
+
+Principles:
+
+- Background noise alone should not create fake caller turns.
+- Empty / punctuation-only / obvious speech-to-text hallucination fragments should be filtered.
+- Valid short replies must be preserved:
+  - yes / no
+  - ok / okay
+  - dates
+  - times
+  - names
+  - phone fragments
+  - “thank you”
+  - “that’s all”
+
+Do not make noise filtering overly aggressive.
+
+### Business local time
+
+The agent must know the business local current date/time at session creation.
+
+Prompt context should include:
+
+- business timezone
+- today in business timezone
+- current local business time
+
+The assistant should use this for:
+
+- “what time is it right now?”
+- “today”
+- “tomorrow”
+- same-day past-time rejection
+- business-hours checks
+
+For MVP, current time is computed once at session creation. Do not build live time refresh unless approved.
+
+The assistant must never ask the caller what the current time is.
+
+---
+
+## Design System
+
+Use the existing FrontDesk design system.
+
+Reuse primitives from `src/app/globals.css` and existing components.
+
+Prefer:
+
+- `fd-card`
+- `fd-btn`
+- `fd-pill`
+- `fd-eyebrow`
+- `fd-display`
+- `fd-input`
+- `StatusBadge`
+- existing dashboard shell/chrome
+
+Avoid reintroducing random ad-hoc styling like:
+
+```txt
+bg-white rounded-xl shadow
+raw hex colors
+fixed pixel-heavy layouts
+one-off button styles
+```
+
+Responsive UI only. Mobile must be designed, not just shrunk desktop.
+
+Full conventions live in `docs/design-system.md`.
+
+---
+
+## Directory Guide
+
+Important areas:
+
+```txt
+src/app/                         App Router pages and routes
+src/components/                  Shared UI components
+src/app/api/voice-session/       Realtime session creation
+src/app/dashboard/voice/         Live browser voice test
+src/lib/agents/core/             Prompt assembly / global behavior
+src/lib/agents/verticals/        Vertical-specific business judgment
+src/lib/call-pipeline/           Call transcript, extraction, time, noise helpers
+src/lib/supabase/                Supabase clients and business data
+tests/voice-agent-evals/         Static eval cases
+scripts/                         QA scripts
+docs/                            Architecture and workflow docs
+```
 
 ---
 
 ## Workflow
-- **Claude** = coder
-- **Eric / ChatGPT** = PM / QA
-- Prefer safe, focused, minimal changes
-- Do not commit unless Eric explicitly asks
-- Run `git status --short` before and after meaningful changes
-- Do not add features or refactor beyond the current task scope
 
-## QA-Before-Commit Checklist
-Before any commit Eric approves, verify all of these:
-- [ ] `npm run build` passes with zero errors
-- [ ] `git status --short` reviewed — only intentional files staged
-- [ ] `.env.local` is NOT staged
-- [ ] No secret keys or tokens appear in the diff
-- [ ] Signed-out demo mode still works (all pages accessible)
-- [ ] Pending disclaimer visible on reservation/booking flows
-- [ ] No restaurant-only language in shared UI or schema
+Claude Code is the coder. Eric / ChatGPT are PM and QA.
+
+For each task:
+
+1. Restate the problem briefly.
+2. Inspect relevant files.
+3. Identify the source of truth.
+4. Recommend the best MVP fix.
+5. Implement only approved scope.
+6. Run required QA.
+7. Report exact files changed.
+8. Do not commit unless Eric explicitly asks.
+
+### Required final report after implementation
+
+Include:
+
+```txt
+1. Files changed
+2. Root cause
+3. What changed
+4. What was intentionally not changed
+5. Tests / QA run
+6. Build result
+7. git status --short
+8. Any manual test needed
+```
+
+---
+
+## QA Before Commit
+
+Before any commit Eric approves:
+
+- [ ] `npm run build` passes
+- [ ] relevant QA scripts pass
+- [ ] `git status --short` reviewed
+- [ ] only intentional files staged
+- [ ] `.env.local` / `.env.*` not staged
+- [ ] hook logs not staged
+- [ ] no secrets in diff
+- [ ] demo mode still works
+- [ ] no restaurant-only shared code
+- [ ] no obsolete path still overwriting the new source of truth
+- [ ] docs updated if architecture changed
 
 ---
 
 ## Generalized Database Schema
-Use these table names in shared schema — avoid restaurant-only names:
-- `businesses`, `business_members`, `business_knowledge`
-- `customers`, `calls`, `call_messages`
-- `appointments`, `service_requests`
 
-Restaurant-specific tables (e.g. `menu_items`) belong in a vertical-specific module only.
+Use generalized table names in shared schema:
 
-## Status Colors
-Implemented via `fd-pill` variants (`StatusBadge.tsx` → `docs/design-system.md`):
-- pending → amber (`fd-pill-warn`)
-- confirmed → green (`fd-pill-ok`)
-- declined → red (`fd-pill-danger`)
-- resolved → green (`fd-pill-ok`)
-- escalated → red (`fd-pill-danger`)
-- missed → gray (`fd-pill-muted`)
+```txt
+businesses
+business_members
+business_knowledge
+customers
+calls
+call_messages
+appointments
+service_requests
+profiles
+```
+
+Restaurant-specific tables or logic belong only in vertical-specific modules.
+
+---
+
+## Status Language
+
+Useful statuses:
+
+```txt
+Needs confirmation
+Needs callback
+Quote requested
+Appointment requested
+Resolved
+Escalated
+Captured
+Waiting for staff
+Follow-up required
+```
+
+Do not use “confirmed” unless the system/business flow truly confirms it.

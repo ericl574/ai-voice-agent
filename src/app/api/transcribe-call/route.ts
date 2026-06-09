@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
 
   const { data: callRow } = await supabase
     .from('calls')
-    .select('id')
+    .select('id, transcript')
     .eq('id', callId)
     .eq('business_id', businessId)
     .single();
@@ -90,24 +90,27 @@ export async function POST(req: NextRequest) {
   // Place caller block after assistant lines so the extraction model sees both sides
   const officialTranscript = [assistantTranscript, callerLines].filter(Boolean).join('\n');
 
-  // ── Persist the official transcript on the calls row ─────────────────────────
-  // This text is consumed by /api/post-call extraction (it pulls Caller: lines via
-  // callerLinesOnly()). It uses Whisper's full-recording transcription, which generally
-  // catches more than per-turn Realtime transcripts.
-  //
-  // We deliberately do NOT insert a call_messages row for the caller here.
-  // saveCall() in the client now writes one row per Realtime turn (both caller and
-  // assistant), so the dashboard transcript shows separate turns rather than one blob.
-  // Inserting a Whisper-flat row again would duplicate the caller side.
-
-  await supabase
-    .from('calls')
-    .update({ transcript: officialTranscript })
-    .eq('id', callId);
+  // ── Persist the official transcript on the calls row — FALLBACK ONLY ─────────
+  // This batch (Whisper) path is now a fallback. The client uses the live Realtime transcript as
+  // the primary source of truth and only calls this route when no usable Realtime caller turns were
+  // captured. As defense-in-depth, do NOT overwrite a transcript that already has caller content —
+  // only write when the saved transcript is empty or a placeholder. We also never insert a
+  // call_messages row here (saveCall() already wrote one row per Realtime turn).
+  const existing = ((callRow.transcript as string | null) ?? '').trim();
+  const existingIsPlaceholder =
+    existing === '' ||
+    existing.startsWith('(no transcript') ||
+    !/^caller:/im.test(existing); // no caller lines yet → safe to fill from batch
+  if (existingIsPlaceholder) {
+    await supabase
+      .from('calls')
+      .update({ transcript: officialTranscript })
+      .eq('id', callId);
+  }
 
   return NextResponse.json({
     ok: true,
-    transcript: officialTranscript,
+    transcript: existingIsPlaceholder ? officialTranscript : existing,
     callerTranscript: rawCallerText,
   });
 }

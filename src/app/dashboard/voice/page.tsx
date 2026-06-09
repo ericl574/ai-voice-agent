@@ -7,6 +7,7 @@ import { getActiveBusiness } from '@/lib/supabase/businesses';
 import { useDashboardMode } from '@/lib/dashboard-mode';
 import { looksLikePhone } from '@/lib/call-pipeline/extraction';
 import { looksLikeNoiseOrEmpty } from '@/lib/call-pipeline/noise';
+import { buildTranscript, countCallerTurns } from '@/lib/call-pipeline/transcript';
 
 type CallStatus =
   | 'idle'
@@ -739,20 +740,36 @@ export default function VoicePage() {
       return;
     }
 
-    // Preliminary transcript: assistant-only (caller added after Whisper transcription)
+    // The live Realtime transcript is the PRIMARY source of truth — more accurate than the
+    // post-call batch recording. Assemble it role-labeled + interleaved in conversation order
+    // (Option A noise/empty filtering applied inside buildTranscript).
+    const officialTranscript = buildTranscript(entries, looksLikeNoiseOrEmpty);
+    const callerTurns = countCallerTurns(entries, looksLikeNoiseOrEmpty);
+    // assistant-only string is only needed for the batch-fallback assembly (transcribe-call).
     const assistantTranscript = assistantEntries
       .map((e) => `Front desk: ${e.text}`)
       .join('\n');
 
-    const callId = await saveCall(entries, assistantTranscript || '(no transcript captured)', callStart, 'transcribing');
+    const callId = await saveCall(
+      entries,
+      officialTranscript || '(no transcript captured)',
+      callStart,
+      'transcribing',
+    );
     if (!callId) return;
 
-    // Upload caller audio for official Whisper transcription
-    if (callerAudioBlob && callerAudioBlob.size > 500) {
+    if (callerTurns > 0) {
+      // Primary path: we have real Realtime caller turns — extract from them directly, skip batch.
+      console.log('[FD debug] stopCall — using Realtime transcript as primary (caller turns:', callerTurns, ')');
+      setStatus('saved');
+      runPostCall(callId, officialTranscript);
+    } else if (callerAudioBlob && callerAudioBlob.size > 500) {
+      // Fallback: no usable Realtime caller turns — transcribe the recorded caller audio.
+      console.log('[FD debug] stopCall — no Realtime caller turns; falling back to batch transcription');
       await uploadAndTranscribe(callId, callerAudioBlob, assistantTranscript);
     } else {
-      console.warn('[FD debug] stopCall — no caller audio (blob missing or empty)');
-      setErrorMsg('No caller audio was recorded. Appointment extraction could not run. Ensure microphone access is granted and try Chrome or Edge.');
+      console.warn('[FD debug] stopCall — no Realtime caller turns and no caller audio');
+      setErrorMsg('No caller speech was captured. Appointment extraction could not run. Ensure microphone access is granted and try Chrome or Edge.');
       setStatus('saved');
     }
   }

@@ -2,7 +2,7 @@ import type { AgentConfig, Business } from '@/lib/supabase/businesses';
 import type { KnowledgeRow, VerticalProfile } from './types';
 import { GLOBAL_RULES } from './globalRules';
 import { getVertical } from '../verticals/registry';
-import { todayInTimeZone } from '@/lib/call-pipeline/time';
+import { todayInTimeZone, nowInTimeZone } from '@/lib/call-pipeline/time';
 
 // Renders the selected vertical profile into a concise prompt section. Industry-specific
 // terminology and examples live ONLY here (via the profile), never in GLOBAL_RULES.
@@ -113,8 +113,14 @@ ${business.phone ? `Phone: ${business.phone}` : ''}
 ${business.city ? `Location: ${business.city}${business.region ? ', ' + business.region : ''}` : ''}
 Timezone: ${business.timezone}
 Today (business timezone): ${todayInTimeZone(business.timezone)}
+Current local time (business timezone): ${nowInTimeZone(business.timezone)} (${business.timezone})
 Hours: ${hours}
 ${walkin ? 'Walk-ins: Welcome.' : 'Appointments: Preferred. Walk-ins subject to availability.'}
+
+CURRENT TIME — use the "Current local time" above as the present moment for this call:
+- It is the current business-local time. Use it for "now", "today", and same-day checks. Never ask the caller what time or date it is — you already know.
+- If the caller asks for a time earlier today than the current local time, tell them that time has already passed and offer a later time; do this BEFORE collecting party size, name, or phone.
+- Still respect the business hours above (don't accept times when the business is closed).
 
 APPOINTMENTS:
 ${autoConfirm

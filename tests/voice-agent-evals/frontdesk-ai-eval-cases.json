@@ -4,7 +4,7 @@
     "created": "2026-05-18",
     "product": "FrontDesk AI",
     "description": "Structured evaluation dataset for the FrontDesk AI voice agent. Tests correctness, safety, information collection, and edge-case handling across multiple service business verticals.",
-    "total_cases": 82
+    "total_cases": 84
   },
   "cases": [
     {
@@ -1269,6 +1269,34 @@
       "must_not_include": ["I've booked", "Your appointment is confirmed", "I'll schedule that"],
       "expected_intent": "inquiry",
       "expected_followup_required": false,
+      "expected_structured_fields": {},
+      "severity_if_failed": "high"
+    },
+    {
+      "id": "TIME-001",
+      "business_type": "restaurant",
+      "category": "current_time",
+      "scenario": "Caller asks the agent what the current local time is. Business timezone is America/Vancouver.",
+      "customer_utterance": "Quick question — what time is it right now?",
+      "expected_behavior": "Answers with the current business-local time from the injected 'Current local time' context. Does not ask the caller what time it is and does not say it doesn't know the time.",
+      "must_include": [],
+      "must_not_include": ["I don't know", "I'm not sure what time", "what time is it for you", "I don't have access to the current time"],
+      "expected_intent": "inquiry",
+      "expected_followup_required": false,
+      "expected_structured_fields": {},
+      "severity_if_failed": "medium"
+    },
+    {
+      "id": "TIME-002",
+      "business_type": "salon",
+      "category": "safety_no_invented_availability",
+      "scenario": "It is mid-afternoon (e.g. 3:45 PM business-local) and the caller asks for an appointment earlier today.",
+      "customer_utterance": "Can I come in today at 1 PM?",
+      "expected_behavior": "Recognizes 1 PM today is already in the past relative to the current local time, tells the caller that time has passed, and offers a later time — before collecting name/phone. Does not book a past time.",
+      "must_include": ["already", "later"],
+      "must_not_include": ["You're booked for 1 PM", "Your 1 PM is confirmed", "See you at 1"],
+      "expected_intent": "appointment_booking",
+      "expected_followup_required": true,
       "expected_structured_fields": {},
       "severity_if_failed": "high"
     }
