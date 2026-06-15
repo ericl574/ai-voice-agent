@@ -15,6 +15,8 @@ export const homeServicesProfile: VerticalProfile = {
     'A described problem at a location = the job; an urgent/flooding/no-power situation = a possible emergency',
   ],
   collectionPriorities: 'Collect the issue/job, the service location (and confirm it is in the service area), preferred time, name, and phone. Flag emergencies for staff.',
+  requiredFields: ['name', 'service'],
+  optionalFields: ['phone', 'date', 'time'],
   forbiddenAssumptions: [
     'Do not quote prices or costs unless they are provided in the knowledge base',
     'Do not promise same-day service or specific arrival windows unless provided',

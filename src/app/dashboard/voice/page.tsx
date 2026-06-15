@@ -7,6 +7,8 @@ import { getActiveBusiness } from '@/lib/supabase/businesses';
 import { useDashboardMode } from '@/lib/dashboard-mode';
 import { looksLikePhone } from '@/lib/call-pipeline/extraction';
 import { looksLikeNoiseOrEmpty } from '@/lib/call-pipeline/noise';
+import { classifyCallerIntent } from '@/lib/call-pipeline/intent';
+import { looksLikeEndCall } from '@/lib/call-pipeline/endCall';
 import { buildTranscript, countCallerTurns, FRONT_DESK_LABEL } from '@/lib/call-pipeline/transcript';
 
 type CallStatus =
@@ -30,6 +32,8 @@ interface TranscriptEntry {
 type EndReason =
   | 'manual'
   | 'auto-end'
+  | 'inactivity'
+  | 'max-duration'
   | 'realtime-error'
   | 'peer-disconnect'
   | 'connect-error'
@@ -37,23 +41,34 @@ type EndReason =
 
 const CONNECT_TIMEOUT_MS = 30_000;
 
-// Delay between detecting a clear end-call cue and actually hanging up — long enough for the
-// assistant to speak one short closing sentence first.
-const AUTO_END_DELAY_MS = 4_000;
+// Cost safety net: hard cap on a single browser test call so a forgotten/abandoned session can't run
+// up Realtime minutes. The call ends gracefully (same path as the End-call button) at this point.
+// Generous so it never cuts off a real conversation; the server session also expires at ~5 min.
+const MAX_CALL_DURATION_MS = 10 * 60_000;
 
-// True when the caller clearly signals the conversation is over. Conservative on purpose:
-// a new question in the same utterance (or a "?") cancels the match, and "thank you"/"thanks"
-// alone is NOT an end cue.
-function looksLikeEndCall(raw: string): boolean {
-  const text = raw.toLowerCase().trim();
-  if (!text) return false;
-  // A new substantive question in the same breath ("thank you, what are your hours?") → not an end.
-  if (text.includes('?')) return false;
-  if (/\b(what|when|where|how|why|who|which|hours|open|price|cost|available|do you|are you|can you|could you|would you)\b/.test(text)) {
-    return false;
-  }
-  return /\b(bye bye|bye|goodbye|that'?s all|all good|nothing else|no,? that'?s it|end the call|hang up|you can hang up|i said goodbye|i'?m done|i am done|we'?re done|we are done)\b/.test(text);
-}
+// End-of-call (freeze): all ending is PLAYBACK-AWARE, not a blind fixed delay.
+// - END_DRAIN_MAX_MS: once ending is requested, wait at most this long for the assistant to go idle
+//   (no response in progress, no audio playing, no held turn) before saving — a bounded graceful
+//   drain so the final closing line is captured but a stuck event can't block save forever.
+// - END_CUE_MAX_MS: after a caller end-cue ("bye"), we let the assistant deliver its closing reply
+//   and end once that finishes; this is the fallback if that reply never completes.
+// - INACTIVITY_END_MS: conservative idle hang-up — end gracefully after this much caller silence,
+//   but ONLY once the call is underway and the assistant is idle (never during a thinking pause
+//   mid-reply or before the first exchange). Long on purpose to avoid cutting off a slow caller.
+const END_DRAIN_MAX_MS = 3_000;
+const END_CUE_MAX_MS = 6_000;
+const INACTIVITY_END_MS = 28_000;
+
+// Layer 2 — fail-open safety for app-controlled response creation. The app creates the assistant
+// reply only AFTER the caller transcript arrives, so if a transcript is slow or never lands the
+// caller would sit in silence. After a caller turn is committed by VAD we wait this long for the
+// transcript; if it doesn't arrive we create a response anyway (ungated for that rare turn).
+const CALLER_TRANSCRIPT_FALLBACK_MS = 2_500;
+
+// Absolute backstop for a HELD caller turn (one deferred while the assistant was still speaking).
+// Normally the held turn fires when playback-finished events arrive; this guards the rare case where
+// those events are lost, so a held turn can never leave the caller permanently unanswered.
+const PENDING_BACKSTOP_MS = 8_000;
 
 // Dev-only: POST a copy of the recorded caller audio to a local route that writes it to
 // project-root /audio-source for offline debugging. Best-effort — never blocks or breaks the
@@ -72,6 +87,81 @@ async function saveAudioSourceForDebug(blob: Blob): Promise<void> {
   } catch (err) {
     console.warn('[FD debug] save-audio-source error:', err);
   }
+}
+
+// ── Voice event timeline (Layer 1 observability) ───────────────────────────
+// Dev-only, in-page, structured log of Realtime + app events so voice-pipeline bugs can be
+// diagnosed with evidence instead of guessing. The headline signal it exposes: assistant TEXT
+// complete vs assistant AUDIO complete vs audio PLAYBACK finished — i.e. "transcript shows a full
+// sentence but the caller heard it cut off" becomes visible as event ordering. Also surfaces
+// duplicate responses (two response.created without a caller turn) and VAD activity during
+// assistant speech. It records ONLY event type, ids, role, and a short FIXED note — never payloads,
+// transcript text, secrets, or ephemeral tokens. Off in production builds.
+
+const SHOW_TIMELINE = process.env.NODE_ENV !== 'production';
+const VOICE_EVENT_CAP = 300; // ring buffer — keep the most recent N events per call
+
+interface VoiceEvent {
+  seq: number;
+  tMs: number; // ms since call start (or first event if the call hadn't connected yet)
+  type: string; // Realtime event type, or an `app:` action marker
+  responseId?: string;
+  itemId?: string;
+  role?: string;
+  note?: string;
+}
+
+// Short FIXED note for the events that matter most to voice diagnosis. This is where assistant
+// TEXT-complete is explicitly distinguished from assistant AUDIO-generation-done and audio
+// PLAYBACK-finished — the core "full transcript but cut-off audio" signal.
+function voiceEventNote(type: string): string | undefined {
+  switch (type) {
+    case 'session.created': return 'session ready';
+    case 'input_audio_buffer.speech_started': return 'caller speech detected (VAD)';
+    case 'input_audio_buffer.speech_stopped': return 'caller speech ended (VAD)';
+    case 'input_audio_buffer.committed': return 'caller turn committed';
+    case 'conversation.item.input_audio_transcription.completed': return 'caller turn transcribed';
+    case 'response.created': return 'assistant turn started';
+    case 'response.output_item.added': return 'assistant item added';
+    case 'response.audio_transcript.done':
+    case 'response.output_audio_transcript.done': return 'assistant TEXT complete (not audio)';
+    case 'response.audio.done':
+    case 'response.output_audio.done': return 'assistant AUDIO generation done';
+    case 'output_audio_buffer.started': return 'assistant audio playback started';
+    case 'output_audio_buffer.stopped': return 'assistant audio playback FINISHED';
+    case 'output_audio_buffer.cleared': return 'assistant audio CLEARED (interrupted)';
+    case 'response.done': return 'response complete';
+    case 'response.cancelled':
+    case 'response.canceled': return 'response cancelled';
+    case 'response.failed': return 'response failed';
+    case 'error': return 'realtime error';
+    default: return undefined;
+  }
+}
+
+type VoiceEventCategory = 'caller' | 'assistant' | 'audio' | 'error' | 'app' | 'other';
+
+function voiceEventCategory(type: string): VoiceEventCategory {
+  if (type.startsWith('app:')) return 'app';
+  if (type === 'error' || type.endsWith('.failed')) return 'error';
+  if (type === 'response.audio.done' || type === 'response.output_audio.done' || type.startsWith('output_audio_buffer.')) return 'audio';
+  if (type.startsWith('input_audio_buffer.') || type.includes('input_audio_transcription')) return 'caller';
+  if (type.startsWith('response.') || type.startsWith('conversation.item.')) return 'assistant';
+  return 'other';
+}
+
+const VOICE_CATEGORY_COLOR: Record<VoiceEventCategory, string> = {
+  caller: '#2563eb',    // blue  — caller / VAD
+  assistant: '#059669', // green — assistant response lifecycle + transcript
+  audio: '#7c3aed',     // purple — assistant audio generation + playback buffer
+  error: '#dc2626',     // red   — errors / failures
+  app: '#b45309',       // amber — app-side decisions (blocked/re-issued/filtered)
+  other: '#6b7280',     // gray
+};
+
+// Last 6 chars of an id — enough to correlate events without dumping full ids.
+function shortId(id?: string): string {
+  return id ? `…${id.slice(-6)}` : '';
 }
 
 // ── Readiness checklist row ────────────────────────────────────────────────
@@ -174,24 +264,278 @@ export default function VoicePage() {
   const startedAtRef = useRef<Date | null>(null);
   const statusRef = useRef<CallStatus>('idle');
   const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const autoEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // True while a Realtime response is generating. Set on response.created, cleared on
-  // response.done/cancelled/failed. Lets us treat the "active response in progress" error as
-  // recoverable instead of fatal.
+  // Cost safety net — force-ends an over-long call (see MAX_CALL_DURATION_MS).
+  const maxDurationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // End-of-call state (freeze). endRequested = a graceful end is draining → no new responses.
+  // endAfterReply = a caller end-cue fired; end once the assistant's closing reply finishes.
+  // substantiveCallerTurnSeen = ≥1 valid caller turn has been accepted this call (gates inactivity-end
+  // so it never fires after just a greeting / before a real exchange).
+  const endRequestedRef = useRef(false);
+  const endAfterReplyRef = useRef(false);
+  const substantiveCallerTurnSeenRef = useRef(false);
+  const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const endCueFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const endDrainTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Explicit pending-caller-transcript signal — item_ids committed by VAD but not yet transcribed.
+  // Used by BOTH the bounded drain-before-save and the inactivity-end checks (NOT the fail-open
+  // timer, which is cleared when it fires while a transcript may still be pending).
+  const pendingCallerTranscriptRef = useRef<Set<string>>(new Set());
+  // Layer 2 assistant-turn state — the two are tracked SEPARATELY on purpose. A response being
+  // "done" does NOT mean the caller heard the audio: playback continues after response.done and the
+  // server can still clear it. responseInProgress gates response creation; audioPlaying decides
+  // whether a new caller turn is held (assistant still speaking) vs answered now.
+  //   responseInProgress: response.created → true; response.done/cancelled/failed → false.
+  //   assistantAudioPlaying: output_audio_buffer.started → true; .stopped/.cleared → false.
   const responseInProgressRef = useRef(false);
+  const assistantAudioPlayingRef = useRef(false);
   // Why the call is ending — logged in stopCall/cleanup so failures are unambiguous.
   const endReasonRef = useRef<EndReason>('unknown');
-  // Count of recoverable "active response in progress" errors this call — each one is a caller
-  // barge-in the server rejected (a possible dropped turn). Logged as a summary at cleanup.
+  // Count of "active response in progress" errors this call (should be ~0 now that the app owns
+  // response creation). Logged as a summary at cleanup.
   const activeResponseErrorCountRef = useRef(0);
-  // True when a caller turn was rejected because a response was already active. Once that response
-  // finishes we ask the server for a fresh response so the caller's turn is actually answered.
-  const pendingResponseRef = useRef(false);
+  // A substantive caller turn arrived while the assistant was still speaking — answered with exactly
+  // one response once playback finishes (see onAssistantSettled / deferCallerResponse backstop).
+  const pendingCallerResponseRef = useRef(false);
+  // Layer 2 turn timers: fail-open if the caller transcript never arrives; flush a held turn after
+  // playback; absolute backstop so a held turn can't hang forever.
+  const callerTurnFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushPendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingBackstopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Risk 1 guard: caller item_ids already answered by the fail-open fallback. A late transcript for
+  // the same item must update/save text but must NOT create a SECOND response for that turn.
+  const fallbackAnsweredItemsRef = useRef<Set<string>>(new Set());
+  // Risk 2 snapshot: was the assistant speaking when THIS caller turn began? Captured at speech-start
+  // / item-creation (when the caller actually spoke) and used for backchannel suppression, because
+  // the live busy state at transcript-arrival time lags ~1-2s and would let backchannels leak through
+  // on short assistant replies.
+  const speechStartBusyRef = useRef(false);
+  const itemBusyAtSpeechRef = useRef<Map<string, boolean>>(new Map());
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const postCallGenRef = useRef(0);
   // Caller mic recording — MediaRecorder is the source of truth for post-call transcription.
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+
+  // Layer 1 voice observability — dev-only structured event timeline (see SHOW_TIMELINE / VoiceEvent).
+  const [voiceEvents, setVoiceEvents] = useState<VoiceEvent[]>([]);
+  const [showTimeline, setShowTimeline] = useState(true);
+  const voiceSeqRef = useRef(0);
+  const voiceBaselineRef = useRef<number | null>(null); // first-event timestamp fallback before connect
+
+  // Append one event to the in-page voice timeline. No-op in production. Records only type, ids,
+  // role, and a short fixed note — never payloads, transcript text, or secrets.
+  function recordVoiceEvent(
+    type: string,
+    extra?: Partial<Pick<VoiceEvent, 'responseId' | 'itemId' | 'role' | 'note'>>,
+  ) {
+    if (!SHOW_TIMELINE) return;
+    const now = Date.now();
+    if (voiceBaselineRef.current === null) voiceBaselineRef.current = now;
+    const baseline = startedAtRef.current?.getTime() ?? voiceBaselineRef.current;
+    const seq = ++voiceSeqRef.current;
+    const note = extra?.note ?? voiceEventNote(type);
+    setVoiceEvents((prev) => {
+      const next = [
+        ...prev,
+        { seq, tMs: now - baseline, type, responseId: extra?.responseId, itemId: extra?.itemId, role: extra?.role, note },
+      ];
+      return next.length > VOICE_EVENT_CAP ? next.slice(next.length - VOICE_EVENT_CAP) : next;
+    });
+  }
+
+  function resetVoiceTimeline() {
+    if (!SHOW_TIMELINE) return;
+    voiceSeqRef.current = 0;
+    voiceBaselineRef.current = null;
+    setVoiceEvents([]);
+  }
+
+  // ── Layer 2: app-controlled response creation ────────────────────────────
+  // Server VAD no longer auto-creates responses (create_response:false). These helpers are the ONLY
+  // path that asks Realtime for an assistant reply, so noise/background/duplicate turns can be gated
+  // out before a response is ever generated.
+
+  function clearTurnTimers() {
+    for (const ref of [callerTurnFallbackTimerRef, flushPendingTimerRef, pendingBackstopTimerRef]) {
+      if (ref.current) { clearTimeout(ref.current); ref.current = null; }
+    }
+  }
+
+  // Full reset of Layer 2 response/turn state. Used when (re)starting or resetting a call.
+  function resetResponseState() {
+    responseInProgressRef.current = false;
+    assistantAudioPlayingRef.current = false;
+    pendingCallerResponseRef.current = false;
+    activeResponseErrorCountRef.current = 0;
+    fallbackAnsweredItemsRef.current.clear();
+    itemBusyAtSpeechRef.current.clear();
+    speechStartBusyRef.current = false;
+    endRequestedRef.current = false;
+    endAfterReplyRef.current = false;
+    substantiveCallerTurnSeenRef.current = false;
+    pendingCallerTranscriptRef.current.clear();
+    clearTurnTimers();
+    clearEndTimers();
+  }
+
+  // The SINGLE place the app sends response.create. Guarded: only when the data channel is open, the
+  // call is connected, no response is already generating, and the assistant's audio isn't still
+  // playing (in which case we defer instead of cutting it off). Returns true iff a response was sent.
+  function sendResponseCreate(reason: string): boolean {
+    if (endRequestedRef.current) {
+      // The call is ending/draining — never create a new assistant response.
+      recordVoiceEvent('app:response.create blocked/ending', { note: reason });
+      return false;
+    }
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== 'open' || statusRef.current !== 'connected') {
+      recordVoiceEvent('app:response.create blocked/not-connected', { note: reason });
+      return false;
+    }
+    if (responseInProgressRef.current) {
+      recordVoiceEvent('app:response.create blocked/response in progress', { note: reason });
+      return false;
+    }
+    if (assistantAudioPlayingRef.current) {
+      // Assistant audio is still playing — hold this turn rather than talk over it. The held turn
+      // fires from onAssistantSettled() once playback finishes.
+      deferCallerResponse();
+      recordVoiceEvent('app:response.create blocked/assistant audio playing', { note: reason });
+      return false;
+    }
+    dc.send(JSON.stringify({ type: 'response.create' }));
+    recordVoiceEvent('app:response.create sent', { note: reason });
+    return true;
+  }
+
+  // Remember a caller turn to answer once the assistant finishes speaking, and arm the absolute
+  // backstop so the held turn can never hang forever if playback-finished events are lost.
+  function deferCallerResponse() {
+    if (endRequestedRef.current) return; // ending — do not hold new turns
+    pendingCallerResponseRef.current = true;
+    if (pendingBackstopTimerRef.current) clearTimeout(pendingBackstopTimerRef.current);
+    pendingBackstopTimerRef.current = setTimeout(() => {
+      pendingBackstopTimerRef.current = null;
+      if (!pendingCallerResponseRef.current) return;
+      if (responseInProgressRef.current) return; // a real response is still generating; its terminal event will flush
+      // Playback-finished events were likely lost — assume idle and answer the held turn.
+      assistantAudioPlayingRef.current = false;
+      recordVoiceEvent('app:response.create flushed (backstop — playback events lost)');
+      if (sendResponseCreate('deferred caller turn (backstop)')) pendingCallerResponseRef.current = false;
+    }, PENDING_BACKSTOP_MS);
+  }
+
+  // Called after any event that could end the assistant's turn (response terminal, playback
+  // stopped/cleared). Debounced so response.done and output_audio_buffer.stopped coalesce. Once the
+  // assistant is fully idle it, in order: (1) flushes a held caller turn, (2) ends the call if a
+  // caller end-cue is pending, (3) arms the conservative inactivity hang-up.
+  function onAssistantSettled() {
+    if (flushPendingTimerRef.current) clearTimeout(flushPendingTimerRef.current);
+    flushPendingTimerRef.current = setTimeout(() => {
+      flushPendingTimerRef.current = null;
+      if (responseInProgressRef.current || assistantAudioPlayingRef.current) return; // not idle yet
+      // 1) Answer a held caller turn first (creates a new response → no longer idle).
+      if (pendingCallerResponseRef.current && !endRequestedRef.current) {
+        recordVoiceEvent('app:response.create flushed (deferred caller turn)');
+        if (sendResponseCreate('deferred caller turn')) {
+          pendingCallerResponseRef.current = false;
+          if (pendingBackstopTimerRef.current) { clearTimeout(pendingBackstopTimerRef.current); pendingBackstopTimerRef.current = null; }
+          return; // response in progress now
+        }
+      }
+      if (pendingCallerResponseRef.current) return; // still pending (couldn't send) — wait
+      if (endRequestedRef.current) return; // already draining — drainThenStop handles the stop
+      // 2) Caller asked to end: the closing reply has now finished playing — end gracefully.
+      if (endAfterReplyRef.current) {
+        recordVoiceEvent('app:end-call cue — closing reply finished, ending');
+        requestEndCall('auto-end');
+        return;
+      }
+      // 3) Assistant idle and nothing pending — arm the conservative inactivity end.
+      maybeArmInactivity();
+    }, 250);
+  }
+
+  // ── End-of-call (freeze): playback-aware ending + bounded graceful drain ───
+  function clearInactivityTimer() {
+    if (inactivityTimerRef.current) { clearTimeout(inactivityTimerRef.current); inactivityTimerRef.current = null; }
+  }
+
+  function clearEndTimers() {
+    for (const ref of [inactivityTimerRef, endCueFallbackTimerRef, endDrainTimerRef]) {
+      if (ref.current) { clearTimeout(ref.current); ref.current = null; }
+    }
+  }
+
+  // True when every condition for a safe inactivity hang-up holds. Called both at arm time and again
+  // at fire time. Requires: ≥1 substantive caller turn this call AND the assistant fully idle (so by
+  // construction ≥1 assistant response has finished after that caller turn — maybeArmInactivity is
+  // only invoked from onAssistantSettled), no held caller response, no pending caller transcript, and
+  // not already ending. Never fires after just a greeting / before a real exchange.
+  function inactivityEndAllowed(): boolean {
+    return (
+      substantiveCallerTurnSeenRef.current &&
+      !endRequestedRef.current &&
+      !endAfterReplyRef.current &&
+      !responseInProgressRef.current &&
+      !assistantAudioPlayingRef.current &&
+      !pendingCallerResponseRef.current &&
+      pendingCallerTranscriptRef.current.size === 0
+    );
+  }
+
+  // Arm the inactivity hang-up — only when inactivityEndAllowed(). Re-checks at fire time so a
+  // resumed caller (or any in-flight turn) cancels it.
+  function maybeArmInactivity() {
+    clearInactivityTimer();
+    if (!inactivityEndAllowed()) return;
+    inactivityTimerRef.current = setTimeout(() => {
+      inactivityTimerRef.current = null;
+      if (statusRef.current !== 'connected') return;
+      if (!inactivityEndAllowed()) return;
+      recordVoiceEvent('app:inactivity end — caller silent after assistant idle');
+      requestEndCall('inactivity');
+    }, INACTIVITY_END_MS);
+  }
+
+  // The single entry point for ending a call (manual button, end-cue, inactivity, max-duration).
+  // Enters a draining state that blocks new responses, then saves once the assistant is idle (or a
+  // bounded timeout elapses) so the final closing line is captured without hanging forever.
+  function requestEndCall(reason: EndReason) {
+    if (endRequestedRef.current) return; // already ending
+    if (statusRef.current !== 'connected') { stopCall(reason); return; } // not live — stop directly
+    endRequestedRef.current = true;
+    endReasonRef.current = reason;
+    endAfterReplyRef.current = false;
+    pendingCallerResponseRef.current = false; // ending — drop any held turn
+    clearTurnTimers();
+    clearInactivityTimer();
+    if (endCueFallbackTimerRef.current) { clearTimeout(endCueFallbackTimerRef.current); endCueFallbackTimerRef.current = null; }
+    recordVoiceEvent('app:end requested — draining before save', { note: reason });
+    setStatus('stopping');
+    drainThenStop(reason, Date.now());
+  }
+
+  // Poll until the assistant is idle (bounded by END_DRAIN_MAX_MS), then save. A stuck Realtime
+  // event can never block save past the bound.
+  function drainThenStop(reason: EndReason, startTs: number) {
+    const idle =
+      !responseInProgressRef.current &&
+      !assistantAudioPlayingRef.current &&
+      !pendingCallerResponseRef.current &&
+      pendingCallerTranscriptRef.current.size === 0; // also wait for any committed caller turn's transcript
+    if (idle) {
+      recordVoiceEvent('app:end drain complete — assistant idle, saving');
+      stopCall(reason);
+      return;
+    }
+    if (Date.now() - startTs >= END_DRAIN_MAX_MS) {
+      recordVoiceEvent('app:end wait timed out — saving best available transcript');
+      stopCall(reason);
+      return;
+    }
+    endDrainTimerRef.current = setTimeout(() => drainThenStop(reason, startTs), 150);
+  }
 
   // Keep refs in sync with state
   useEffect(() => { transcriptRef.current = transcript; }, [transcript]);
@@ -206,6 +550,28 @@ export default function VoicePage() {
   // Browser mic API support (sync, client-side only)
   useEffect(() => {
     setMicSupported(typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia);
+  }, []);
+
+  // Best-effort teardown if the tab is closed/navigated away mid-call — releases the mic and closes
+  // the peer connection so a Realtime session doesn't keep running (cost) until the server expiry.
+  // Kept minimal + synchronous (no setState) because unload handlers can't run async work.
+  useEffect(() => {
+    const teardown = () => {
+      if (statusRef.current !== 'connected' && statusRef.current !== 'connecting') return;
+      try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
+      try {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop();
+        }
+      } catch {}
+      try { pcRef.current?.close(); } catch {}
+    };
+    window.addEventListener('pagehide', teardown);
+    window.addEventListener('beforeunload', teardown);
+    return () => {
+      window.removeEventListener('pagehide', teardown);
+      window.removeEventListener('beforeunload', teardown);
+    };
   }, []);
 
   // Check whether OPENAI_API_KEY is configured server-side
@@ -246,18 +612,78 @@ export default function VoicePage() {
       console.log('[FD debug] event:', type);
     }
 
+    // Layer 1 timeline: record every NON-delta event generically (deltas fire too often to be
+    // useful and would flood the panel). This is what makes audio-done vs transcript-done ordering,
+    // duplicate response.created, and VAD-during-speech visible. Identifiers are pulled generically
+    // from whichever shape the event uses (response_id / response.id, item_id / item.id).
+    if (type && !type.endsWith('.delta')) {
+      const responseId =
+        (typeof event.response_id === 'string' ? event.response_id : undefined) ??
+        ((event.response as Record<string, unknown> | undefined)?.id as string | undefined);
+      const item = event.item as Record<string, unknown> | undefined;
+      const itemId =
+        (typeof event.item_id === 'string' ? event.item_id : undefined) ??
+        (item?.id as string | undefined);
+      const role = item?.role as string | undefined;
+      recordVoiceEvent(type, { responseId, itemId, role });
+    }
+
     if (type === 'input_audio_buffer.speech_started') {
       console.log('[FD debug] VAD speech_started');
       setIsSpeaking(true);
+      clearInactivityTimer(); // caller is active — cancel any pending idle hang-up
+      // Risk 2: capture whether the assistant was speaking the moment the caller started talking.
+      // Stored per-item at commit/item-added below and used for backchannel suppression.
+      speechStartBusyRef.current = responseInProgressRef.current || assistantAudioPlayingRef.current;
     }
     if (type === 'input_audio_buffer.speech_stopped') {
       console.log('[FD debug] VAD speech_stopped');
       setIsSpeaking(false);
     }
 
+    // Layer 2 fail-open: a caller turn was committed by VAD. The app now waits for the transcript
+    // before creating a response, so arm a safety timer — if the transcript never arrives, create a
+    // response anyway so the caller isn't left in silence. Cleared when the transcript lands (valid
+    // or noise) so a noise-only turn never fail-open-triggers a reply.
+    if (type === 'input_audio_buffer.committed') {
+      clearInactivityTimer(); // a caller turn was captured — cancel any pending idle hang-up
+      const committedItemId = typeof event.item_id === 'string' ? event.item_id : undefined;
+      // Risk 2: bind the speech-start busy snapshot to this caller item (first writer wins).
+      if (committedItemId && !itemBusyAtSpeechRef.current.has(committedItemId)) {
+        itemBusyAtSpeechRef.current.set(committedItemId, speechStartBusyRef.current);
+      }
+      // A finalized caller turn is now awaiting its transcript — the bounded drain + inactivity end
+      // both wait on this until the matching transcription.completed clears it.
+      if (committedItemId) pendingCallerTranscriptRef.current.add(committedItemId);
+      if (callerTurnFallbackTimerRef.current) clearTimeout(callerTurnFallbackTimerRef.current);
+      callerTurnFallbackTimerRef.current = setTimeout(() => {
+        callerTurnFallbackTimerRef.current = null;
+        if (statusRef.current !== 'connected') return;
+        // Risk 1: this turn is being answered WITHOUT a transcript. Remember the item so a late
+        // transcript for it cannot trigger a second response.
+        if (committedItemId) fallbackAnsweredItemsRef.current.add(committedItemId);
+        if (responseInProgressRef.current || assistantAudioPlayingRef.current) {
+          deferCallerResponse();
+          recordVoiceEvent('app:response.create deferred (fallback — assistant speaking)', committedItemId ? { itemId: committedItemId } : undefined);
+          return;
+        }
+        sendResponseCreate('fallback — transcript missing');
+      }, CALLER_TRANSCRIPT_FALLBACK_MS);
+    }
+
     if (type === 'conversation.item.input_audio_transcription.completed') {
       setIsSpeaking(false);
+      // The caller transcript arrived — cancel the fail-open fallback for this turn; we now gate on
+      // the actual text instead of blindly creating a response.
+      if (callerTurnFallbackTimerRef.current) {
+        clearTimeout(callerTurnFallbackTimerRef.current);
+        callerTurnFallbackTimerRef.current = null;
+      }
       const itemId = event.item_id as string;
+      // This committed turn's transcript has now arrived (whatever its content) — clear the explicit
+      // pending-transcript signal for ANY outcome (valid / noise / empty), so the drain + inactivity
+      // checks don't wait on it forever.
+      if (itemId) pendingCallerTranscriptRef.current.delete(itemId);
       const text = ((event.transcript as string) ?? '').trim();
       if (!text) return;
       // Drop obvious noise/junk caller fragments (silence hallucinations, lone fillers, bare
@@ -267,34 +693,85 @@ export default function VoicePage() {
       // saved). Conservative: real short replies are kept. See looksLikeNoiseOrEmpty.
       if (looksLikeNoiseOrEmpty(text)) {
         console.log('[FD debug] caller fragment filtered as noise/junk:', JSON.stringify(text));
+        recordVoiceEvent('app:caller fragment filtered (noise/junk)', { itemId });
         return;
       }
+
+      // Layer 2 caller-intent gate. Obvious noise is already gone.
+      const intent = classifyCallerIntent(text);
+      // Risk 1: did the fail-open fallback already answer THIS exact caller turn?
+      const answeredByFallback = fallbackAnsweredItemsRef.current.has(itemId);
+      // Risk 2: was the assistant speaking when this turn BEGAN (snapshot), not merely now? The live
+      // state lags ~1-2s behind the caller, so a backchannel spoken over a short reply would
+      // otherwise leak through after the assistant goes idle. Default false → never over-suppress.
+      const busyAtSpeech = itemBusyAtSpeechRef.current.get(itemId) ?? false;
+      itemBusyAtSpeechRef.current.delete(itemId);
+      const liveBusy = responseInProgressRef.current || assistantAudioPlayingRef.current;
+
+      // A bare backchannel ("mhm"/"yeah") the caller spoke WHILE the assistant was talking is
+      // IGNORED — no reply, no state change, not saved (same early-return as noise) — even if its
+      // transcript only lands now. Skip this when the fallback already answered the turn (it was
+      // treated as a real turn; keep its text). When the assistant was idle at speech time, a
+      // "yeah"/"okay" is a real answer and flows through normally.
+      if (intent === 'backchannel' && busyAtSpeech && !answeredByFallback) {
+        console.log('[FD debug] caller backchannel ignored (assistant busy at speech start):', JSON.stringify(text));
+        recordVoiceEvent('app:caller turn ignored/backchannel', { itemId });
+        return;
+      }
+
       console.log('[FD debug] caller fragment accepted:', JSON.stringify(text));
+      recordVoiceEvent('app:valid caller turn accepted', { itemId, note: intent });
+      // A real exchange has happened → inactivity-end becomes allowed (after the assistant next goes
+      // idle). Caller is active right now, so cancel any armed idle hang-up.
+      substantiveCallerTurnSeenRef.current = true;
+      clearInactivityTimer();
       setTranscript((prev) =>
         prev.find((e) => e.id === itemId)
           ? prev.map((e) => (e.id === itemId ? { ...e, text } : e))
           : [...prev, { id: itemId, role: 'user', text }]
       );
 
-      // Auto end-call: if the caller clearly signals they're done, schedule a graceful hang-up
-      // after a short delay (lets the assistant speak its closing). Uses the same path as the
-      // End-call button. A later non-closing caller turn cancels a pending hang-up.
+      // Auto end-call (playback-aware): if the caller clearly signals they're done, let the assistant
+      // deliver its closing reply (created by the normal turn handler below), then end once that
+      // reply has finished PLAYING (onAssistantSettled) — never a blind fixed delay. A later
+      // non-closing caller turn cancels the pending end. A bounded fallback ends the call if the
+      // closing reply never completes.
       if (looksLikeEndCall(text)) {
-        if (statusRef.current === 'connected' && !autoEndTimerRef.current) {
+        if (statusRef.current === 'connected' && !endAfterReplyRef.current && !endRequestedRef.current) {
           console.log('[FD debug] end-call intent detected:', JSON.stringify(text));
-          console.log('[FD debug] auto end-call scheduled in', AUTO_END_DELAY_MS, 'ms');
-          autoEndTimerRef.current = setTimeout(() => {
-            autoEndTimerRef.current = null;
-            if (statusRef.current === 'connected') {
-              console.log(`[FD debug] auto-end triggered by phrase: ${JSON.stringify(text)}`);
-              stopCall('auto-end');
+          recordVoiceEvent('app:end-call cue detected — will end after closing reply', { itemId });
+          endAfterReplyRef.current = true;
+          clearInactivityTimer();
+          if (endCueFallbackTimerRef.current) clearTimeout(endCueFallbackTimerRef.current);
+          endCueFallbackTimerRef.current = setTimeout(() => {
+            endCueFallbackTimerRef.current = null;
+            if (endAfterReplyRef.current && !endRequestedRef.current && statusRef.current === 'connected') {
+              recordVoiceEvent('app:end-call cue fallback — forcing end');
+              requestEndCall('auto-end');
             }
-          }, AUTO_END_DELAY_MS);
+          }, END_CUE_MAX_MS);
         }
-      } else if (autoEndTimerRef.current) {
-        console.log('[FD debug] auto end-call cancelled — caller continued');
-        clearTimeout(autoEndTimerRef.current);
-        autoEndTimerRef.current = null;
+      } else if (endAfterReplyRef.current) {
+        console.log('[FD debug] end-call cancelled — caller continued');
+        recordVoiceEvent('app:end-call cue cancelled — caller continued');
+        endAfterReplyRef.current = false;
+        if (endCueFallbackTimerRef.current) { clearTimeout(endCueFallbackTimerRef.current); endCueFallbackTimerRef.current = null; }
+      }
+
+      // Layer 2: create exactly ONE assistant response for this caller turn.
+      if (answeredByFallback) {
+        // The fail-open fallback already created/queued a response for this exact turn — never send a
+        // second. The transcript text was still saved/updated above.
+        fallbackAnsweredItemsRef.current.delete(itemId);
+        console.log('[FD debug] late transcript for fallback-answered turn — no second response:', JSON.stringify(text));
+        recordVoiceEvent('app:late transcript after fallback — no second response', { itemId });
+      } else if (liveBusy) {
+        // Assistant still speaking — hold and answer once playback finishes (we never cut it off —
+        // interrupt_response is false).
+        deferCallerResponse();
+        recordVoiceEvent('app:response.create deferred (assistant speaking)', { itemId });
+      } else {
+        sendResponseCreate('caller turn');
       }
     }
 
@@ -394,6 +871,11 @@ export default function VoicePage() {
         // input_audio_transcription.completed handler fills it in place — keeping the caller
         // turn ahead of the reply instead of appending it after.
         if (itemId && role === 'user') {
+          // Risk 2: bind the speech-start busy snapshot to this caller item (first writer wins —
+          // committed may have already set it). Used later for backchannel suppression.
+          if (!itemBusyAtSpeechRef.current.has(itemId)) {
+            itemBusyAtSpeechRef.current.set(itemId, speechStartBusyRef.current);
+          }
           setTranscript((prev) =>
             prev.find((e) => e.id === itemId)
               ? prev
@@ -404,11 +886,11 @@ export default function VoicePage() {
     }
 
     // ── Response lifecycle tracking ──────────────────────────────────────────
-    // A response is "in progress" between response.created and its terminal event. We never send
-    // response.create ourselves (server VAD create_response:true auto-generates), but tracking the
-    // state lets us treat a duplicate-response error as recoverable.
+    // A response is "in progress" between response.created and its terminal event. Response creation
+    // is now app-owned (create_response:false) via sendResponseCreate — this state gates it.
     if (type === 'response.created') {
       responseInProgressRef.current = true;
+      clearInactivityTimer(); // assistant busy → no idle countdown
       console.log('[FD debug] response.created — active');
     }
     if (
@@ -419,17 +901,28 @@ export default function VoicePage() {
     ) {
       responseInProgressRef.current = false;
       console.log(`[FD debug] ${type} — response active cleared`);
-      // Recover a barged-over caller turn: a caller spoke while this response was active, so the
-      // server rejected the auto-response for it. Now that the response is done, ask for a fresh one
-      // so the caller's question is actually answered instead of silently dropped.
-      if (pendingResponseRef.current) {
-        pendingResponseRef.current = false;
-        const dc = dcRef.current;
-        if (dc && dc.readyState === 'open') {
-          console.log('[FD debug] re-issuing response.create for barged-over caller turn');
-          dc.send(JSON.stringify({ type: 'response.create' }));
-        }
-      }
+      // NB: response.done does NOT mean the caller heard the audio — playback may still be running.
+      // A held caller turn is only flushed once playback also finishes (onAssistantSettled re-checks
+      // assistantAudioPlaying, then handles end-after-reply / inactivity arming).
+      onAssistantSettled();
+    }
+
+    // ── Assistant audio playback state ───────────────────────────────────────
+    // Tracked separately from response.done — this is the real "caller heard the audio" signal. The
+    // raw output_audio_buffer.* events are already in the Layer 1 timeline; here we drive app state
+    // and flush any held caller turn once playback truly ends.
+    if (type === 'output_audio_buffer.started') {
+      assistantAudioPlayingRef.current = true;
+    }
+    if (type === 'output_audio_buffer.stopped') {
+      assistantAudioPlayingRef.current = false;
+      onAssistantSettled();
+    }
+    if (type === 'output_audio_buffer.cleared') {
+      // Server cleared playback (e.g. a competing speaker triggered VAD). We can't prevent the
+      // server-side clear here (Layer 2 scope); we just reflect state and flush any held turn.
+      assistantAudioPlayingRef.current = false;
+      onAssistantSettled();
     }
 
     if (type === 'error') {
@@ -444,12 +937,17 @@ export default function VoicePage() {
         code === 'conversation_already_has_active_response';
 
       if (isActiveResponseError) {
+        // Defensive only — should be rare now that the app gates response creation. Treat as a held
+        // turn: answer once the in-flight response + playback finish.
         responseInProgressRef.current = true;
-        pendingResponseRef.current = true; // answer this caller turn once the active response ends
-        activeResponseErrorCountRef.current += 1; // a caller barge-in the server rejected
+        deferCallerResponse();
+        activeResponseErrorCountRef.current += 1;
         console.log(
           `[FD debug] Realtime error (recoverable — keeping call alive): ${message} | count this call: ${activeResponseErrorCountRef.current}`,
         );
+        recordVoiceEvent('app:duplicate response blocked (active response in progress)', {
+          note: `count ${activeResponseErrorCountRef.current}`,
+        });
         return; // do NOT setStatus('error') or cleanup() — the session is still alive
       }
 
@@ -518,11 +1016,21 @@ export default function VoicePage() {
       `[FD debug] call summary — active-response (possible dropped) turns: ${activeResponseErrorCountRef.current}`,
     );
     responseInProgressRef.current = false;
-    pendingResponseRef.current = false;
+    assistantAudioPlayingRef.current = false;
+    pendingCallerResponseRef.current = false;
+    fallbackAnsweredItemsRef.current.clear();
+    itemBusyAtSpeechRef.current.clear();
+    speechStartBusyRef.current = false;
+    endRequestedRef.current = false;
+    endAfterReplyRef.current = false;
+    substantiveCallerTurnSeenRef.current = false;
+    pendingCallerTranscriptRef.current.clear();
+    clearTurnTimers();
+    clearEndTimers();
     clearConnectTimeout();
-    if (autoEndTimerRef.current) {
-      clearTimeout(autoEndTimerRef.current);
-      autoEndTimerRef.current = null;
+    if (maxDurationTimerRef.current) {
+      clearTimeout(maxDurationTimerRef.current);
+      maxDurationTimerRef.current = null;
     }
     // On error paths (connection drop etc.), force-stop MediaRecorder to release mic
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -542,13 +1050,19 @@ export default function VoicePage() {
   // ── Call lifecycle ────────────────────────────────────────────────────────
 
   async function startCall() {
+    // Guard against starting a second call over a live/connecting one — a new peer connection would
+    // orphan the previous session (leaked mic + Realtime minutes). The button is already hidden while
+    // live, so this is purely defensive.
+    if (statusRef.current === 'connecting' || statusRef.current === 'connected') {
+      console.warn('[FD debug] startCall ignored — a call is already active/connecting');
+      return;
+    }
     setErrorMsg('');
     setTranscript([]);
     setSavedCallId(null);
+    resetVoiceTimeline();
     endReasonRef.current = 'unknown';
-    responseInProgressRef.current = false;
-    activeResponseErrorCountRef.current = 0;
-    pendingResponseRef.current = false;
+    resetResponseState();
     setStatus('requesting');
 
     // 1. Request microphone access
@@ -654,6 +1168,16 @@ export default function VoicePage() {
         }
         setStatus('connected');
         setStartedAt(new Date());
+        // Cost safety net: end the call gracefully if it runs past the hard cap.
+        if (maxDurationTimerRef.current) clearTimeout(maxDurationTimerRef.current);
+        maxDurationTimerRef.current = setTimeout(() => {
+          maxDurationTimerRef.current = null;
+          if (statusRef.current === 'connected') {
+            console.log('[FD debug] max call duration reached → ending call');
+            recordVoiceEvent('app:max call duration reached — ending call');
+            requestEndCall('max-duration');
+          }
+        }, MAX_CALL_DURATION_MS);
       };
       dc.onmessage = (e) => {
         try {
@@ -712,8 +1236,10 @@ export default function VoicePage() {
     // Collect caller audio BEFORE stopping mic tracks — keeps final chunk in recorder
     const callerAudioBlob = await stopMediaRecorder();
     streamRef.current?.getTracks().forEach((t) => t.stop());
-    // Brief pause for in-flight Realtime assistant transcript events to arrive
-    await new Promise<void>((resolve) => setTimeout(resolve, 800));
+    // NB: no fixed post-stop delay here. End paths run through requestEndCall→drainThenStop, which
+    // already waited (bounded by END_DRAIN_MAX_MS) for the assistant to be idle AND for any committed
+    // caller turn's transcript (pendingCallerTranscriptRef). The only path that reaches stopCall
+    // without that drain is the not-connected edge in requestEndCall, where there is nothing in flight.
 
     const entries = transcriptRef.current;
     const callStart = startedAtRef.current;
@@ -961,16 +1487,15 @@ export default function VoicePage() {
     setSavedCallId(null);
     setStartedAt(null);
     setIsSpeaking(false);
+    resetVoiceTimeline();
     setExtraction(null);
     setExtractionErrorMsg(null);
     postCallGenRef.current++; // invalidate any in-flight post-call response
     endReasonRef.current = 'unknown';
-    responseInProgressRef.current = false;
-    activeResponseErrorCountRef.current = 0;
-    pendingResponseRef.current = false;
-    if (autoEndTimerRef.current) {
-      clearTimeout(autoEndTimerRef.current);
-      autoEndTimerRef.current = null;
+    resetResponseState(); // also resets end-of-call state + clears end timers
+    if (maxDurationTimerRef.current) {
+      clearTimeout(maxDurationTimerRef.current);
+      maxDurationTimerRef.current = null;
     }
   }
 
@@ -1053,7 +1578,7 @@ export default function VoicePage() {
               userSignedIn ? 'ok' : 'warn'
             }
             okText="Signed in"
-            warnText="Demo mode — sign in to save calls"
+            warnText="Demo mode — sign in to place and save test calls"
           />
           <ReadinessRow
             label="Business profile"
@@ -1134,15 +1659,29 @@ export default function VoicePage() {
                 </p>
               )}
 
-              {/* Action buttons */}
+              {/* Action buttons. In demo mode the server only mints sessions for the landing
+                  demo or signed-in users, so show a sign-in prompt instead of a Start button. */}
               <div className="flex items-center gap-3 flex-wrap">
                 {(status === 'idle' || status === 'error' || status === 'saved') && (
-                  <button
-                    onClick={status === 'saved' ? resetForNewCall : startCall}
-                    className="fd-btn fd-btn-accent"
-                  >
-                    {status === 'saved' ? 'Start new call' : 'Start voice call'} →
-                  </button>
+                  isDemo ? (
+                    <div className="w-full bg-amber-50 border border-amber-100 rounded-lg px-4 py-3 space-y-1.5">
+                      <p className="text-sm font-medium text-amber-800">
+                        Sign in to place a test call from the dashboard.
+                      </p>
+                      <p className="text-xs text-amber-700">
+                        Or try the live call demo on the{' '}
+                        <Link href="/#call-demo" className="font-semibold underline">home page</Link>{' '}
+                        — no account needed.
+                      </p>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={status === 'saved' ? resetForNewCall : startCall}
+                      className="fd-btn fd-btn-accent"
+                    >
+                      {status === 'saved' ? 'Start new call' : 'Start voice call'} →
+                    </button>
+                  )
                 )}
 
                 {isConnecting && (
@@ -1166,7 +1705,7 @@ export default function VoicePage() {
 
                 {isLive && (
                   <button
-                    onClick={() => stopCall('manual')}
+                    onClick={() => requestEndCall('manual')}
                     className="fd-btn"
                     style={{ backgroundColor: 'var(--danger)', color: 'var(--surface)' }}
                   >
@@ -1308,6 +1847,64 @@ export default function VoicePage() {
               <div ref={transcriptEndRef} />
             </div>
           </div>
+
+          {/* ── Voice event timeline (Layer 1 observability · dev only) ───── */}
+          {SHOW_TIMELINE && (
+            <div className="fd-card overflow-hidden">
+              <button
+                onClick={() => setShowTimeline((s) => !s)}
+                className="w-full px-5 py-4 flex items-center justify-between gap-3"
+                style={{ borderBottom: showTimeline ? '1px solid var(--hairline)' : 'none' }}
+              >
+                <span className="fd-eyebrow" style={{ color: 'var(--ink)' }}>
+                  Voice event timeline · dev
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="fd-eyebrow fd-numeric" style={{ color: 'var(--ink-muted)' }}>
+                    {voiceEvents.length} event{voiceEvents.length !== 1 ? 's' : ''}
+                  </span>
+                  <span className="text-xs text-gray-400">{showTimeline ? '▾' : '▸'}</span>
+                </span>
+              </button>
+              {showTimeline && (
+                <div className="p-3 max-h-[340px] overflow-y-auto font-mono text-[11px] leading-relaxed">
+                  {voiceEvents.length === 0 ? (
+                    <p className="text-gray-400 px-2 py-6 text-center">
+                      No events yet. Start a call to record the Realtime + app event timeline.
+                    </p>
+                  ) : (
+                    <table className="w-full border-collapse">
+                      <tbody>
+                        {voiceEvents.map((ev) => (
+                          <tr key={ev.seq} className="align-top">
+                            <td className="pr-2 py-0.5 text-gray-400 fd-numeric whitespace-nowrap text-right">
+                              {(ev.tMs / 1000).toFixed(2)}s
+                            </td>
+                            <td
+                              className="pr-2 py-0.5 whitespace-nowrap font-semibold"
+                              style={{ color: VOICE_CATEGORY_COLOR[voiceEventCategory(ev.type)] }}
+                            >
+                              {ev.type}
+                            </td>
+                            <td className="pr-2 py-0.5 text-gray-500">{ev.note}</td>
+                            <td className="py-0.5 text-gray-300 whitespace-nowrap">
+                              {[ev.role, shortId(ev.responseId), shortId(ev.itemId)].filter(Boolean).join(' ')}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                  <p className="text-gray-300 px-2 pt-3 mt-2 text-[10px] leading-relaxed" style={{ borderTop: '1px solid var(--hairline)' }}>
+                    Dev-only diagnostic. Watch for: <span style={{ color: VOICE_CATEGORY_COLOR.assistant }}>TEXT complete</span> firing
+                    before <span style={{ color: VOICE_CATEGORY_COLOR.audio }}>audio playback FINISHED</span> (cut-off),
+                    two <code>response.created</code> without a caller turn between (duplicate response),
+                    or caller VAD <span style={{ color: VOICE_CATEGORY_COLOR.caller }}>speech detected</span> while the assistant is still speaking.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* How it works */}
           <div className="px-5 py-4" style={{ backgroundColor: 'var(--surface-soft)', border: '1px solid var(--hairline)' }}>

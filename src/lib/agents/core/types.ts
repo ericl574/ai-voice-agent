@@ -14,6 +14,11 @@ export type VerticalId =
   | 'tutoring'
   | 'home_services';
 
+// Core caller details that post-call extraction can assess deterministically (they map to fields
+// ExtractionResult already returns). Richer vertical details (party size, address, reason) live in
+// notes/description and are NOT assessed here — see assessCollection() in call-pipeline/extraction.
+export type CollectableField = 'name' | 'phone' | 'date' | 'time' | 'service';
+
 export interface VerticalProfile {
   /** Stable id — matches businesses.business_type (except 'generic', the fallback). */
   id: VerticalId;
@@ -31,6 +36,17 @@ export interface VerticalProfile {
   interpretationExamples: string[];
   /** What to prioritise collecting for an appointment / service request in this vertical. */
   collectionPriorities: string;
+  /**
+   * Core fields the front desk should capture for an actionable request — the MINIMUM completeness
+   * schema and single source of truth for post-call completeness checks (assessCollection). The
+   * prompt renders these (promptBuilder.renderCoreFields) ALONGSIDE collectionPriorities, which
+   * remains the complementary, vertical-specific guidance (party size, vehicle, location, …) — the
+   * two are complementary, not duplicates. Keep them consistent. 'phone' is optional everywhere
+   * (product rule: never block a captured request on a missing phone).
+   */
+  requiredFields: CollectableField[];
+  /** Nice-to-have core fields (not flagged as missing for staff). */
+  optionalFields: CollectableField[];
   /** Things the agent must NOT assume or fabricate for this vertical. */
   forbiddenAssumptions: string[];
   /** Default wording when the relevant knowledge is missing. */

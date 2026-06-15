@@ -81,6 +81,7 @@ Short version (full detail: `docs/engineering-standards.md`):
    - Demo business → `getDemoBusiness()` (`src/lib/agents/demoBusinesses.ts`)
    - Appointment status → `effectiveStatus()` (`src/lib/appointments.ts`)
    - Prompt assembly → `buildSystemPrompt()` (`src/lib/agents/core/promptBuilder.ts`)
+   - Response creation (Layer 2, app-controlled) → `sendResponseCreate()` (`src/app/dashboard/voice/page.tsx`)
 3. **Replace, don't stack.** Fix the wrong path; if it stays as fallback, gate it clearly; if
    obsolete, remove it. No parallel/conflicting paths.
 4. **No broad refactors during feature fixes.** Keep changes small and reversible.

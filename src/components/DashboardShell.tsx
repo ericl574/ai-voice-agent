@@ -10,12 +10,14 @@ import { DashboardModeProvider } from '@/lib/dashboard-mode';
 // 1024px (phones + iPad portrait). Server layout passes the resolved business/demo flags in.
 export default function DashboardShell({
   businessName,
+  businessType,
   forceDemo,
   isSignedIn,
   showDemoBanner,
   children,
 }: {
   businessName?: string;
+  businessType?: string;
   forceDemo: boolean;
   isSignedIn: boolean;
   showDemoBanner: boolean;
@@ -57,7 +59,7 @@ export default function DashboardShell({
     <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'var(--paper)' }}>
       {/* Persistent sidebar — desktop / laptop / iPad landscape */}
       <div className="hidden lg:block h-full flex-shrink-0">
-        <Sidebar businessName={businessName} forceDemo={forceDemo} isSignedIn={isSignedIn} />
+        <Sidebar businessName={businessName} businessType={businessType} forceDemo={forceDemo} isSignedIn={isSignedIn} />
       </div>
 
       {/* Mobile drawer (<1024px) */}
@@ -79,6 +81,7 @@ export default function DashboardShell({
           >
             <Sidebar
               businessName={businessName}
+              businessType={businessType}
               forceDemo={forceDemo}
               isSignedIn={isSignedIn}
               variant="drawer"

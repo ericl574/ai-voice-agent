@@ -25,8 +25,10 @@ navigation never desyncs the sidebar from the page.
 
 - Each page seeds mock data (`MOCK_*`) when `isDemo`, and short-circuits its real Supabase fetch.
 - Demo writes are local-only/no-ops (e.g. reservations `if (demo) return;`; demo "Refresh" is a
-  fake timeout). The Voice page forces `canSave = false` in demo and shows "Calls are not saved in
-  demo mode" — the live test call still runs (key stays server-side), it just isn't persisted.
+  fake timeout). The Voice page forces `canSave = false` in demo. The **dashboard test call now
+  requires sign-in**: `/api/voice-session` mints sessions only for the landing demo (`demo: true`)
+  or authenticated users (anonymous cost-abuse lockdown, 2026-06-10), so in demo mode the voice
+  page replaces the Start button with a sign-in prompt that points at the landing-page live demo.
 
 ## Remaining debt (optional next steps)
 

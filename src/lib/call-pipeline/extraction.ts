@@ -33,6 +33,39 @@ export interface ExtractionResult {
   next_action: string;
 }
 
+// Result of checking how complete an actionable request is, against a vertical's required fields.
+export interface CollectionAssessment {
+  collected: string[];
+  missingRequired: string[];
+  hasEnoughToAct: boolean;
+}
+
+// Deterministic completeness check over the CORE fields extraction already captures
+// (name, phone, date, time, service). Post-call uses it to tell staff what is still MISSING on an
+// actionable request (appointment / service request). Coarse by design: richer vertical details
+// (party size, address, reason for visit) live in notes/description and are not assessed here.
+// `requiredFields` is INJECTED (the vertical's schema) so this module stays self-contained for the
+// Node QA runner — never import the vertical profiles here. 'phone' is treated like any other field;
+// keep it OUT of a vertical's requiredFields if phone should not block (product rule: it shouldn't).
+export function assessCollection(
+  extraction: ExtractionResult,
+  requiredFields: readonly string[],
+): CollectionAssessment {
+  const present: Record<string, boolean> = {
+    name: !!extraction.caller_name?.trim(),
+    phone: !!extraction.caller_phone?.trim(),
+    date: !!extraction.appointment?.requested_date,
+    time: !!extraction.appointment?.requested_time,
+    service:
+      !!extraction.appointment?.service?.trim() ||
+      !!extraction.service_request?.title?.trim(),
+  };
+  const required = Array.from(new Set(requiredFields));
+  const collected = required.filter((f) => present[f]);
+  const missingRequired = required.filter((f) => !present[f]);
+  return { collected, missingRequired, hasEnoughToAct: missingRequired.length === 0 };
+}
+
 // True when a caller turn is predominantly a phone number (≥7 digits, mostly digits).
 // Used to locate the caller turn whose lossy transcription should be replaced with the
 // phone number the Front Desk confirmed. Time/date turns ("8 PM", "tomorrow at 5") have

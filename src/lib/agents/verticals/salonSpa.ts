@@ -15,6 +15,8 @@ export const salonSpaProfile: VerticalProfile = {
     'A named stylist or technician = a preferred staff request for the appointment',
   ],
   collectionPriorities: 'Collect the desired service, preferred date/time, name, phone, and optional preferred staff member.',
+  requiredFields: ['name', 'service', 'date', 'time'],
+  optionalFields: ['phone'],
   forbiddenAssumptions: [
     'Do not invent prices or service durations',
     'Do not promise a specific stylist or time slot is available',

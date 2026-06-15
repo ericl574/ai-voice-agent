@@ -6,16 +6,33 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { BUSINESS_TYPE_OPTIONS } from '@/lib/agents/verticals/registry';
 
+// Mirrors the Settings page list (Canada + US). Default comes from the browser's timezone.
 const TIMEZONES = [
-  'America/New_York',
-  'America/Chicago',
-  'America/Denver',
+  'America/Vancouver',
+  'America/Edmonton',
+  'America/Regina',
+  'America/Winnipeg',
+  'America/Toronto',
+  'America/Halifax',
+  'America/St_Johns',
   'America/Los_Angeles',
+  'America/Denver',
   'America/Phoenix',
+  'America/Chicago',
+  'America/New_York',
   'America/Anchorage',
   'Pacific/Honolulu',
   'UTC',
 ];
+
+// Browser-detected timezone, falling back to America/Vancouver (same approach as Settings).
+function browserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Vancouver';
+  } catch {
+    return 'America/Vancouver';
+  }
+}
 
 const INPUT_CLASS =
   'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400';
@@ -54,7 +71,7 @@ function OnboardingPageInner() {
     email: '',
     city: '',
     region: '',
-    timezone: 'America/Chicago',
+    timezone: browserTimezone(),
     aiAgentName: 'Aria',
     greeting:
       "Thank you for calling {business_name}! I'm {agent_name}, your front desk assistant. How can I help you today?",
@@ -253,7 +270,8 @@ function OnboardingPageInner() {
                     onChange={(e) => set('timezone', e.target.value)}
                     className={INPUT_CLASS}
                   >
-                    {TIMEZONES.map((tz) => (
+                    {/* Keep the browser-detected zone selectable even when it's not in the preset list. */}
+                    {(TIMEZONES.includes(form.timezone) ? TIMEZONES : [form.timezone, ...TIMEZONES]).map((tz) => (
                       <option key={tz} value={tz}>
                         {tz}
                       </option>

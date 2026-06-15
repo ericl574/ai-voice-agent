@@ -8,6 +8,7 @@ import {
   hasAppointmentKeywords,
   hasServiceKeywords,
   applyKeywordFallbacks,
+  assessCollection,
   looksLikePhone,
   type ExtractionResult,
 } from '../src/lib/call-pipeline/extraction.ts';
@@ -495,6 +496,76 @@ test('callerLinesOnly isolates exactly the caller lines from buildTranscript out
   assert(transcript.includes(`${CALLER_LABEL} `), 'transcript has Caller label');
   assert(transcript.includes(`${FRONT_DESK_LABEL} `), 'transcript has Front desk label');
   eq(callerLinesOnly(transcript), "I'd like a table Friday Four", 'only caller lines, front-desk excluded');
+});
+
+// ── Suite 11: assessCollection — post-call completeness check (deterministic) ────
+// requiredFields are injected (the vertical schema) so the helper stays self-contained. These tests
+// mirror the vertical schemas without importing them — the unit boundary is the helper itself.
+console.log('\nSuite 11: assessCollection — required-field completeness');
+
+function extractionWith(over: Partial<ExtractionResult>): ExtractionResult {
+  return {
+    summary: '', intent: 'appointment_request',
+    caller_name: null, caller_phone: null,
+    appointment: null, service_request: null,
+    next_action: '',
+    ...over,
+  };
+}
+
+test('appointment with name+date+time → nothing missing (restaurant-style)', () => {
+  const a = assessCollection(
+    extractionWith({
+      caller_name: 'Eric',
+      appointment: { should_create: true, requested_date: '2026-06-12', requested_time: '19:00', service: null, notes: null },
+    }),
+    ['name', 'date', 'time'],
+  );
+  eq(a.missingRequired.length, 0, 'no missing');
+  eq(a.hasEnoughToAct, true, 'enough to act');
+});
+
+test('appointment missing time → time flagged, phone NOT flagged when not required', () => {
+  const a = assessCollection(
+    extractionWith({
+      caller_name: 'Eric', caller_phone: null,
+      appointment: { should_create: true, requested_date: '2026-06-12', requested_time: null, service: null, notes: null },
+    }),
+    ['name', 'date', 'time'],
+  );
+  eq(a.missingRequired.join(','), 'time', 'only time missing');
+  eq(a.hasEnoughToAct, false, 'not enough');
+});
+
+test('service_request title satisfies the "service" requirement (auto/clinic-style)', () => {
+  const a = assessCollection(
+    extractionWith({
+      intent: 'service_request', caller_name: 'Sam',
+      service_request: { should_create: true, title: 'Brake repair', description: null, urgency: 'normal' },
+    }),
+    ['name', 'service'],
+  );
+  eq(a.missingRequired.length, 0, 'name+service present');
+  eq(a.hasEnoughToAct, true, 'enough');
+});
+
+test('appointment.service also satisfies "service"; missing name flagged', () => {
+  const a = assessCollection(
+    extractionWith({
+      caller_name: null,
+      appointment: { should_create: true, requested_date: null, requested_time: null, service: 'Haircut', notes: null },
+    }),
+    ['name', 'service'],
+  );
+  eq(a.collected.join(','), 'service', 'service collected');
+  eq(a.missingRequired.join(','), 'name', 'name missing');
+});
+
+test('empty requiredFields → always enough; duplicates de-duped', () => {
+  eq(assessCollection(extractionWith({}), []).hasEnoughToAct, true, 'empty required');
+  const a = assessCollection(extractionWith({ caller_name: 'A' }), ['name', 'name']);
+  eq(a.collected.join(','), 'name', 'deduped collected');
+  eq(a.missingRequired.length, 0, 'no missing');
 });
 
 // ── Results ───────────────────────────────────────────────────────────────────

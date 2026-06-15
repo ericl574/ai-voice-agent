@@ -400,7 +400,7 @@ export const MOCK_CUSTOM_INSTRUCTIONS =
 export const SIMULATOR_SCRIPT = [
   {
     role: 'ai' as const,
-    text: "Thank you for calling Bella Notte Ristorante! I'm the AI assistant. How can I help you today?",
+    text: "Thank you for calling Bella Notte Ristorante! I'm Aria, the front desk assistant. How can I help you today?",
   },
   { role: 'caller' as const, text: "Hi, I'd like to make a reservation for this Saturday." },
   {

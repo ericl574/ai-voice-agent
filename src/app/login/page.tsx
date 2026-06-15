@@ -42,7 +42,7 @@ export default function LoginPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
             </svg>
           </div>
-          <span className="font-semibold text-gray-900">FrontDesk AI</span>
+          <span className="font-semibold text-gray-900">FrontDesk</span>
         </div>
 
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-8">
@@ -77,9 +77,14 @@ export default function LoginPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
-                  Password
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                    Password
+                  </label>
+                  <Link href="/reset-password" className="text-xs font-medium text-orange-600 hover:underline">
+                    Forgot password?
+                  </Link>
+                </div>
                 <input
                   type="password"
                   required

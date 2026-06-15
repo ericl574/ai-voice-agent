@@ -15,6 +15,8 @@ export const restaurantProfile: VerticalProfile = {
     'A party size ("for four", "two people") = number of guests for the reservation',
   ],
   collectionPriorities: 'For a reservation, collect: date, time, party size, name, and phone. Treat the reservation reason as dining unless the caller says otherwise.',
+  requiredFields: ['name', 'date', 'time'],
+  optionalFields: ['phone', 'service'],
   forbiddenAssumptions: [
     'Do not invent menu items, dishes, prices, or ingredients',
     'Do not promise specific wait times or table availability',

@@ -42,6 +42,8 @@ export default function ReservationsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Restaurants call these "Reservations"; every other vertical calls them "Appointments".
+  const [businessType, setBusinessType] = useState<string | null>(null);
   // Reservation confirmation mode lives here now (persisted in agent_config).
   const [agentConfig, setAgentConfig] = useState<AgentConfig>({});
   const mode: 'staff' | 'auto' = agentConfig.reservation_confirmation_mode === 'auto' ? 'auto' : 'staff';
@@ -61,6 +63,7 @@ export default function ReservationsPage() {
         return;
       }
       setBusinessId(business.id);
+      setBusinessType(business.business_type ?? null);
       setAgentConfig((business.agent_config as AgentConfig | null) ?? {});
       setToday(dateFromYMD(todayInTimeZone(business.timezone)));
       const { data, error: loadErr } = await supabase
@@ -252,7 +255,8 @@ export default function ReservationsPage() {
       <header className="mb-6 flex items-end justify-between gap-4 flex-wrap">
         <div>
           <h1 className="fd-display text-4xl sm:text-5xl mb-2" style={{ color: 'var(--ink)' }}>
-            Reservations
+            {/* Demo is the mock restaurant; real mode adapts to the business's vertical. */}
+            {demo || businessType === 'restaurant' ? 'Reservations' : 'Appointments'}
           </h1>
           <p className="text-[15px] max-w-2xl leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
             Pending and confirmed appointments, laid out by time.

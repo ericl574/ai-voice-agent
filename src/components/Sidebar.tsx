@@ -97,6 +97,7 @@ const BUSINESS_TYPE_LABELS: Record<string, string> = {
 
 export default function Sidebar({
   businessName,
+  businessType,
   forceDemo = false,
   isSignedIn = false,
   variant = 'default',
@@ -104,6 +105,7 @@ export default function Sidebar({
   onClose,
 }: {
   businessName?: string;
+  businessType?: string;
   forceDemo?: boolean;
   isSignedIn?: boolean;
   variant?: 'default' | 'drawer';
@@ -134,7 +136,8 @@ export default function Sidebar({
   // Demo vs real is resolved server-side and passed in via props — never derive it from the
   // client-only `userEmail`, which starts null and would flash demo identity on a real dashboard.
   const isDemo = forceDemo || !isSignedIn;
-  const displayName = isDemo ? MOCK_RESTAURANT.name : (businessName ?? MOCK_RESTAURANT.name);
+  // Real mode must never display the demo restaurant's name — neutral fallback if the fetch failed.
+  const displayName = isDemo ? MOCK_RESTAURANT.name : (businessName ?? 'Your business');
 
   return (
     <aside className="fd-sidebar w-60 h-full flex flex-col flex-shrink-0">
@@ -185,6 +188,12 @@ export default function Sidebar({
               ? pathname === '/dashboard'
               : pathname.startsWith(item.href);
           const badge = isDemo && item.demoCount ? item.demoCount : null;
+          // Restaurants (and the mock-restaurant demo) say "Reservations"; other verticals
+          // say "Appointments". Route stays /dashboard/reservations either way.
+          const label =
+            item.href === '/dashboard/reservations' && !isDemo && businessType !== 'restaurant'
+              ? 'Appointments'
+              : item.label;
 
           return (
             <Link
@@ -202,7 +211,7 @@ export default function Sidebar({
               >
                 {item.icon}
               </span>
-              <span className="flex-1 min-w-0 truncate">{item.label}</span>
+              <span className="flex-1 min-w-0 truncate">{label}</span>
               {badge != null && badge > 0 && (
                 <span
                   className="flex-shrink-0 fd-numeric text-[10px] font-semibold w-5 h-5 flex items-center justify-center rounded-full leading-none"
@@ -222,13 +231,11 @@ export default function Sidebar({
           className="rounded-[5px] p-3.5"
           style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--sidebar-line)' }}
         >
+          {/* No "Live" claim — there is no live phone line yet; this is just the workspace card. */}
           <div className="flex items-center gap-1.5 mb-2">
-            <span className="relative inline-flex w-1.5 h-1.5">
-              <span className="absolute inset-0 rounded-full animate-ping" style={{ backgroundColor: '#22c55e', opacity: 0.5 }} />
-              <span className="relative inline-block w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#16a34a' }} />
-            </span>
-            <span className="fd-eyebrow" style={{ color: '#22c55e', fontSize: '9px', letterSpacing: '0.22em' }}>
-              Live
+            <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--accent)' }} />
+            <span className="fd-eyebrow" style={{ color: 'var(--ink-muted)', fontSize: '9px', letterSpacing: '0.22em' }}>
+              Workspace
             </span>
           </div>
           <p className="text-[13px] font-semibold truncate leading-snug" style={{ color: 'var(--sidebar-strong)' }}>

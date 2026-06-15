@@ -15,6 +15,8 @@ export const genericProfile: VerticalProfile = {
     'If the caller wants to "come in", "stop by", or "book a time", treat it as an appointment/visit request',
   ],
   collectionPriorities: 'Collect what the caller needs, then name and phone. Confirm reason/date/time when it is an appointment.',
+  requiredFields: ['name'],
+  optionalFields: ['phone', 'date', 'time', 'service'],
   forbiddenAssumptions: [
     'Do not assume what services or products this business offers unless stated in the business info or knowledge base',
     'Do not assume this is a restaurant, salon, clinic, or any specific vertical',

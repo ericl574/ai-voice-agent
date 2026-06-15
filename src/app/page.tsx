@@ -11,7 +11,7 @@ const FEATURES = [
   {
     title: '24/7 Call Answering',
     description:
-      'The AI picks up calls any time — after hours, during peak periods, and on weekends. Reduce missed calls and voicemail pileups.',
+      'Your front desk picks up any time — after hours, during peak periods, and on weekends. Reduce missed calls and voicemail pileups.',
     icon: (
       <svg className="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
@@ -41,7 +41,7 @@ const FEATURES = [
   {
     title: 'Business Knowledge Base',
     description:
-      'Give the AI your hours, services, pricing guidance, and FAQs. It answers common questions from your own information.',
+      'Give your front desk your hours, services, pricing guidance, and FAQs. It answers common questions from your own information.',
     icon: (
       <svg className="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
@@ -49,9 +49,9 @@ const FEATURES = [
     ),
   },
   {
-    title: 'Customizable AI Agent',
+    title: 'Customizable Front Desk',
     description:
-      "Set the agent's name, greeting, tone, and response rules. Configured for your business — not a one-size-fits-all template.",
+      "Set your front desk's name, greeting, tone, and response rules. Configured for your business — not a one-size-fits-all template.",
     icon: (
       <svg className="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
@@ -77,13 +77,13 @@ const STEPS = [
     number: '01',
     title: 'Set up your business',
     description:
-      'Add your business info, hours, services, FAQs, and agent instructions. The AI uses this to answer callers accurately.',
+      'Add your business info, hours, services, FAQs, and front desk instructions. Your front desk uses this to answer callers accurately.',
   },
   {
     number: '02',
-    title: 'AI answers and collects',
+    title: 'Your front desk answers',
     description:
-      'The AI handles common questions, captures appointment requests, and logs service inquiries — any time of day.',
+      'It handles common questions, captures appointment requests, and logs service inquiries — any time of day.',
   },
   {
     number: '03',
@@ -161,7 +161,7 @@ const BENEFITS = [
   {
     title: 'Stop missing calls',
     description:
-      "Every unanswered call is a potential customer lost. FrontDesk AI picks up when you can't — after hours, during rushes, and on weekends.",
+      "Every unanswered call is a potential customer lost. FrontDesk picks up when you can't — after hours, during rushes, and on weekends.",
     icon: (
       <svg className="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
@@ -171,7 +171,7 @@ const BENEFITS = [
   {
     title: 'Free up your staff',
     description:
-      'Repetitive questions and routine call handling pull your team away from the work that matters. The AI handles the predictable calls.',
+      'Repetitive questions and routine call handling pull your team away from the work that matters. Your front desk handles the predictable calls.',
     icon: (
       <svg className="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -254,9 +254,15 @@ export default async function LandingPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
                 </svg>
               </div>
-              <span className="font-semibold text-white">FrontDesk AI</span>
+              <span className="font-semibold text-white">FrontDesk</span>
             </div>
             <div className="flex items-center gap-5">
+              <Link
+                href="/pricing"
+                className="text-sm font-medium text-white/80 hover:text-white transition-colors"
+              >
+                Pricing
+              </Link>
               <Link
                 href={signInHref}
                 className="text-sm font-medium text-white/80 hover:text-white transition-colors"
@@ -322,10 +328,10 @@ export default async function LandingPage() {
           <div className="max-w-6xl mx-auto px-4 sm:px-6">
             <div className="text-center mb-12">
               <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-3">
-                What FrontDesk AI handles
+                What FrontDesk handles
               </h2>
               <p className="text-gray-500 max-w-xl mx-auto">
-                A complete AI front desk — from answering calls to organizing follow-ups for your team.
+                A complete virtual front desk — from answering calls to organizing follow-ups for your team.
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -350,11 +356,11 @@ export default async function LandingPage() {
           <div className="max-w-6xl mx-auto px-4 sm:px-6">
             <div className="text-center mb-12">
               <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-3">
-                Watch the AI take a call
+                Hear your front desk take a call
               </h2>
               <p className="text-gray-500 max-w-xl mx-auto">
                 Watch a sample call play out — or <span className="font-semibold text-gray-700">Try It Yourself</span>,
-                pick your business type, and talk to the AI agent live.
+                pick your business type, and talk to the front desk live.
               </p>
             </div>
             <CallSimulatorDemo />
@@ -391,7 +397,7 @@ export default async function LandingPage() {
                   <div className="pb-8">
                     <p className="font-semibold text-gray-900 mb-1">Customer calls your business</p>
                     <p className="text-sm text-gray-500 leading-relaxed">
-                      FrontDesk AI picks up and greets them using your business name and custom greeting.
+                      FrontDesk picks up and greets them using your business name and custom greeting.
                     </p>
                   </div>
                 </div>
@@ -407,9 +413,9 @@ export default async function LandingPage() {
                     <div className="w-px flex-1 bg-orange-100 my-1" />
                   </div>
                   <div className="pb-8">
-                    <p className="font-semibold text-gray-900 mb-1">AI collects the details</p>
+                    <p className="font-semibold text-gray-900 mb-1">The front desk collects the details</p>
                     <p className="text-sm text-gray-500 leading-relaxed">
-                      The AI asks for their name, service needed, preferred time, and any other details you&apos;ve configured it to collect.
+                      It asks for their name, service needed, preferred time, and any other details you&apos;ve configured it to collect.
                     </p>
                   </div>
                 </div>
@@ -427,7 +433,7 @@ export default async function LandingPage() {
                   <div className="pb-8">
                     <p className="font-semibold text-gray-900 mb-1">A request is logged automatically</p>
                     <p className="text-sm text-gray-500 leading-relaxed">
-                      FrontDesk AI creates a structured request — with caller info, intent, AI summary, and transcript — marked pending for staff review.
+                      FrontDesk creates a structured request — with caller info, intent, call summary, and transcript — marked pending for staff review.
                     </p>
                   </div>
                 </div>
@@ -507,19 +513,19 @@ export default async function LandingPage() {
                       </p>
                       <div className="space-y-2">
                         <div className="flex gap-2.5 items-start">
-                          <span className="text-xs font-bold text-orange-500 flex-shrink-0 mt-0.5 w-6">AI</span>
+                          <span className="text-xs font-bold text-orange-500 flex-shrink-0 mt-0.5 w-9">Desk</span>
                           <p className="text-xs text-gray-600 leading-relaxed">
                             &ldquo;Hi, thanks for calling Valley Auto. How can I help you today?&rdquo;
                           </p>
                         </div>
                         <div className="flex gap-2.5 items-start">
-                          <span className="text-xs font-bold text-gray-400 flex-shrink-0 mt-0.5 w-6">You</span>
+                          <span className="text-xs font-bold text-gray-400 flex-shrink-0 mt-0.5 w-9">You</span>
                           <p className="text-xs text-gray-600 leading-relaxed">
                             &ldquo;Hi, I&apos;d like to book an oil change for tomorrow morning if possible.&rdquo;
                           </p>
                         </div>
                         <div className="flex gap-2.5 items-start">
-                          <span className="text-xs font-bold text-orange-500 flex-shrink-0 mt-0.5 w-6">AI</span>
+                          <span className="text-xs font-bold text-orange-500 flex-shrink-0 mt-0.5 w-9">Desk</span>
                           <p className="text-xs text-gray-600 leading-relaxed">
                             &ldquo;I&apos;ll log that for you. What time works best — 9 AM or 10 AM?&rdquo;
                           </p>
@@ -553,7 +559,7 @@ export default async function LandingPage() {
                 How it works
               </h2>
               <p className="text-gray-500 max-w-xl mx-auto">
-                Simple setup. We can help configure it. The AI handles the calls. Your staff handles what matters.
+                Simple setup. We can help configure it. Your front desk handles the calls. Your staff handles what matters.
               </p>
             </div>
 
@@ -578,7 +584,7 @@ export default async function LandingPage() {
               <div>
                 <p className="text-sm font-semibold text-gray-900">Not sure where to start?</p>
                 <p className="text-sm text-gray-600 mt-0.5">
-                  We can help configure the AI agent for your business — from the knowledge base to the greeting and response rules.
+                  We can help configure your front desk — from the knowledge base to the greeting and response rules.
                 </p>
               </div>
             </div>
@@ -592,7 +598,7 @@ export default async function LandingPage() {
               Built for service businesses
             </h2>
             <p className="text-gray-500 mb-10 max-w-xl mx-auto">
-              FrontDesk AI works for any business that takes appointment calls or handles customer inquiries by phone.
+              FrontDesk works for any business that takes appointment calls or handles customer inquiries by phone.
             </p>
             <div className="flex flex-wrap justify-center gap-3 max-w-3xl mx-auto">
               {VERTICALS.map((v) => (
@@ -616,7 +622,7 @@ export default async function LandingPage() {
                 Why businesses use it
               </h2>
               <p className="text-gray-500 max-w-xl mx-auto">
-                The front desk is where customers form their first impression. FrontDesk AI helps you make it a good one.
+                The front desk is where customers form their first impression. FrontDesk helps you make it a good one.
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -642,7 +648,7 @@ export default async function LandingPage() {
         <section className="border-t border-gray-100 py-20">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 text-center">
             <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-4">
-              Ready to see your AI front desk in action?
+              Ready to see your virtual front desk in action?
             </h2>
             <p className="text-gray-500 mb-8 max-w-lg mx-auto">
               Explore the demo dashboard or watch a live call demo — no sign-up required.
@@ -671,8 +677,14 @@ export default async function LandingPage() {
 
       {/* ── Footer ─────────────────────────────────────────────────────────── */}
       <footer className="border-t border-gray-100 py-6 bg-white">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 text-center text-xs text-gray-400">
-          FrontDesk AI — AI voice agent for service businesses. Demo build.
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-400">
+          <span>© {new Date().getFullYear()} FrontDesk — a virtual front desk for service businesses.</span>
+          <span className="flex items-center gap-5">
+            <Link href="/pricing" className="hover:text-gray-600 transition-colors">Pricing</Link>
+            <Link href="/privacy" className="hover:text-gray-600 transition-colors">Privacy</Link>
+            <Link href="/terms" className="hover:text-gray-600 transition-colors">Terms</Link>
+            <Link href="/contact" className="hover:text-gray-600 transition-colors">Contact</Link>
+          </span>
         </div>
       </footer>
 

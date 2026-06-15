@@ -56,8 +56,9 @@ export async function POST(req: NextRequest) {
     });
 
     if (!res.ok) {
-      const detail = await res.text();
-      return NextResponse.json({ error: `Voice preview failed (${res.status}): ${detail}` }, { status: 502 });
+      // Log the upstream detail server-side; never forward provider error bodies to the browser.
+      console.error(`[FD] voice-preview upstream error (${res.status}):`, await res.text());
+      return NextResponse.json({ error: 'Voice preview is unavailable right now — please try again.' }, { status: 502 });
     }
 
     const audio = await res.arrayBuffer();

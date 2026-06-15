@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { BATCH_TRANSCRIPTION_MODEL, TRANSCRIPTION_LANGUAGE_HINT } from '@/lib/call-pipeline/constants';
 import { CALLER_LABEL } from '@/lib/call-pipeline/transcript';
+import { rateLimit, clientKey } from '@/lib/rate-limit';
 
 // FALLBACK transcription path. The live Realtime transcript is the primary source of truth (see
 // buildTranscript + docs/call-pipeline.md §4); this route only runs when no usable Realtime caller
@@ -41,6 +42,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // Throttle: each accepted request costs a Whisper transcription. This is a fallback path
+  // (at most one request per finished call), so 10/min/user only stops runaway loops.
+  const rl = rateLimit(`transcribe-call:${clientKey(req, user.id)}`, 10, 60_000);
+  if (!rl.ok) {
+    console.warn('[FD] transcribe-call rate limited:', clientKey(req, user.id));
+    return NextResponse.json(
+      { error: 'Too many requests — please wait a moment and try again.' },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
+    );
+  }
+
   const { data: callRow } = await supabase
     .from('calls')
     .select('id, transcript')
@@ -69,9 +81,10 @@ export async function POST(req: NextRequest) {
   });
 
   if (!whisperRes.ok) {
-    const errText = await whisperRes.text();
+    // Log the upstream detail server-side; never forward provider error bodies to the browser.
+    console.error(`[FD] transcribe-call upstream error (${whisperRes.status}):`, await whisperRes.text());
     return NextResponse.json(
-      { error: `Whisper transcription failed (${whisperRes.status}): ${errText}` },
+      { error: 'Transcription failed. The call is saved; the transcript can be reviewed manually.' },
       { status: 502 },
     );
   }

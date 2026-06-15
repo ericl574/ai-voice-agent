@@ -15,6 +15,8 @@ export const tutoringProfile: VerticalProfile = {
     'A grade or age ("my son is in 7th grade") = the student level',
   ],
   collectionPriorities: 'Collect the subject, student level/grade, preferred schedule, name, and phone.',
+  requiredFields: ['name', 'service'],
+  optionalFields: ['phone', 'date', 'time'],
   forbiddenAssumptions: [
     'Do not invent pricing, tutor availability, or guaranteed outcomes',
     'Do not assume in-person vs online unless stated in the knowledge base',

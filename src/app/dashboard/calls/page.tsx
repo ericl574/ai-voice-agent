@@ -28,6 +28,7 @@ interface DbCall {
   duration_seconds?: number | null;
   status?: string | null;
   summary?: string | null;
+  needs_staff_followup?: boolean | null;
   created_at: string;
 }
 
@@ -291,6 +292,9 @@ function CallRow({
 
         {/* Meta column */}
         <div className="flex flex-col items-end gap-1.5 flex-shrink-0 pt-0.5">
+          {call.needs_staff_followup && (
+            <span className="fd-pill fd-pill-warn">Follow-up</span>
+          )}
           {status && <span className={statusPillClass(status)}>{cap(status)}</span>}
           <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--ink-muted)' }}>
             <span className="fd-numeric">{time}</span>
@@ -520,6 +524,7 @@ function RealCallHistoryPage({
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [transcripts, setTranscripts] = useState<Record<string, TranscriptState>>({});
+  const [followupOnly, setFollowupOnly] = useState(false);
 
   async function toggleExpand(callId: string) {
     // Collapse if already open
@@ -554,8 +559,10 @@ function RealCallHistoryPage({
     }
   }
 
+  const followupCount = calls.filter((c) => c.needs_staff_followup).length;
+  const visibleCalls = followupOnly ? calls.filter((c) => c.needs_staff_followup) : calls;
   const stats = computeStats(calls);
-  const groups = groupCallsByDate(calls);
+  const groups = groupCallsByDate(visibleCalls);
 
   return (
     <div className="w-full max-w-5xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
@@ -577,6 +584,32 @@ function RealCallHistoryPage({
       ) : (
         <>
           <StatStrip stats={stats} />
+
+          {/* Needs-follow-up filter — surfaces calls extraction flagged for staff action. */}
+          {followupCount > 0 && (
+            <div className="flex items-center gap-2 mb-5">
+              <button
+                onClick={() => setFollowupOnly(false)}
+                className={`fd-pill ${followupOnly ? 'fd-pill-muted' : 'fd-pill-info'}`}
+              >
+                All calls
+              </button>
+              <button
+                onClick={() => setFollowupOnly(true)}
+                className={`fd-pill ${followupOnly ? 'fd-pill-warn' : 'fd-pill-muted'}`}
+              >
+                Needs follow-up · {followupCount}
+              </button>
+            </div>
+          )}
+
+          {visibleCalls.length === 0 ? (
+            <div className="fd-card px-6 py-12 text-center">
+              <p className="text-[15px]" style={{ color: 'var(--ink-soft)' }}>
+                No calls need follow-up right now.
+              </p>
+            </div>
+          ) : (
           <div className="space-y-10 fd-stagger">
             {groups.map((group) => (
               <section key={group.key}>
@@ -602,6 +635,7 @@ function RealCallHistoryPage({
               </section>
             ))}
           </div>
+          )}
         </>
       )}
     </div>

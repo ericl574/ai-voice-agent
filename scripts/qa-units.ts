@@ -16,8 +16,23 @@ import {
 } from '../src/lib/voice/voices.ts';
 
 import { looksLikeNoiseOrEmpty } from '../src/lib/call-pipeline/noise.ts';
+import { classifyCallerIntent } from '../src/lib/call-pipeline/intent.ts';
+import { looksLikeEndCall } from '../src/lib/call-pipeline/endCall.ts';
 import { buildTranscript, countCallerTurns } from '../src/lib/call-pipeline/transcript.ts';
 import { nowInTimeZone } from '../src/lib/call-pipeline/time.ts';
+
+// Vertical profiles imported DIRECTLY (each file's only import is `import type`, stripped at
+// runtime), so the Node QA runner can load them — unlike registry.ts, which has extensionless
+// cross-file value imports the runner can't resolve.
+import { genericProfile } from '../src/lib/agents/verticals/generic.ts';
+import { restaurantProfile } from '../src/lib/agents/verticals/restaurant.ts';
+import { autoRepairProfile } from '../src/lib/agents/verticals/autoRepair.ts';
+import { salonSpaProfile } from '../src/lib/agents/verticals/salonSpa.ts';
+import { clinicProfile } from '../src/lib/agents/verticals/clinic.ts';
+import { tutoringProfile } from '../src/lib/agents/verticals/tutoring.ts';
+import { homeServicesProfile } from '../src/lib/agents/verticals/homeServices.ts';
+import { GLOBAL_RULES } from '../src/lib/agents/core/globalRules.ts';
+import type { VerticalProfile, CollectableField } from '../src/lib/agents/core/types.ts';
 
 // ── Minimal test runner (mirrors qa-call-pipeline.ts) ────────────────────────
 
@@ -231,6 +246,133 @@ test('countCallerTurns — counts only real caller speech', () => {
     2,
     'two real caller turns',
   );
+});
+
+// ── classifyCallerIntent — Layer 2 caller-intent gate ─────────────────────────
+// Runs AFTER looksLikeNoiseOrEmpty, so it only sees plausibly-real caller text. Conservative:
+// 'backchannel' only for whole-fragment bare acknowledgements (suppressed only while the assistant
+// speaks); explicit control phrases → 'interruption'; everything else → 'substantive'.
+
+test('classifyCallerIntent — bare acknowledgements → backchannel', () => {
+  for (const s of ['mhm', 'mm-hmm', 'uh-huh', 'yeah', 'yep', 'ok', 'okay', 'right', 'sure', 'got it', 'I see', 'hmm', 'oh okay']) {
+    eq(classifyCallerIntent(s), 'backchannel', `backchannel: ${JSON.stringify(s)}`);
+  }
+});
+
+test('classifyCallerIntent — backchannel only as WHOLE fragment, not substring', () => {
+  // A real answer that merely starts with an ack word must stay substantive.
+  eq(classifyCallerIntent('okay tomorrow at five'), 'substantive', 'okay + content');
+  eq(classifyCallerIntent('yeah book me for Friday'), 'substantive', 'yeah + content');
+  eq(classifyCallerIntent('sure, four people'), 'substantive', 'sure + content');
+});
+
+test('classifyCallerIntent — meaningful short answers stay substantive', () => {
+  // "no" is NEVER a backchannel; real one-word/value answers are substantive.
+  for (const s of [
+    'no', 'no thanks', 'five', 'five people', 'Eric', 'Friday', '2 PM', 'tomorrow',
+    'tonight', 'evening', 'noon', 'two', 'a haircut', '555-1234', '6045551234',
+  ]) {
+    eq(classifyCallerIntent(s), 'substantive', `substantive: ${JSON.stringify(s)}`);
+  }
+});
+
+test('classifyCallerIntent — explicit control phrases → interruption', () => {
+  for (const s of ['wait', 'stop', 'hold on', 'hang on', 'no actually', 'never mind', 'cancel that', 'I want to change that', 'back to English', 'can you speak English']) {
+    eq(classifyCallerIntent(s), 'interruption', `interruption: ${JSON.stringify(s)}`);
+  }
+});
+
+test('classifyCallerIntent — non-Latin / code-switched text stays substantive', () => {
+  for (const s of ['三位', '我想改预订时间', '내일 예약하고 싶어요', 'I want to book 明天上午十点']) {
+    eq(classifyCallerIntent(s), 'substantive', `non-Latin substantive: ${JSON.stringify(s)}`);
+  }
+});
+
+// ── looksLikeEndCall — context-free hard end-cue detection (freeze) ───────────
+// Context-free: matches ONLY unambiguous hard end cues. Bare "thanks"/"no thanks" are intentionally
+// NOT hard end cues — their natural close comes from prompt behavior + the playback-aware/inactivity
+// end flow, not this helper.
+
+test('looksLikeEndCall — positive hard end cues → true', () => {
+  for (const s of ["bye", "that's all", "nothing else", "no that's it", "I'm done", "we're done", "hang up", "goodbye", "you can hang up"]) {
+    assert(looksLikeEndCall(s) === true, `should end: ${JSON.stringify(s)}`);
+  }
+});
+
+test('looksLikeEndCall — bare "thanks" is NOT a context-free hard end cue', () => {
+  // The helper can't know the assistant just asked "anything else?"; bare thanks closes via prompt +
+  // playback-aware/inactivity flow instead.
+  for (const s of ["thanks", "thank you", "thanks so much", "no thanks"]) {
+    assert(looksLikeEndCall(s) === false, `should NOT hard-end: ${JSON.stringify(s)}`);
+  }
+});
+
+test('looksLikeEndCall — a real follow-up question is never an end', () => {
+  for (const s of ["no, what are your hours?", "actually one more thing", "thanks, can you check Friday?", "bye, do you take walk-ins?"]) {
+    assert(looksLikeEndCall(s) === false, `should NOT end (follow-up): ${JSON.stringify(s)}`);
+  }
+});
+
+// ── Vertical required-fields schema + caution #1 guard (Batch 2) ──────────────
+// The requiredFields schema (post-call completeness SoT) must stay sane, AND must NOT cause the
+// prompt to lose vertical-specific detail — those details still live in collectionPriorities /
+// suggestedDetailFields. This suite locks both invariants deterministically.
+
+const ALL_PROFILES: VerticalProfile[] = [
+  genericProfile, restaurantProfile, autoRepairProfile, salonSpaProfile,
+  clinicProfile, tutoringProfile, homeServicesProfile,
+];
+const VALID_FIELDS = new Set<CollectableField>(['name', 'phone', 'date', 'time', 'service']);
+
+test('requiredFields/optionalFields use only valid core keys, and are disjoint', () => {
+  for (const p of ALL_PROFILES) {
+    for (const f of p.requiredFields) assert(VALID_FIELDS.has(f), `${p.id} required has invalid key ${f}`);
+    for (const f of p.optionalFields) assert(VALID_FIELDS.has(f), `${p.id} optional has invalid key ${f}`);
+    const overlap = p.requiredFields.filter((f) => p.optionalFields.includes(f));
+    eq(overlap.length, 0, `${p.id} required/optional overlap`);
+  }
+});
+
+test('phone is NEVER a required field (product rule: never block on missing phone)', () => {
+  for (const p of ALL_PROFILES) {
+    assert(!p.requiredFields.includes('phone'), `${p.id} must not require phone`);
+  }
+});
+
+test('caution #1 — vertical-specific details remain in prompt guidance (not lost to the core schema)', () => {
+  // requiredFields is COARSE; these industry specifics must still be present in the prompt text.
+  const expect: Array<{ p: VerticalProfile; needle: string }> = [
+    { p: restaurantProfile, needle: 'party size' },
+    { p: autoRepairProfile, needle: 'vehicle' },
+    { p: homeServicesProfile, needle: 'location' },
+    { p: clinicProfile, needle: 'reason' },
+    { p: tutoringProfile, needle: 'subject' },
+    { p: salonSpaProfile, needle: 'staff' },
+  ];
+  for (const { p, needle } of expect) {
+    const text = `${p.collectionPriorities} ${p.suggestedDetailFields.join(' ')}`.toLowerCase();
+    assert(text.includes(needle), `${p.id} prompt guidance must still mention "${needle}"`);
+  }
+});
+
+// ── GLOBAL_RULES — load-bearing safety lines (cheap guard) ────────────────────
+// Coarse substring checks only: the prompt wording may evolve freely, but these safety-critical
+// concepts must never silently disappear from the core rules.
+
+test('GLOBAL_RULES — safety-critical lines are present', () => {
+  const rules = GLOBAL_RULES.toLowerCase();
+  const fragments: Array<[string, string]> = [
+    ['never claim to be human', 'identity honesty'],
+    ['phone number is always optional', 'phone never blocks a request'],
+    ['never invent, pad, correct, reformat', 'phone digits are exact'],
+    ['credit card numbers', 'sensitive-data decline (cards)'],
+    ['passwords', 'sensitive-data decline (passwords)'],
+    ['stay in english', 'language default stability'],
+    ['until the caller clearly switches again', 'language switch hysteresis'],
+  ];
+  for (const [needle, label] of fragments) {
+    assert(rules.includes(needle), `GLOBAL_RULES must contain "${needle}" (${label})`);
+  }
 });
 
 // ── nowInTimeZone — current business-local time for the prompt ─────────────────

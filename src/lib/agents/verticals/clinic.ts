@@ -15,6 +15,8 @@ export const clinicProfile: VerticalProfile = {
     'A described symptom or pain = the visit reason — note it, do not interpret it medically',
   ],
   collectionPriorities: 'Collect name, phone, requested service/reason, and preferred time. Escalate urgent or safety concerns to staff.',
+  requiredFields: ['name', 'service'],
+  optionalFields: ['phone', 'date', 'time'],
   forbiddenAssumptions: [
     'Do NOT give medical advice or a diagnosis. Keep responses safe and non-diagnostic',
     'Do not confirm coverage, costs, or treatment — the team and provider handle that',

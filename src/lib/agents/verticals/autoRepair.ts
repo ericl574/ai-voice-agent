@@ -15,6 +15,8 @@ export const autoRepairProfile: VerticalProfile = {
     'A described symptom (noise, leak, warning light) = the reason for the service',
   ],
   collectionPriorities: 'Collect the service/issue, then vehicle make, model, and year, preferred date/time, name, and phone.',
+  requiredFields: ['name', 'service'],
+  optionalFields: ['phone', 'date', 'time'],
   forbiddenAssumptions: [
     'Do not diagnose the problem with certainty — describe it as something the technician will inspect',
     'Do not quote repair prices or costs unless they are provided in the knowledge base',

@@ -15,6 +15,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   let isSignedIn = false;
   let businessName: string | undefined;
+  let businessType: string | undefined;
 
   if (isConfigured) {
     const supabase = await createClient();
@@ -25,6 +26,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         const business = await getActiveBusiness(supabase);
         if (!business) redirect('/onboarding');
         businessName = business.name;
+        businessType = business.business_type ?? undefined;
       }
     }
   }
@@ -32,6 +34,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   return (
     <DashboardShell
       businessName={businessName}
+      businessType={businessType}
       forceDemo={isDemoMode}
       isSignedIn={isSignedIn}
       showDemoBanner={isDemoMode || !isSignedIn}

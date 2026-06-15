@@ -5,6 +5,7 @@ import { MOCK_RESTAURANT } from '@/lib/mock-data';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { useDashboardMode } from '@/lib/dashboard-mode';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
+import BillingCard from '@/components/BillingCard';
 import type { AgentConfig } from '@/lib/supabase/businesses';
 import {
   ENABLED_VOICE_OPTIONS,
@@ -172,7 +173,7 @@ export default function SettingsPage() {
     <div className="w-full max-w-2xl mx-auto px-6 sm:px-10 lg:px-12 pt-10 pb-16">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
-        <p className="text-sm text-gray-500 mt-1">Configure your business and AI assistant settings.</p>
+        <p className="text-sm text-gray-500 mt-1">Configure your business and front desk settings.</p>
       </div>
 
       <form onSubmit={handleSave} className="space-y-6">
@@ -225,12 +226,12 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* ── AI Assistant (greeting / voice) ─────────────────── */}
+        {/* ── Front desk (greeting / voice) ─────────────────── */}
         <div className="fd-card overflow-hidden">
           <div className="px-5 py-4 border-b fd-hairline">
-            <h2 className="font-semibold text-gray-900">AI Agent Configuration</h2>
+            <h2 className="font-semibold text-gray-900">Front Desk Configuration</h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Voice, greeting, and behavior — saved to your account and used by your voice agent.
+              Voice, greeting, and behavior — saved to your account and used by your front desk on every call.
             </p>
           </div>
           <div className="p-5 space-y-4">
@@ -397,7 +398,7 @@ export default function SettingsPage() {
                 className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none"
               />
               <p className="text-xs text-gray-400 mt-1">
-                When should the AI escalate to a human? e.g. Escalate urgent or angry callers.
+                When should the front desk hand off to your staff? e.g. Escalate urgent or angry callers.
               </p>
             </div>
 
@@ -450,6 +451,9 @@ export default function SettingsPage() {
 
           </div>
         </div>
+
+        {/* ── Plan & billing (Stripe) ─────────────────────────── */}
+        <BillingCard />
 
         {/* ── Notifications ───────────────────────────────────── */}
         <div className="fd-card overflow-hidden">

@@ -1,8 +1,29 @@
 import type { AgentConfig, Business } from '@/lib/supabase/businesses';
-import type { KnowledgeRow, VerticalProfile } from './types';
+import type { KnowledgeRow, VerticalProfile, CollectableField } from './types';
 import { GLOBAL_RULES } from './globalRules';
 import { getVertical } from '../verticals/registry';
 import { todayInTimeZone, nowInTimeZone } from '@/lib/call-pipeline/time';
+
+// Readable labels for the core, post-call-assessable fields (see CollectableField / assessCollection).
+const CORE_FIELD_LABEL: Record<CollectableField, string> = {
+  name: 'caller name',
+  phone: 'phone number',
+  date: 'date',
+  time: 'time',
+  service: 'what they need (service / reason)',
+};
+
+// Renders the per-vertical required/optional CORE fields from the schema (the single source of truth
+// for post-call completeness). This is the MINIMUM completeness contract — it complements, and does
+// NOT replace, the vertical's collectionPriorities (party size, vehicle, location, etc.), which still
+// carry the industry-specific details.
+function renderCoreFields(profile: VerticalProfile): string {
+  const req = profile.requiredFields.map((f) => CORE_FIELD_LABEL[f]);
+  const opt = profile.optionalFields.map((f) => CORE_FIELD_LABEL[f]);
+  const reqLine = req.length ? req.join(', ') : 'whatever the caller needs';
+  const optLine = opt.length ? opt.join(', ') : 'none';
+  return `Minimum core details to capture for an actionable request: ${reqLine}. Optional (ask at most once, never block — phone is always optional): ${optLine}. These are the minimum — also collect the vertical-specific details noted above when they are relevant.`;
+}
 
 // Renders the selected vertical profile into a concise prompt section. Industry-specific
 // terminology and examples live ONLY here (via the profile), never in GLOBAL_RULES.
@@ -13,6 +34,7 @@ Common caller intents: ${profile.commonIntents.join(', ')}.
 Terminology: ${profile.terminology}
 Interpret these the way this business means them: ${profile.interpretationExamples.join('; ')}.
 When collecting details: ${profile.collectionPriorities}
+${renderCoreFields(profile)}
 Do not assume: ${profile.forbiddenAssumptions.join('; ')}.
 When the relevant info is missing: ${profile.fallbackWording}
 Typical knowledge topics for this business: ${profile.knowledgeCategories.join(', ')}.`;

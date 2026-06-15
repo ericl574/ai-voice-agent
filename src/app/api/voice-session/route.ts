@@ -48,8 +48,8 @@ export async function POST(req: Request) {
     // no/invalid JSON body — fine, this endpoint also accepts an empty POST
   }
 
-  // Build the prompt from the authenticated user's business data. The default (signed-out,
-  // missing profile, or DB error) resolves to the requested vertical, else the generic vertical.
+  // Build the prompt from the authenticated user's business data. The default (missing profile
+  // or DB error) resolves to the requested vertical, else the generic vertical.
   let systemInstructions = buildSystemPrompt(null, null, [], requestedVertical);
   // Voice settings applied to the Realtime session's audio.output. Defaults preserve current
   // behavior: no voice override (server default) and normal (1.0) speed.
@@ -65,14 +65,27 @@ export async function POST(req: Request) {
       ? buildSystemPrompt(demo.business, demo.agentConfig, demo.knowledge)
       : buildSystemPrompt(null, null, [], requestedVertical);
     console.log(`[FD] voice session vertical: ${requestedVertical ?? 'generic'} (isolated demo${demo ? '' : ' — no demo business, generic fallback'})`);
-  } else
-  try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+  } else {
+    // Non-demo sessions require a signed-in user. This closes the anonymous cost surface:
+    // paid Realtime sessions are minted only for the public landing demo (`demo: true`,
+    // rate-limited above) or for authenticated dashboard test calls. Signed-out dashboard
+    // demo visitors see a sign-in prompt instead (voice/page.tsx gates the Start button).
+    let user = null;
+    let supabase: Awaited<ReturnType<typeof createClient>> | null = null;
+    try {
+      supabase = await createClient();
+      ({ data: { user } } = await supabase.auth.getUser());
+    } catch {
+      // Auth unavailable (e.g. Supabase not configured) — treated as signed out below.
+    }
+    if (!user || !supabase) {
+      return NextResponse.json(
+        { error: 'Please sign in to place a test call. The live demo on the home page works without an account.' },
+        { status: 401 },
+      );
+    }
 
-    if (user) {
+    try {
       const business = await getActiveBusiness(supabase);
       if (business) {
         const { data: knowledgeRows } = await supabase
@@ -98,12 +111,10 @@ export async function POST(req: Request) {
       } else {
         console.log('[FD] voice session vertical: generic (no business profile)');
       }
-    } else {
-      console.log(`[FD] voice session vertical: ${requestedVertical ?? 'generic'} (signed-out demo)`);
+    } catch {
+      // Fall through to generic instructions — never block a signed-in voice session due to a DB error
+      console.log('[FD] voice session vertical: generic (DB error fallback)');
     }
-  } catch {
-    // Fall through to generic instructions — never block a voice session due to a DB error
-    console.log('[FD] voice session vertical: generic (DB error fallback)');
   }
 
   console.log(`[FD] voice session audio.output → voice: ${voiceId ?? '(server default)'}, speed: ${voiceSpeed} (applied via API config)`);
@@ -144,7 +155,18 @@ export async function POST(req: Request) {
                 threshold: 0.70,
                 prefix_padding_ms: 300,
                 silence_duration_ms: 1000,
-                create_response: true,
+                // Response creation differs by client:
+                //  • Dashboard test call (`/dashboard/voice`, posts no `demo` flag → isDemo=false):
+                //    APP-CONTROLLED (`create_response:false`). Server VAD still commits the turn and
+                //    runs input transcription, but the browser (`voice/page.tsx sendResponseCreate`)
+                //    creates exactly one response per turn AFTER the caller transcript passes the
+                //    noise + caller-intent gate — so background speech can't trigger a reply early.
+                //    Tradeoff: replies wait ~1-2s for the transcript (Layer 2). See docs/call-pipeline.md.
+                //  • Landing "Try Our Service" demo (`CallSimulatorDemo`, posts `{ demo: true }` →
+                //    isDemo=true): SERVER auto-response (`create_response:true`). That widget is a thin
+                //    marketing client with no data-channel message handler / app-side response creation,
+                //    so it relies on the server to speak. Full Layer-2 orchestration there is deferred.
+                create_response: isDemo === true,
                 // Do NOT let detected speech truncate the assistant mid-reply. Background
                 // noise / nearby speech (or the assistant's own voice leaking into the mic)
                 // was barging in and causing the assistant to cut off and repeat itself.
@@ -172,9 +194,10 @@ export async function POST(req: Request) {
     });
 
     if (!res.ok) {
-      const body = await res.text();
+      // Log the upstream detail server-side; never forward provider error bodies to the browser.
+      console.error(`[FD] voice-session upstream error (${res.status}):`, await res.text());
       return NextResponse.json(
-        { error: `OpenAI API error (${res.status}): ${body}` },
+        { error: 'Could not start the call session. Please try again in a moment.' },
         { status: 502 },
       );
     }
