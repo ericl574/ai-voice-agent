@@ -41,7 +41,13 @@ TWILIO_BUSINESS_ID=<businesses.id to answer as>   (optional — demo restaurant 
 SUPABASE_SERVICE_ROLE_KEY=…    (needed to save phone calls + load the business prompt)
 NEXT_PUBLIC_SITE_URL=https://<your-domain>
 ```
-(`TWILIO_ACCOUNT_SID` / `TWILIO_PHONE_NUMBER` aren't needed by code yet — inbound only, no SMS.)
+For the inbound phone call, `TWILIO_ACCOUNT_SID` / `TWILIO_PHONE_NUMBER` aren't required. They
+**are** required if you turn on **Call Delivery SMS** (texting the business after each call) —
+see `docs/call-delivery-setup.md`:
+```
+TWILIO_ACCOUNT_SID=AC…        (Console → Account Info)
+TWILIO_PHONE_NUMBER=+1…       (SMS-capable "from" number; reuse the inbound number if it sends SMS)
+```
 
 **Bridge (local `.env.local` is read automatically by `npm run twilio:bridge`, or host env):**
 ```

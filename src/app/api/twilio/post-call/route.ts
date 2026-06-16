@@ -138,7 +138,7 @@ export async function POST(req: NextRequest) {
     try {
       const { data: bizRow } = await admin
         .from('businesses')
-        .select('timezone, name, phone, business_type, agent_config')
+        .select('timezone, name, phone, email, business_type, agent_config')
         .eq('id', body.businessId)
         .single();
       await runPostCallExtraction({
@@ -149,6 +149,7 @@ export async function POST(req: NextRequest) {
         transcript: transcriptText,
         bizRow: bizRow ?? null,
         origin: SITE_URL,
+        source: 'phone',
       });
       extractionRan = true;
     } catch (err) {

@@ -97,6 +97,23 @@ TWILIO_BUSINESS_ID=...                             # which business answers the 
 The media bridge (`server/twilio-bridge.ts`, `npm run twilio:bridge`) runs as a separate
 always-on Node process — Vercel serverless cannot host Twilio Media Streams WebSockets.
 
+### Optional (Call Delivery — SMS + email alerts; see docs/call-delivery-setup.md)
+
+After every non-demo call, FrontDesk texts/emails the caller's details to the business so staff
+never have to open the dashboard to receive a request. Enabled per-business in Settings; each
+channel sends only if its provider env is set (missing env → channel skipped, call still saved).
+
+```
+# SMS via Twilio Programmable Messaging (server-only)
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=...          # reused from the inbound-webhook config
+TWILIO_PHONE_NUMBER=+1...      # SMS-capable "from" number
+
+# Email via Resend (server-only)
+RESEND_API_KEY=re_...
+NOTIFY_EMAIL_FROM=FrontDesk <alerts@yourdomain.com>
+```
+
 For password reset emails, the deployed URL must also be added to the Supabase Auth
 **redirect URL allowlist**, and the recovery email template should link to
 `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/reset-password/update`.

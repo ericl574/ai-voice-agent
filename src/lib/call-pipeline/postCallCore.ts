@@ -20,6 +20,7 @@ import { getVertical } from '@/lib/agents/verticals/registry';
 import { todayInTimeZone, DEFAULT_BUSINESS_TIMEZONE } from './time';
 import type { AgentConfig } from '@/lib/supabase/businesses';
 import { sendReservationSms, reservationConfirmUrl } from '@/lib/sms/sendReservationSms';
+import { deliverCallNotifications } from '@/lib/notify/callDelivery';
 import { randomUUID } from 'crypto';
 
 // ── Extraction prompt ────────────────────────────────────────────────────────
@@ -97,6 +98,7 @@ export interface PostCallBizRow {
   timezone?: string | null;
   name?: string | null;
   phone?: string | null;
+  email?: string | null;
   business_type?: string | null;
   agent_config?: AgentConfig | null;
 }
@@ -120,6 +122,8 @@ export async function runPostCallExtraction(opts: {
   bizRow: PostCallBizRow | null;
   /** Absolute origin used to build the reservation confirm link (auto-confirm mode). */
   origin: string;
+  /** Call channel — used only for delivery wording. Defaults to 'web' (browser test call). */
+  source?: 'web' | 'phone';
 }): Promise<PostCallResult> {
   const { supabase, apiKey, callId, businessId, bizRow, origin } = opts;
 
@@ -356,6 +360,25 @@ export async function runPostCallExtraction(opts: {
     } else {
       serviceRequestError = srErr.message;
     }
+  }
+
+  // ── Call Delivery — notify the business (SMS/email) ───────────────────────
+  // Runs AFTER the save + record creation above, so a delivery failure can never affect the save.
+  // Demo calls never reach this core (browser save is gated off in demo; the Twilio route
+  // early-returns for demo-fallback), so no demo guard is needed here. Never throws upward.
+  try {
+    await deliverCallNotifications({
+      business: {
+        name: bizRow?.name ?? null,
+        phone: bizRow?.phone ?? null,
+        email: bizRow?.email ?? null,
+        agentConfig: (bizRow?.agent_config as AgentConfig | null) ?? null,
+      },
+      source: opts.source ?? 'web',
+      extraction,
+    });
+  } catch (err) {
+    console.error('[FD] call delivery failed (non-fatal):', err instanceof Error ? err.message : err);
   }
 
   return { extraction, appointmentCreated, serviceRequestCreated, appointmentError, serviceRequestError };

@@ -18,6 +18,12 @@ import {
 import { looksLikeNoiseOrEmpty } from '../src/lib/call-pipeline/noise.ts';
 import { classifyCallerIntent } from '../src/lib/call-pipeline/intent.ts';
 import { looksLikeEndCall } from '../src/lib/call-pipeline/endCall.ts';
+import {
+  decideDelivery,
+  composeCallSms,
+  composeCallEmail,
+  type CallSummaryForDelivery,
+} from '../src/lib/notify/compose.ts';
 import { buildTranscript, countCallerTurns } from '../src/lib/call-pipeline/transcript.ts';
 import { nowInTimeZone } from '../src/lib/call-pipeline/time.ts';
 
@@ -394,6 +400,97 @@ test('nowInTimeZone — invalid timezone falls back without throwing', () => {
   // Empty / null input also falls back.
   assert(nowInTimeZone('').length > 0, 'empty tz falls back');
   assert(nowInTimeZone(null).length > 0, 'null tz falls back');
+});
+
+// ── Call Delivery — gating + message composition (pure) ───────────────────────
+// decideDelivery encodes the product rules: a channel sends only when the owner enabled it AND a
+// destination exists (explicit override, else the business's own phone/email). Composition is
+// deterministic so the staff-facing text is locked.
+
+const sampleCall: CallSummaryForDelivery = {
+  businessName: 'Summit Auto Care',
+  source: 'phone',
+  callerName: 'Eric',
+  callerPhone: '778-798-5201',
+  intent: 'appointment_request',
+  summary: 'Caller wants an oil change tomorrow afternoon.',
+  nextAction: 'Confirm the appointment and call the customer back.',
+  appointment: { date: '2026-06-16', time: '14:00', service: 'Oil change' },
+  serviceRequest: null,
+  dashboardUrl: 'https://example.com/dashboard/calls',
+};
+
+test('decideDelivery — disabled toggles → nothing sends', () => {
+  const plan = decideDelivery({ phone: '111', email: 'a@b.com', agentConfig: {} });
+  eq(plan.sms.send, false, 'sms off by default');
+  eq(plan.email.send, false, 'email off by default');
+});
+
+test('decideDelivery — enabled + business fallback destinations', () => {
+  const plan = decideDelivery({
+    phone: '+16045551234',
+    email: 'owner@biz.com',
+    agentConfig: { notify_sms: true, notify_email: true },
+  });
+  eq(plan.sms.send, true, 'sms sends');
+  eq(plan.sms.to, '+16045551234', 'falls back to business phone');
+  eq(plan.email.send, true, 'email sends');
+  eq(plan.email.to, 'owner@biz.com', 'falls back to business email');
+});
+
+test('decideDelivery — explicit override wins over business fallback', () => {
+  const plan = decideDelivery({
+    phone: '+1111',
+    email: 'biz@x.com',
+    agentConfig: {
+      notify_sms: true,
+      notify_email: true,
+      notify_sms_to: '+1999',
+      notify_email_to: 'alerts@x.com',
+    },
+  });
+  eq(plan.sms.to, '+1999', 'sms override');
+  eq(plan.email.to, 'alerts@x.com', 'email override');
+});
+
+test('decideDelivery — enabled but NO destination anywhere → does not send', () => {
+  const plan = decideDelivery({ phone: null, email: '   ', agentConfig: { notify_sms: true, notify_email: true } });
+  eq(plan.sms.send, false, 'no phone → no sms');
+  eq(plan.email.send, false, 'blank email → no email');
+});
+
+test('composeCallSms — compact, includes caller + appointment, bounded length', () => {
+  const sms = composeCallSms(sampleCall);
+  assert(sms.includes('Eric'), 'has caller name');
+  assert(sms.includes('778-798-5201'), 'has caller phone');
+  assert(/oil change/i.test(sms), 'mentions the service');
+  assert(sms.length <= 460, `within length cap: ${sms.length}`);
+});
+
+test('composeCallSms — falls back to summary when no structured request', () => {
+  const sms = composeCallSms({ ...sampleCall, appointment: null, serviceRequest: null });
+  assert(sms.includes('oil change') || sms.includes('Caller wants'), 'uses summary text');
+});
+
+test('composeCallEmail — subject + body carry the key facts and link', () => {
+  const { subject, text, html } = composeCallEmail(sampleCall);
+  assert(subject.includes('Summit Auto Care'), 'subject names business');
+  assert(/appointment request/i.test(subject), 'subject has intent label');
+  assert(text.includes('778-798-5201'), 'body has caller phone');
+  assert(text.includes('Oil change'), 'body has service');
+  assert(text.includes('https://example.com/dashboard/calls'), 'body has dashboard link');
+  assert(html.includes('<a href="https://example.com/dashboard/calls"'), 'html links the dashboard');
+});
+
+test('composeCallEmail — service-request call renders the request block', () => {
+  const { text } = composeCallEmail({
+    ...sampleCall,
+    intent: 'service_request',
+    appointment: null,
+    serviceRequest: { title: 'Brake noise', urgency: 'urgent' },
+  });
+  assert(text.includes('Brake noise'), 'has request title');
+  assert(text.includes('[URGENT]'), 'flags urgency');
 });
 
 // ── Results ──────────────────────────────────────────────────────────────────

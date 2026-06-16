@@ -455,32 +455,61 @@ export default function SettingsPage() {
         {/* ── Plan & billing (Stripe) ─────────────────────────── */}
         <BillingCard />
 
-        {/* ── Notifications ───────────────────────────────────── */}
+        {/* ── Notifications (Call Delivery) ───────────────────── */}
         <div className="fd-card overflow-hidden">
           <div className="px-5 py-4 border-b fd-hairline">
-            <h2 className="font-semibold text-gray-900">Notifications</h2>
+            <h2 className="font-semibold text-gray-900">Call Notifications</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Get the caller&rsquo;s details by text and email right after each call — no need to open the dashboard.
+            </p>
           </div>
-          <div className="p-5 space-y-3">
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={agentConfig.notify_email ?? false}
-                onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_email: e.target.checked }))}
-                className="w-4 h-4 accent-orange-500"
-              />
-              <span className="text-sm text-gray-700">Email notifications for new requests</span>
-            </label>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={agentConfig.notify_sms ?? false}
-                onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_sms: e.target.checked }))}
-                className="w-4 h-4 accent-orange-500"
-              />
-              <span className="text-sm text-gray-700">SMS notifications for new requests</span>
-            </label>
-            <p className="text-xs text-gray-400 pt-1">
-              Your preference is saved — automatic alerts aren&rsquo;t delivered yet (coming soon).
+          <div className="p-5 space-y-5">
+            {/* Email */}
+            <div className="space-y-2">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={agentConfig.notify_email ?? false}
+                  onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_email: e.target.checked }))}
+                  className="w-4 h-4 accent-orange-500"
+                />
+                <span className="text-sm text-gray-700">Email me a summary after each call</span>
+              </label>
+              {(agentConfig.notify_email ?? false) && (
+                <input
+                  type="email"
+                  value={agentConfig.notify_email_to ?? ''}
+                  onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_email_to: e.target.value }))}
+                  placeholder={business.email ? `Default: ${business.email}` : 'you@yourbusiness.com'}
+                  className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                />
+              )}
+            </div>
+
+            {/* SMS */}
+            <div className="space-y-2">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={agentConfig.notify_sms ?? false}
+                  onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_sms: e.target.checked }))}
+                  className="w-4 h-4 accent-orange-500"
+                />
+                <span className="text-sm text-gray-700">Text me a short summary after each call</span>
+              </label>
+              {(agentConfig.notify_sms ?? false) && (
+                <input
+                  type="tel"
+                  value={agentConfig.notify_sms_to ?? ''}
+                  onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_sms_to: e.target.value }))}
+                  placeholder={business.phone ? `Default: ${business.phone}` : '+1 (555) 123-4567'}
+                  className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                />
+              )}
+            </div>
+
+            <p className="text-xs text-gray-400">
+              Leave a destination blank to use your business email/phone above. Demo calls never send notifications.
             </p>
           </div>
         </div>

@@ -58,10 +58,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Call not found' }, { status: 404 });
   }
 
-  // Business context for the extraction (timezone for relative dates, vertical, agent config).
+  // Business context for the extraction (timezone for relative dates, vertical, agent config) and
+  // Call Delivery (email destination fallback).
   const { data: bizRow } = await supabase
     .from('businesses')
-    .select('timezone, name, phone, business_type, agent_config')
+    .select('timezone, name, phone, email, business_type, agent_config')
     .eq('id', business_id)
     .single();
 
