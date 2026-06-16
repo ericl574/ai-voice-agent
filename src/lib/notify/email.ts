@@ -9,11 +9,18 @@ export function isEmailConfigured(): boolean {
   return !!(process.env.RESEND_API_KEY && process.env.NOTIFY_EMAIL_FROM);
 }
 
+// Optional attachments use Resend's shape: { filename, content } where content is base64.
+export interface EmailAttachment {
+  filename: string;
+  content: string; // base64-encoded file bytes
+}
+
 export async function sendEmail(
   to: string,
   subject: string,
   text: string,
   html?: string,
+  attachments?: EmailAttachment[],
 ): Promise<{ ok: boolean; reason?: string }> {
   const key = process.env.RESEND_API_KEY;
   const from = process.env.NOTIFY_EMAIL_FROM;
@@ -23,7 +30,14 @@ export async function sendEmail(
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from, to, subject, text, ...(html ? { html } : {}) }),
+      body: JSON.stringify({
+        from,
+        to,
+        subject,
+        text,
+        ...(html ? { html } : {}),
+        ...(attachments && attachments.length ? { attachments } : {}),
+      }),
     });
     if (!res.ok) {
       console.error(`[FD] delivery email provider error (${res.status}):`, await res.text());

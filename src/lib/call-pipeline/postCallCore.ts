@@ -249,6 +249,14 @@ export async function runPostCallExtraction(opts: {
 
   await supabase.from('calls').update(callUpdate).eq('id', callId);
 
+  // next_action powers the digest's "suggested follow-up". Best-effort, separate from the main
+  // update so a missing column (call_digests migration not yet run) can't break the write above.
+  const { error: naErr } = await supabase
+    .from('calls')
+    .update({ next_action: extraction.next_action })
+    .eq('id', callId);
+  if (naErr) console.warn('[FD] could not save next_action (run the call_digests migration):', naErr.message);
+
   // The per-turn caller transcription is lossy on digits; the front-desk confirmation (what the
   // model actually understood) is the accurate number. Overwrite the saved phone-number caller
   // turn(s) so Call History matches the confirmed value.
@@ -362,23 +370,26 @@ export async function runPostCallExtraction(opts: {
     }
   }
 
-  // ── Call Delivery — notify the business (SMS/email) ───────────────────────
-  // Runs AFTER the save + record creation above, so a delivery failure can never affect the save.
-  // Demo calls never reach this core (browser save is gated off in demo; the Twilio route
-  // early-returns for demo-fallback), so no demo guard is needed here. Never throws upward.
-  try {
-    await deliverCallNotifications({
-      business: {
-        name: bizRow?.name ?? null,
-        phone: bizRow?.phone ?? null,
-        email: bizRow?.email ?? null,
-        agentConfig: (bizRow?.agent_config as AgentConfig | null) ?? null,
-      },
-      source: opts.source ?? 'web',
-      extraction,
-    });
-  } catch (err) {
-    console.error('[FD] call delivery failed (non-fatal):', err instanceof Error ? err.message : err);
+  // ── Call Delivery ─────────────────────────────────────────────────────────
+  // MVP default is the DAILY AFTER-HOURS DIGEST (sent later by /api/cron/digest), so per-call
+  // SMS/email is OFF unless the business explicitly opted into an instant mode. The per-call code
+  // is kept for that optional mode. Runs AFTER the save, demo never reaches here, never throws up.
+  const deliveryMode = (bizRow?.agent_config as AgentConfig | null)?.delivery_mode ?? 'daily_digest';
+  if (deliveryMode === 'instant_all' || deliveryMode === 'instant_action_needed') {
+    try {
+      await deliverCallNotifications({
+        business: {
+          name: bizRow?.name ?? null,
+          phone: bizRow?.phone ?? null,
+          email: bizRow?.email ?? null,
+          agentConfig: (bizRow?.agent_config as AgentConfig | null) ?? null,
+        },
+        source: opts.source ?? 'web',
+        extraction,
+      });
+    } catch (err) {
+      console.error('[FD] call delivery failed (non-fatal):', err instanceof Error ? err.message : err);
+    }
   }
 
   return { extraction, appointmentCreated, serviceRequestCreated, appointmentError, serviceRequestError };

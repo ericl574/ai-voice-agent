@@ -24,6 +24,12 @@ import {
   composeCallEmail,
   type CallSummaryForDelivery,
 } from '../src/lib/notify/compose.ts';
+import {
+  composeDigestEmail,
+  composeDigestSms,
+  buildCallsCsv,
+  type DigestCall,
+} from '../src/lib/notify/digest.ts';
 import { buildTranscript, countCallerTurns } from '../src/lib/call-pipeline/transcript.ts';
 import { nowInTimeZone } from '../src/lib/call-pipeline/time.ts';
 
@@ -491,6 +497,67 @@ test('composeCallEmail — service-request call renders the request block', () =
   });
   assert(text.includes('Brake noise'), 'has request title');
   assert(text.includes('[URGENT]'), 'flags urgency');
+});
+
+// ── After-hours digest — compose + CSV (pure) ─────────────────────────────────
+// The daily digest is the MVP delivery default: one report per business, readable summary + CSV.
+
+const digestCalls: DigestCall[] = [
+  {
+    callTimeIso: '2026-06-16T03:40:00Z',
+    callerName: 'Sara Lee',
+    callerPhone: '604-555-0101',
+    intent: 'appointment_request',
+    preferredDate: '2026-06-17',
+    preferredTime: '10:00',
+    summary: 'Wants a haircut tomorrow morning.',
+    followUp: 'Call Sara to confirm 10am.',
+  },
+  {
+    callTimeIso: '2026-06-16T05:12:00Z',
+    callerName: null,
+    callerPhone: '604-555-0199',
+    intent: 'service_request',
+    preferredDate: null,
+    preferredTime: null,
+    summary: 'Asking about a quote, mentioned "leak, kitchen".',
+    followUp: null,
+  },
+];
+
+test('composeDigestSms — one-line report alert with count', () => {
+  eq(composeDigestSms(6), 'FrontDesk captured 6 after-hours calls. Report sent to your email.', 'plural');
+  assert(composeDigestSms(1).includes('1 after-hours call.'), 'singular noun');
+});
+
+test('composeDigestEmail — subject + body carry totals, callers, and link', () => {
+  const { subject, text, html } = composeDigestEmail(
+    { name: 'Luxe Hair', timezone: 'America/Vancouver' },
+    digestCalls,
+    'https://example.com/dashboard/calls',
+  );
+  assert(subject.includes('2 calls'), `subject has count: ${subject}`);
+  assert(text.includes('Sara Lee'), 'body has a caller name');
+  assert(text.includes('604-555-0199'), 'body has a caller phone');
+  assert(text.includes('https://example.com/dashboard/calls'), 'body links the dashboard');
+  assert(/CSV/.test(text), 'body mentions the attached CSV');
+  assert(html.includes('<table'), 'html renders a table');
+});
+
+test('buildCallsCsv — header + one row per call, fields escaped', () => {
+  const csv = buildCallsCsv(digestCalls, 'America/Vancouver');
+  const lines = csv.split('\r\n');
+  eq(lines.length, 3, 'header + 2 rows');
+  assert(lines[0].startsWith('Call time,Caller name,Caller phone'), 'has header');
+  // The second call's summary contains a comma → must be quoted.
+  assert(/"Asking about a quote, mentioned ""leak, kitchen""\."/.test(csv), 'quotes + escapes commas/quotes');
+  assert(csv.includes('Appointment request'), 'maps intent label');
+  assert(csv.includes('Sara Lee'), 'includes caller');
+});
+
+test('buildCallsCsv — empty caller fields render as empty cells, not "null"', () => {
+  const csv = buildCallsCsv([digestCalls[1]], 'America/Vancouver');
+  assert(!/null/.test(csv), 'no literal null');
 });
 
 // ── Results ──────────────────────────────────────────────────────────────────

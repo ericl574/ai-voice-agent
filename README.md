@@ -97,22 +97,30 @@ TWILIO_BUSINESS_ID=...                             # which business answers the 
 The media bridge (`server/twilio-bridge.ts`, `npm run twilio:bridge`) runs as a separate
 always-on Node process — Vercel serverless cannot host Twilio Media Streams WebSockets.
 
-### Optional (Call Delivery — SMS + email alerts; see docs/call-delivery-setup.md)
+### Optional (After-hours report — daily digest; see docs/after-hours-report.md)
 
-After every non-demo call, FrontDesk texts/emails the caller's details to the business so staff
-never have to open the dashboard to receive a request. Enabled per-business in Settings; each
-channel sends only if its provider env is set (missing env → channel skipped, call still saved).
+The MVP delivery model: **FrontDesk protects calls you were already missing.** It answers when the
+business is closed/unavailable, saves the call, and once a day sends the owner one report — an
+email summary with a CSV attached, plus an optional one-line SMS. Per-call alerts are off by
+default (kept as an optional `instant_*` mode). A daily Vercel Cron drives it.
 
 ```
-# SMS via Twilio Programmable Messaging (server-only)
+# Cron (server-only)
+CRON_SECRET=...               # Vercel Cron sends it as Authorization: Bearer …
+SUPABASE_SERVICE_ROLE_KEY=... # cron reads businesses/calls, writes call_digests
+
+# Email + CSV via Resend (server-only)
+RESEND_API_KEY=re_...
+NOTIFY_EMAIL_FROM=FrontDesk <alerts@yourdomain.com>
+
+# Optional SMS alert via Twilio Programmable Messaging (server-only)
 TWILIO_ACCOUNT_SID=AC...
 TWILIO_AUTH_TOKEN=...          # reused from the inbound-webhook config
 TWILIO_PHONE_NUMBER=+1...      # SMS-capable "from" number
-
-# Email via Resend (server-only)
-RESEND_API_KEY=re_...
-NOTIFY_EMAIL_FROM=FrontDesk <alerts@yourdomain.com>
 ```
+
+Run `supabase/migrations/20260616000000_call_digests.sql` first. The hourly cron is declared in
+`vercel.json` (Vercel Hobby runs crons daily; hourly needs Pro — see the doc).
 
 For password reset emails, the deployed URL must also be added to the Supabase Auth
 **redirect URL allowlist**, and the recovery email template should link to

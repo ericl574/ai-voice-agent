@@ -455,16 +455,16 @@ export default function SettingsPage() {
         {/* ── Plan & billing (Stripe) ─────────────────────────── */}
         <BillingCard />
 
-        {/* ── Notifications (Call Delivery) ───────────────────── */}
+        {/* ── After-hours report ──────────────────────────────── */}
         <div className="fd-card overflow-hidden">
           <div className="px-5 py-4 border-b fd-hairline">
-            <h2 className="font-semibold text-gray-900">Call Notifications</h2>
+            <h2 className="font-semibold text-gray-900">After-hours report</h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Get the caller&rsquo;s details by text and email right after each call — no need to open the dashboard.
+              A daily summary of calls captured while your business was closed or unavailable — with a CSV report for easy follow-up. No need to monitor another dashboard.
             </p>
           </div>
           <div className="p-5 space-y-5">
-            {/* Email */}
+            {/* Email digest */}
             <div className="space-y-2">
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
@@ -473,7 +473,7 @@ export default function SettingsPage() {
                   onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_email: e.target.checked }))}
                   className="w-4 h-4 accent-orange-500"
                 />
-                <span className="text-sm text-gray-700">Email me a summary after each call</span>
+                <span className="text-sm text-gray-700">Email me a daily report (summary + CSV)</span>
               </label>
               {(agentConfig.notify_email ?? false) && (
                 <input
@@ -486,7 +486,7 @@ export default function SettingsPage() {
               )}
             </div>
 
-            {/* SMS */}
+            {/* SMS alert */}
             <div className="space-y-2">
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
@@ -495,7 +495,7 @@ export default function SettingsPage() {
                   onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_sms: e.target.checked }))}
                   className="w-4 h-4 accent-orange-500"
                 />
-                <span className="text-sm text-gray-700">Text me a short summary after each call</span>
+                <span className="text-sm text-gray-700">Text me when the report is ready</span>
               </label>
               {(agentConfig.notify_sms ?? false) && (
                 <input
@@ -508,8 +508,26 @@ export default function SettingsPage() {
               )}
             </div>
 
+            {/* Send time */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
+                Send the report at
+              </label>
+              <select
+                value={agentConfig.digest_send_hour ?? 8}
+                onChange={(e) => setAgentConfig((prev) => ({ ...prev, digest_send_hour: parseInt(e.target.value, 10) }))}
+                className="w-full sm:w-48 border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
+              >
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>
+                    {h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`} (your timezone)
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <p className="text-xs text-gray-400">
-              Leave a destination blank to use your business email/phone above. Demo calls never send notifications.
+              FrontDesk protects calls you were already missing. Leave a destination blank to use your business email/phone above. Demo calls are never included.
             </p>
           </div>
         </div>
