@@ -86,10 +86,13 @@ Real inbound calls (not yet activated):
 ## 6. Vercel setup steps
 
 1. Confirm env (see §4). For email later, add `NOTIFY_EMAIL_FROM` and redeploy.
-2. **Cron is already declared** in `vercel.json` (`/api/cron/digest`, `0 * * * *`). **Plan note:**
-   Vercel **Hobby runs crons once/day**; **hourly needs Pro**. On Hobby the digest still works but
-   only fires at Vercel's single daily UTC time — set each business's `digest_send_hour` to match, or
-   upgrade to Pro for true per-timezone morning delivery. Manual `curl` (below) works on any plan.
+2. **Cron is declared** in `vercel.json` (`/api/cron/digest`, **`0 13 * * *`** — once daily, 13:00
+   UTC ≈ early-morning Pacific). **Plan note:** Vercel **Hobby supports one daily cron only** — an
+   hourly schedule (`0 * * * *`) makes the deployment **fail to build** on Hobby (this once pinned
+   production to an old commit). The MVP doesn't need hourly: the route checks `digest_send_hour` and
+   dedupes per business/day, so one daily tick is enough — set each business's `digest_send_hour`
+   at/before it. **Manual `curl` (below) works on any plan** for testing. Hourly / true per-timezone
+   delivery needs **Vercel Pro** (or an external scheduler) — defer until needed.
 3. After changing any env var, **redeploy** (env changes don't apply to existing deployments).
 
 ---
@@ -186,7 +189,7 @@ Prereq: §5 done (number webhook set, bridge running/hosted, env set, redeployed
 | 1 | `NOTIFY_EMAIL_FROM` missing (no verified domain) | External (intentional) | Production email report not sent (skips safely). Everything else works. |
 | 2 | Real inbound phone not activated: bridge not hosted; `TWILIO_STREAM_URL` / `TWILIO_BRIDGE_SECRET` / `TWILIO_BUSINESS_ID` unset; number webhook not pointed | External / ops | Can't take real phone calls yet. Browser test is the surface meanwhile. |
 | 3 | Twilio account may be **trial** | External | SMS only to verified numbers; trial call notice. Fine for testing. |
-| 4 | Vercel plan (if Hobby) = daily cron only | External / plan | Digest fires once/day; use manual `curl` or set `digest_send_hour` to match, or upgrade to Pro. |
+| 4 | Vercel plan (if Hobby) = one daily cron only (`0 13 * * *`) | External / plan | Digest fires once/day; an hourly cron would fail the build on Hobby. Use manual `curl`, set `digest_send_hour` to match, or upgrade to Pro. |
 
 **No code blockers** were found in the capture/save/SMS/digest/email paths. The only code change in
 this activation pass is the **Send test SMS** path (new `POST /api/notify-test-sms` + a Settings

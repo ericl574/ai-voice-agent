@@ -21,9 +21,9 @@ after hours.
    both run through the same post-call core).
 2. **Per-call SMS/email is OFF by default** (`delivery_mode = 'daily_digest'`). The per-call code
    still exists for the optional `instant_all` / `instant_action_needed` modes.
-3. **Vercel Cron** hits `/api/cron/digest` hourly. For each business it sends the digest only when
-   the **local hour ≥ the business's send hour** (default **8 AM** in the business timezone) and no
-   digest has gone out for that local day yet.
+3. **Vercel Cron** hits `/api/cron/digest` **once daily (13:00 UTC ≈ early-morning Pacific)**. For
+   each business it sends the digest only when the **local hour ≥ the business's send hour** (default
+   **8 AM** in the business timezone) and no digest has gone out for that local day yet.
 4. The digest email contains: total calls, and per call — caller name, phone, request type,
    preferred date/time (if captured), short summary, suggested follow-up, and call time. A
    **CSV** with the same columns is attached when the owner's **Attach CSV** toggle is on
@@ -81,15 +81,19 @@ env is missing, that channel is logged as `skipped` and nothing breaks.
 
 ### 3. Cron schedule
 
-`vercel.json` already declares the hourly cron:
+`vercel.json` declares a **once-daily** cron (Hobby-compatible):
 
 ```json
-{ "crons": [{ "path": "/api/cron/digest", "schedule": "0 * * * *" }] }
+{ "crons": [{ "path": "/api/cron/digest", "schedule": "0 13 * * *" }] }
 ```
 
-**Plan note:** Vercel Hobby runs crons **once per day**; **hourly requires Vercel Pro**. On Hobby,
-the digest still works but only fires at Vercel's single daily UTC time — set each pilot business's
-`digest_send_hour` to match, or upgrade to Pro for true per-timezone morning delivery.
+**Plan note:** Vercel **Hobby supports one daily cron only** — an hourly schedule (`0 * * * *`)
+makes the deployment **fail to build** on Hobby, which is why we use `0 13 * * *` (13:00 UTC ≈
+early-morning Pacific). The MVP does **not** need hourly cron: the route checks `digest_send_hour`
+and dedupes per business/day, so one daily tick is enough — set each pilot business's
+`digest_send_hour` at/before that tick. **Manual `curl` triggering works on any plan** for testing
+(see §4). Hourly / true per-timezone morning delivery needs **Vercel Pro** (or an external scheduler
+hitting the route) — defer until needed.
 
 ### 4. Manual test (before relying on the cron)
 
@@ -105,7 +109,7 @@ captured calls today and the email toggle on, you should receive the report + CS
 ## Honest limitations
 
 - One report per business per local day; the cron only acts at/after the send hour.
-- Vercel Hobby = daily cron only (see plan note above).
+- Vercel Hobby = **one daily cron only** (`0 13 * * *`); hourly would fail the build (see plan note).
 - No retry queue: a failed send is logged with status `failed` on the `call_digests` row, not
   retried (calls remain safely saved).
 - Per-call instant modes exist but are off by default and intentionally not surfaced in the MVP UI.
