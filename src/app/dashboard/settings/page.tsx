@@ -82,10 +82,35 @@ export default function SettingsPage() {
         no_business: 'No business found for your account.',
         rate_limited: 'Too many tests — wait a minute and retry.',
         unauthorized: 'Please sign in again.',
+        provider_401: 'Twilio rejected the credentials (401). Check TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN are the live pair from the same account, the account is active, and the From number belongs to that account.',
+        provider_400: 'Twilio rejected the request (400) — usually the number format. Use E.164, e.g. +17787985201.',
+        provider_404: 'Twilio couldn’t find the account (404) — check TWILIO_ACCOUNT_SID.',
       };
-      const msg = d.ok
-        ? `Test SMS sent to ${d.to ?? 'your number'}.`
-        : `Couldn’t send: ${reasonText[d.reason as string] ?? d.reason ?? `error ${res.status}`}`;
+      // Masked diagnostics (booleans only, no secrets) → a short, value-free issue list.
+      const diagIssues = (diag: Record<string, boolean> | undefined): string => {
+        if (!diag) return '';
+        const issues: string[] = [];
+        if (diag.accountSidPresent === false) issues.push('Account SID missing');
+        else if (diag.accountSidPrefixOk === false) issues.push('Account SID not in “AC…” format');
+        if (diag.accountSidWhitespace) issues.push('Account SID has surrounding spaces');
+        if (diag.authTokenPresent === false) issues.push('Auth token missing');
+        if (diag.authTokenWhitespace) issues.push('Auth token has surrounding spaces');
+        if (diag.fromPresent === false) issues.push('From number missing');
+        else if (diag.fromLooksE164 === false) issues.push('From number not E.164 (+1…)');
+        return issues.length ? ` Checks: ${issues.join('; ')}.` : '';
+      };
+      let msg: string;
+      if (d.ok) {
+        msg = `Test SMS sent to ${d.to ?? 'your number'}.`;
+      } else {
+        const base =
+          reasonText[d.reason as string] ??
+          (typeof d.reason === 'string' && d.reason.startsWith('provider_')
+            ? `Twilio rejected the request (${d.reason}); see server logs for the Twilio error code.`
+            : d.reason) ??
+          `error ${res.status}`;
+        msg = `Couldn’t send: ${base}${diagIssues(d.diag)}`;
+      }
       setSmsTest({ state: 'idle', msg });
     } catch {
       setSmsTest({ state: 'idle', msg: 'Couldn’t send — network error.' });

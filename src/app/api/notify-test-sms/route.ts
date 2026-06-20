@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
-import { sendSms, isSmsConfigured } from '@/lib/notify/sms';
+import { sendSms, isSmsConfigured, smsConfigDiagnostics } from '@/lib/notify/sms';
 import { rateLimit, clientKey } from '@/lib/rate-limit';
 
 // Signed-in SMS test trigger for Settings → After-hours report. Sends one fixed, harmless message
@@ -35,21 +35,28 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Masked, value-free config diagnostics (booleans only) — included so the owner can self-diagnose
+  // a 401 (wrong / whitespaced / mis-formatted creds) without any secret leaving the server.
+  const diag = smsConfigDiagnostics();
+
   // Provider not configured (TWILIO_* env missing) → report cleanly, don't crash.
   if (!isSmsConfigured()) {
-    return NextResponse.json({ ok: false, reason: 'sms_not_configured' });
+    return NextResponse.json({ ok: false, reason: 'sms_not_configured', diag });
   }
 
   const business = await getActiveBusiness(supabase);
-  if (!business) return NextResponse.json({ ok: false, reason: 'no_business' });
+  if (!business) return NextResponse.json({ ok: false, reason: 'no_business', diag });
 
   const cfg = business.agent_config ?? {};
   const to = (cfg.notify_sms_to?.trim() || business.phone || '').trim();
-  if (!to) return NextResponse.json({ ok: false, reason: 'no_destination' });
+  if (!to) return NextResponse.json({ ok: false, reason: 'no_destination', diag });
 
   const r = await sendSms(
     to,
     'FrontDesk test alert — your SMS notifications are working. No action needed.',
   );
-  return NextResponse.json({ ok: r.ok, reason: r.reason ?? null, to: maskPhone(to) });
+  if (!r.ok) {
+    console.warn('[FD] test-sms failed', r.reason, JSON.stringify(diag)); // masked booleans only
+  }
+  return NextResponse.json({ ok: r.ok, reason: r.reason ?? null, to: maskPhone(to), diag });
 }

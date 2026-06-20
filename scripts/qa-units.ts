@@ -30,6 +30,7 @@ import {
   buildCallsCsv,
   type DigestCall,
 } from '../src/lib/notify/digest.ts';
+import { toE164 } from '../src/lib/notify/sms.ts';
 import { buildTranscript, countCallerTurns } from '../src/lib/call-pipeline/transcript.ts';
 import { nowInTimeZone } from '../src/lib/call-pipeline/time.ts';
 
@@ -558,6 +559,24 @@ test('buildCallsCsv — header + one row per call, fields escaped', () => {
 test('buildCallsCsv — empty caller fields render as empty cells, not "null"', () => {
   const csv = buildCallsCsv([digestCalls[1]], 'America/Vancouver');
   assert(!/null/.test(csv), 'no literal null');
+});
+
+// ── SMS phone normalization (Twilio requires E.164) ───────────────────────────
+
+test('toE164 — bare 10-digit US/Canada number gets +1 (the SMS-test 400 fix)', () => {
+  eq(toE164('7787985201'), '+17787985201', '10-digit → +1');
+  eq(toE164('(778) 798-5201'), '+17787985201', 'strips punctuation/spaces');
+});
+
+test('toE164 — 11-digit leading-1 and already-E.164 pass through', () => {
+  eq(toE164('17787985201'), '+17787985201', '1XXXXXXXXXX → +1…');
+  eq(toE164('+17787985201'), '+17787985201', 'already E.164 unchanged');
+  eq(toE164(' +1 778 798 5201 '), '+17787985201', 'trims + strips inner spaces');
+});
+
+test('toE164 — empty stays empty', () => {
+  eq(toE164(''), '', 'empty in → empty out');
+  eq(toE164('   '), '', 'whitespace-only → empty');
 });
 
 // ── Results ──────────────────────────────────────────────────────────────────
