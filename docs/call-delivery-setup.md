@@ -29,10 +29,13 @@ This guide is the external provider setup.
 
 ## What the business owner does (in-app, no env needed)
 
-Dashboard → **Settings → Call Notifications**:
-- Tick "Email me a summary after each call" and/or "Text me a short summary after each call".
-- Optionally enter a destination; leaving it blank uses the business email/phone already on file.
-- Save.
+The visible Settings surface is **After-hours report** (the daily digest — see
+`docs/after-hours-report.md`): toggle the email report and/or the optional SMS alert, optionally set
+a destination (blank uses the business email/phone on file), and save.
+
+The **per-call** instant modes described here have **no dedicated UI in the MVP** — they are an
+optional config mode (`agent_config.delivery_mode = instant_all` / `instant_action_needed`), off by
+default. Destinations and provider behavior are shared with the digest; only the trigger differs.
 
 ## Provider setup (deployment env vars — server-side only)
 
@@ -69,7 +72,7 @@ path. If you switch, only `src/lib/notify/email.ts` changes.)
 ## Acceptance test
 
 1. Set the SMS and/or email env vars above in Vercel; redeploy.
-2. Settings → Call Notifications → enable a channel, save.
+2. Enable a per-call instant mode (`agent_config.delivery_mode = instant_*`) for the test business.
 3. Place a **signed-in browser** test call (or a real Twilio call once that's live), book something,
    hang up.
 4. Expect: a text and/or email with the caller, summary, and the appointment/request, plus a link
