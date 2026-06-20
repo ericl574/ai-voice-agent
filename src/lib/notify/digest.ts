@@ -94,12 +94,16 @@ export function composeDigestEmail(
   business: DigestBusiness,
   calls: DigestCall[],
   dashboardUrl: string,
+  opts?: { csvAttached?: boolean },
 ): { subject: string; text: string; html: string } {
   const count = calls.length;
   const noun = count === 1 ? 'call' : 'calls';
   const subject = `FrontDesk after-hours report — ${count} ${noun}`;
+  const csvAttached = opts?.csvAttached !== false; // default: the CSV report is attached
 
-  const intro = `While ${business.name} was closed or unavailable, FrontDesk captured ${count} ${noun} you would otherwise have missed. A CSV with all the details is attached.`;
+  const intro =
+    `While ${business.name} was closed or unavailable, FrontDesk captured ${count} ${noun} you would otherwise have missed.` +
+    (csvAttached ? ' A CSV with all the details is attached.' : '');
 
   const blocks = calls.map((c, i) => {
     const when = formatCallTime(c.callTimeIso, business.timezone);

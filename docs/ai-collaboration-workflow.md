@@ -47,3 +47,18 @@ No merge happens without explicit human approval.
 - **Safety rules are non-negotiable.** Claude follows `CLAUDE.md` strictly: no secrets
   committed, no destructive operations without approval, no restaurant-only assumptions
   in shared code.
+
+## Product-direction guardrails
+
+The current direction is an **after-hours / missed-call capture** service whose main deliverable is
+one daily report (`CLAUDE.md` → "Current MVP direction", `docs/product-scope.md`). Eric and ChatGPT
+own product direction; Claude implements within it and must not drift back to superseded assumptions:
+
+- **Don't revive dashboard-heavy / operations-cockpit assumptions.** The dashboard is secondary
+  (settings / history / report archive), not a daily operations system.
+- **Don't treat SMS as required.** Email report + CSV is primary; SMS is an optional short alert.
+- **Don't block approved Twilio/Resend maintenance** because older docs once said "no SMS / no
+  Twilio." Existing reporting integrations are approved and maintained within the MVP (see the
+  updated `CLAUDE.md` safety rule on integrations).
+- **Update docs in the same task when product architecture changes** — never leave docs (this file,
+  `CLAUDE.md`, or anything in `docs/`) contradicting the current direction or the code.

@@ -27,6 +27,8 @@ explicitly approved. Known sources of truth:
 - Appointment status → `effectiveStatus()` (`src/lib/appointments.ts`)
 - Prompt assembly → `buildSystemPrompt()` (`src/lib/agents/core/promptBuilder.ts`)
 - Noise filtering → `looksLikeNoiseOrEmpty()` (`src/lib/call-pipeline/noise.ts`)
+- Report/delivery preferences → `agent_config.notify_*` / `attach_csv` / `digest_send_hour` (Settings
+  page → `businesses.agent_config`), consumed by `/api/cron/digest` (`docs/after-hours-report.md`)
 
 ## 3. Replace, don't stack
 

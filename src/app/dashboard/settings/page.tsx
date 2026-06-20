@@ -58,6 +58,35 @@ export default function SettingsPage() {
   const [agentName, setAgentName] = useState('');
   const [agentConfig, setAgentConfig] = useState<AgentConfig>({ ...DEFAULT_AGENT_CONFIG });
 
+  // Whether the production email sender (NOTIFY_EMAIL_FROM) is configured, from /api/notify-status.
+  // null = unknown (not loaded yet or probe failed) → we still show the no-domain notice, so we
+  // never imply production email is ready while the sender domain is unconfirmed.
+  const [emailConfigured, setEmailConfigured] = useState<boolean | null>(null);
+
+  // "Send test SMS" — fires /api/notify-test-sms, which texts the SAVED SMS destination only.
+  const [smsTest, setSmsTest] = useState<{ state: 'idle' | 'sending'; msg: string }>({ state: 'idle', msg: '' });
+
+  async function sendTestSms() {
+    setSmsTest({ state: 'sending', msg: '' });
+    try {
+      const res = await fetch('/api/notify-test-sms', { method: 'POST' });
+      const d = await res.json().catch(() => ({}));
+      const reasonText: Record<string, string> = {
+        sms_not_configured: 'SMS isn’t enabled on the server yet (Twilio env not set).',
+        no_destination: 'No SMS number saved — add one and save first.',
+        no_business: 'No business found for your account.',
+        rate_limited: 'Too many tests — wait a minute and retry.',
+        unauthorized: 'Please sign in again.',
+      };
+      const msg = d.ok
+        ? `Test SMS sent to ${d.to ?? 'your number'}.`
+        : `Couldn’t send: ${reasonText[d.reason as string] ?? d.reason ?? `error ${res.status}`}`;
+      setSmsTest({ state: 'idle', msg });
+    } catch {
+      setSmsTest({ state: 'idle', msg: 'Couldn’t send — network error.' });
+    }
+  }
+
   // Voice preview ("Test voice & speed") — previews the CURRENTLY selected (unsaved) voice + speed.
   const [previewState, setPreviewState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
   const [previewError, setPreviewError] = useState('');
@@ -110,6 +139,14 @@ export default function SettingsPage() {
       setPreviewError(err instanceof Error ? err.message : String(err));
     }
   }
+
+  useEffect(() => {
+    // Read-only capability probe — only booleans, no secrets. Drives the no-domain email notice.
+    fetch('/api/notify-status')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setEmailConfigured(d && typeof d.emailConfigured === 'boolean' ? d.emailConfigured : null))
+      .catch(() => setEmailConfigured(null));
+  }, []);
 
   useEffect(() => {
     // Demo mode never loads the real business — keep the mock profile and make saves a no-op
@@ -460,11 +497,24 @@ export default function SettingsPage() {
           <div className="px-5 py-4 border-b fd-hairline">
             <h2 className="font-semibold text-gray-900">After-hours report</h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              A daily summary of calls captured while your business was closed or unavailable — with a CSV report for easy follow-up. No need to monitor another dashboard.
+              Get one daily summary of calls FrontDesk captured while your team was unavailable.
+              Email is the main report; SMS is an optional short alert.
             </p>
           </div>
           <div className="p-5 space-y-5">
-            {/* Email digest */}
+            {/* No-domain notice — shown until the production email sender (NOTIFY_EMAIL_FROM) is
+                confirmed configured. Unknown status also shows it, so we never imply email is ready. */}
+            {emailConfigured !== true && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3">
+                <p className="text-xs text-amber-800 leading-relaxed">
+                  <span className="font-semibold">Email delivery is domain-gated.</span>{' '}
+                  Until a sender domain is configured, reports can be generated and SMS alerts can be
+                  tested, but production email delivery is not fully enabled.
+                </p>
+              </div>
+            )}
+
+            {/* Daily email report (primary) */}
             <div className="space-y-2">
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
@@ -473,45 +523,39 @@ export default function SettingsPage() {
                   onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_email: e.target.checked }))}
                   className="w-4 h-4 accent-orange-500"
                 />
-                <span className="text-sm text-gray-700">Email me a daily report (summary + CSV)</span>
+                <span className="text-sm text-gray-700">Send daily report</span>
               </label>
               {(agentConfig.notify_email ?? false) && (
-                <input
-                  type="email"
-                  value={agentConfig.notify_email_to ?? ''}
-                  onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_email_to: e.target.value }))}
-                  placeholder={business.email ? `Default: ${business.email}` : 'you@yourbusiness.com'}
-                  className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
-                />
-              )}
-            </div>
-
-            {/* SMS alert */}
-            <div className="space-y-2">
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={agentConfig.notify_sms ?? false}
-                  onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_sms: e.target.checked }))}
-                  className="w-4 h-4 accent-orange-500"
-                />
-                <span className="text-sm text-gray-700">Text me when the report is ready</span>
-              </label>
-              {(agentConfig.notify_sms ?? false) && (
-                <input
-                  type="tel"
-                  value={agentConfig.notify_sms_to ?? ''}
-                  onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_sms_to: e.target.value }))}
-                  placeholder={business.phone ? `Default: ${business.phone}` : '+1 (555) 123-4567'}
-                  className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
-                />
+                <div className="pl-7 space-y-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
+                      Report email
+                    </label>
+                    <input
+                      type="email"
+                      value={agentConfig.notify_email_to ?? ''}
+                      onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_email_to: e.target.value }))}
+                      placeholder={business.email ? `Default: ${business.email}` : 'you@yourbusiness.com'}
+                      className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                    />
+                  </div>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={agentConfig.attach_csv !== false}
+                      onChange={(e) => setAgentConfig((prev) => ({ ...prev, attach_csv: e.target.checked }))}
+                      className="w-4 h-4 accent-orange-500"
+                    />
+                    <span className="text-sm text-gray-700">Attach CSV</span>
+                  </label>
+                </div>
               )}
             </div>
 
             {/* Send time */}
             <div>
               <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1.5">
-                Send the report at
+                Send report at
               </label>
               <select
                 value={agentConfig.digest_send_hour ?? 8}
@@ -526,8 +570,60 @@ export default function SettingsPage() {
               </select>
             </div>
 
+            {/* SMS alert (optional) */}
+            <div className="space-y-2">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={agentConfig.notify_sms ?? false}
+                  onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_sms: e.target.checked }))}
+                  className="w-4 h-4 accent-orange-500"
+                />
+                <span className="text-sm text-gray-700">Text me when the report is ready</span>
+              </label>
+              <p className="text-xs text-gray-400">
+                Optional. Use this only if you want a short text alert in addition to the email report.
+              </p>
+              {(agentConfig.notify_sms ?? false) && (
+                <div className="pl-7 space-y-2">
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                      SMS alert number
+                    </label>
+                    <input
+                      type="tel"
+                      value={agentConfig.notify_sms_to ?? ''}
+                      onChange={(e) => setAgentConfig((prev) => ({ ...prev, notify_sms_to: e.target.value }))}
+                      placeholder={business.phone ? `Default: ${business.phone}` : '+1 (555) 123-4567'}
+                      className="w-full border fd-hairline-strong rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                    />
+                  </div>
+                  {businessId && (
+                    <>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={sendTestSms}
+                          disabled={smsTest.state === 'sending'}
+                          className="fd-btn fd-btn-ghost"
+                        >
+                          {smsTest.state === 'sending' ? 'Sending…' : 'Send test SMS'}
+                        </button>
+                        {smsTest.msg && <span className="text-xs text-gray-500">{smsTest.msg}</span>}
+                      </div>
+                      <p className="text-[11px] text-gray-400">
+                        Texts your <strong>saved</strong> SMS number — save changes first if you just edited it.
+                        On a Twilio trial, the number must be verified.
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
             <p className="text-xs text-gray-400">
-              FrontDesk protects calls you were already missing. Leave a destination blank to use your business email/phone above. Demo calls are never included.
+              FrontDesk reports the calls you were already missing. Leave a destination blank to use
+              your business email/phone above. Demo calls are never included.
             </p>
           </div>
         </div>

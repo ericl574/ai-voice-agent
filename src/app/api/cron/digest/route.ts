@@ -145,15 +145,17 @@ async function processBusiness(
       emailStatus = 'skipped';
       console.warn('[FD] digest email skipped — provider not configured (RESEND_* env missing)');
     } else {
+      const csvAttached = cfg.attach_csv !== false; // owner toggle; default attaches the CSV
       const { subject, text, html } = composeDigestEmail(
         { name: businessName, timezone: tz },
         digestCalls,
         `${SITE_URL.replace(/\/$/, '')}/dashboard/calls`,
+        { csvAttached },
       );
-      const csv = buildCallsCsv(digestCalls, tz);
-      const r = await sendEmail(emailTo, subject, text, html, [
-        { filename: `after-hours-calls-${date}.csv`, content: Buffer.from(csv, 'utf-8').toString('base64') },
-      ]);
+      const attachments = csvAttached
+        ? [{ filename: `after-hours-calls-${date}.csv`, content: Buffer.from(buildCallsCsv(digestCalls, tz), 'utf-8').toString('base64') }]
+        : undefined;
+      const r = await sendEmail(emailTo, subject, text, html, attachments);
       emailStatus = r.ok ? 'sent' : 'failed';
       console.log(`[FD] digest email (${biz.id}) → ${emailStatus}${r.reason ? ` (${r.reason})` : ''}`);
     }

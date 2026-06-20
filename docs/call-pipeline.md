@@ -301,6 +301,26 @@ right** (`roleLabel()`), falling back to the raw `calls.transcript` column only 
 exist. The existing `calls.needs_staff_followup` flag is surfaced as a **"Follow-up" badge** + a
 **"Needs follow-up" filter** (no schema change). Demo mode and `business_id` scoping are unchanged.
 
+## 7. Missed-call reporting connection (why the pipeline exists)
+
+The pipeline serves the MVP deliverable: a **daily after-hours report** of the calls the business
+was already missing (`docs/after-hours-report.md`, `docs/product-scope.md`).
+
+- **Saved calls feed the daily digest.** `/api/cron/digest` reads the `calls` saved by this pipeline
+  (browser test + Twilio phone calls both run through `postCallCore`) and emails the owner one
+  report per business per local day, with a CSV attached (`agent_config.attach_csv`, default on).
+  Demo calls are never saved, so they're never in a report.
+- **Transcript → summary/details → report.** The report's per-call rows come from what this pipeline
+  captures: caller name/phone, intent, `summary`, and any linked appointment date/time. **Capture
+  quality directly determines report quality** — a garbled or thin transcript yields a weak report.
+- **`calls.next_action` supports follow-up.** The completeness check (§5) appends `Missing from
+  call: …` to `next_action`; that field becomes the report's **suggested follow-up** column.
+- **Appointments / service requests are captured outcomes, not the whole product.** Extraction
+  records caller intent for staff follow-up; the report — not a booking workflow — is the value.
+- **Do not change VAD, model, or provider** to "improve" reports without Eric's explicit approval
+  (same rule as §1); report quality is improved upstream by better capture, not by swapping the
+  realtime stack.
+
 ## Cross-cutting rules
 
 - **Business local time:** the prompt injects today + the current local time at session creation via

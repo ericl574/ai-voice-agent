@@ -17,6 +17,10 @@ first. Detailed guides: `docs/stripe-setup.md`, `docs/twilio-setup.md`, `docs/pi
 
 ## B. Stripe test subscription (20 min) — `docs/stripe-setup.md`
 
+> **Optional, not the reporting-MVP focus.** Billing is **test-mode scaffolding** (plan status is
+> stored/displayed, **not enforced** — see §E). The current MVP is missed-call capture + the daily
+> report; skip this section unless Eric is explicitly working the billing phase.
+
 - [ ] Supabase: run `supabase/migrations/20260611000000_billing_subscriptions.sql`.
 - [ ] Stripe test mode: create Starter + Pro products/prices; webhook endpoint
       `https://<domain>/api/billing/webhook` (5 events listed in the guide).
@@ -45,6 +49,7 @@ first. Detailed guides: `docs/stripe-setup.md`, `docs/twilio-setup.md`, `docs/pi
 
 ## E. Known limitations (do not promise these yet)
 
-- One Twilio number → one business (env-mapped). No per-business numbers, no SMS.
+- One Twilio number → one business (env-mapped). No per-business numbers yet. SMS is limited to the
+  **optional after-hours report alert** (`docs/after-hours-report.md`), not per-call texting.
 - Plan status is stored/displayed, not enforced (no feature gating).
 - Bridge must move to an always-on host (Railway/Render/Fly) before any pilot relies on it.

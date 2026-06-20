@@ -34,6 +34,10 @@ manual on purpose — automate later, after the process has been run at least on
   **timezone** (critical — drives "today/tomorrow" on calls), front desk name + greeting.
 - [ ] Settings: business hours, walk-in policy, callback expectation, escalation rule, tone,
   voice + speed (play the preview for them).
+- [ ] Settings → **After-hours report** (the main deliverable): enable the daily email report, set
+  the report email (and optionally the SMS alert + number), pick the send hour. If the sender domain
+  isn't configured yet, the card shows a domain-gated notice — that's expected; SMS still tests and
+  reports still generate (`docs/after-hours-report.md`).
 - [ ] Knowledge base: enter their top ~10 caller questions (hours, prices/policy, services,
   parking, cancellation policy...). Use their words — the front desk answers from this only.
 - [ ] Reservation confirmation mode: keep **staff-confirm** for the pilot (auto mode's SMS
@@ -41,8 +45,10 @@ manual on purpose — automate later, after the process has been run at least on
 - [ ] Place 3–5 realistic test calls with them on `/dashboard/voice` (a booking, a price
   question, something not in the KB, an end-call). Show how each lands in the dashboard.
 - [ ] Walk through the staff loop: Overview → priority actions → confirm/decline → call history.
-- [ ] Set expectations explicitly: browser-based test line (no real phone number yet), requests
-  are pending until staff confirms, transcripts are stored and deletable on request.
+- [ ] Set expectations explicitly: the value is **one daily report** of the calls FrontDesk captured
+  (the dashboard is history/settings, not daily software to monitor); browser-based test line (no
+  real phone number yet); requests are pending until staff confirms; transcripts are stored and
+  deletable on request.
 
 ## 3. During the pilot (weekly)
 

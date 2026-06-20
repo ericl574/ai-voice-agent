@@ -26,7 +26,8 @@ after hours.
    digest has gone out for that local day yet.
 4. The digest email contains: total calls, and per call — caller name, phone, request type,
    preferred date/time (if captured), short summary, suggested follow-up, and call time. A
-   **CSV** with the same columns is attached.
+   **CSV** with the same columns is attached when the owner's **Attach CSV** toggle is on
+   (`agent_config.attach_csv`, default on); the email copy adapts when it's off.
 5. Optional SMS says only: *"FrontDesk captured 6 after-hours calls. Report sent to your email."*
 6. A `call_digests` row records the send (one per business per local day) so a digest is never sent
    twice and the next one only includes newer calls.
@@ -36,9 +37,22 @@ saved calls (the cron is completely decoupled from the save path).
 
 ## Owner setup (in-app)
 
-Dashboard → **Settings → After-hours report**: enable the email report (and optionally the SMS
-alert), set a destination (or leave blank to use the business email/phone on file), and pick the
-send hour. Save.
+Dashboard → **Settings → After-hours report**: enable the email report (set a **Report email** or
+leave blank to use the business email on file; **Attach CSV** is on by default), optionally enable
+the SMS alert (a short, optional text — not required), and pick the **send hour**. Save.
+
+The card shows a **domain-gated notice** until the production email sender is configured. The page
+learns this from a read-only probe — `GET /api/notify-status` returns only `{ emailConfigured,
+smsConfigured }` booleans (derived from `isEmailConfigured()`/`isSmsConfigured()`, never a key or
+sender value). While `NOTIFY_EMAIL_FROM` is missing the notice stays up and the cron logs email as
+`skipped`; reports can still be generated and SMS can still be tested. The notice clears itself
+once a sender domain is configured.
+
+**Probe auth:** `/api/notify-status` requires a **signed-in user** (same pattern as
+`/api/billing/status` — the auth check uses the user's own cookie/RLS session via the anon key, no
+service role). A signed-out or demo caller gets **401**, which the Settings page treats as "unknown"
+and **keeps the no-domain notice up** (fail-safe) — so an anonymous visitor can't probe infra status
+and the UI never implies email is ready.
 
 ## Deployment setup
 

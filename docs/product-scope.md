@@ -5,19 +5,41 @@ build yet. Root rules live in `CLAUDE.md`; this is the detailed product referenc
 
 ## What FrontDesk is
 
-A SaaS **virtual front desk / answering service** for local service businesses. It answers customer
-calls naturally, uses the business's own knowledge, captures useful details, creates appointment /
-service requests when relevant, and gives staff clear next actions on a dashboard.
+A SaaS **after-hours / missed-call capture** service for local service businesses — a lightweight
+answering service, **not** a full daytime workflow or staff replacement. The business forwards the
+calls it was already missing (after hours, no-answer, busy) to FrontDesk; it answers naturally, uses
+the business's own knowledge, captures the caller's request and contact details, and saves the call.
+The owner's value arrives as **one clean daily report**, not as another system to babysit.
 
-Sell a **better front desk service**, not an "AI bot."
+Customer-facing promise: **FrontDesk answers calls the business was already missing, captures the
+caller's request, and sends one clean daily report.**
+
+Sell a **better way to stop missing calls**, not an "AI bot."
+
+## Current MVP (the value loop)
+
+1. Business forwards no-answer / busy / after-hours calls to FrontDesk.
+2. FrontDesk answers, captures the caller's request, and the call is **saved**.
+3. The owner receives **one daily report**.
+
+- **Email report + CSV is the primary deliverable.** **SMS is an optional, short alert only** (e.g.
+  "FrontDesk captured 6 after-hours calls. Report sent to your email.") — never required.
+- The **dashboard is secondary**: settings, call history, report archive, basic config. The owner
+  does not need to live in the dashboard.
+- **Appointments / service requests are captured outcomes**, not a forced workflow and not the core
+  adoption requirement. Capture the caller's intent; let staff follow up.
+- Reporting setup, no-domain behavior, and the cron live in `docs/after-hours-report.md`.
 
 ## Customer-facing language
 
-**Prefer:** front desk, virtual front desk, answering service, call handling, receptionist,
-customer calls, appointments, service requests, follow-up, staff dashboard, business knowledge,
-"Try our service".
+**Prefer:** after-hours, missed calls, calls you were already missing, answering service, call
+capture, daily report, captured requests, follow-up, business knowledge, "Try our service".
 
 **Avoid overusing:** AI agent, chatbot, bot, simulator, automation tool.
+
+**Avoid implying:** that FrontDesk replaces your daytime staff / receptionist, runs your whole front
+desk, or that SMS is required. The promise is **capturing the calls you were already missing** and
+sending **one daily report** — not staffing your front desk.
 
 **Never:** claim the assistant is a human. If a caller asks, say plainly it's an automated/AI
 assistant (see `docs/agent-behavior.md`).
@@ -74,11 +96,28 @@ by the agent default to `pending` (staff confirms) — see false-confirmation ru
 
 ## What NOT to build yet
 
+**Current reporting MVP — maintained, not expanded:** Resend email report + CSV, and the optional
+Twilio SMS report alert. Improve these within the missed-call reporting MVP; do not broaden their
+scope without approval.
+
+**Twilio inbound phone (approved path, not production-verified):** Twilio is the approved phone/SMS
+provider path, but **real call forwarding requires a deployed/verified Twilio bridge** and is not
+production-verified by default (`docs/twilio-setup.md`, `docs/deploy-checklist.md`). Do not promise
+production phone service before manual verification; the default test surface is the browser voice
+line.
+
+**Billing (present, not the current focus):** Stripe billing **scaffolding** exists (test-mode
+checkout / portal / webhook / status + plan display) but is **not enforced** (no feature gating) and
+is **not part of the reporting MVP focus**. Setup lives in `docs/stripe-setup.md`; treat billing as
+out of current scope.
+
 Do not add (without explicit Eric approval):
 
-- Twilio / Retell / Vapi / any phone or voice **platform**
-- SMS, real phone numbers, or real phone integration
-- Billing, payments, or card collection
+- New phone/voice **platforms** (Retell / Vapi / etc.) or new production phone-number flows beyond
+  the existing single-number Twilio path
+- New messaging or reporting **channels** beyond the existing email/SMS report
+- New or expanded payment / card-collection / billing flows
 - A different model, provider, or voice platform
 
-These are out of scope for the current MVP. The reservation-confirm SMS is a **stub** only.
+The reservation-confirm SMS (auto-confirm mode) is a **stub** only — distinct from the after-hours
+report SMS alert, which is real.

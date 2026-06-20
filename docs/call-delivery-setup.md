@@ -1,11 +1,20 @@
 # Call Delivery — Setup Guide (SMS + email alerts to the business)
 
-Call Delivery is what makes FrontDesk a real answering service: after every non-demo completed
-call, the business owner gets the caller's details by **text and/or email** — no need to open the
-dashboard. The dashboard becomes history/settings/archive.
+> **MVP-default delivery is the daily after-hours report**, not per-call alerts. The owner's main
+> deliverable is one daily email report + CSV (optional short SMS) — see `docs/after-hours-report.md`.
+> The **per-call** instant SMS/email described here is an **optional** mode (`delivery_mode =
+> instant_*`), **off by default**. This guide is the external provider setup that both the digest and
+> the optional per-call modes share (Twilio + Resend).
 
-The code path is complete and shared by **both** browser test calls and Twilio phone calls (they
-run through the same post-call core). This guide is the external setup.
+Per-call Call Delivery (when enabled) sends, after every non-demo completed call, the caller's
+details by **text and/or email** — no need to open the dashboard. The dashboard stays
+history/settings/archive either way.
+
+The code path is complete and shared by the same post-call core for both browser test calls and
+Twilio phone calls. Note the **browser voice line is the default test surface**; real Twilio phone
+calls require a **deployed/verified Twilio bridge** (`docs/twilio-setup.md`) and are not
+production-verified by default — don't promise production phone service before manual verification.
+This guide is the external provider setup.
 
 ## How it works
 

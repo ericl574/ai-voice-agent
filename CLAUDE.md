@@ -1,14 +1,36 @@
 # FrontDesk — Claude Code Project Guide
 
-FrontDesk is a real SaaS MVP: a **virtual front desk / answering service** for local service
-businesses. It answers customer calls naturally, uses business knowledge, captures useful details,
-creates appointment/service requests, and gives staff clear next actions.
+FrontDesk is a real SaaS MVP: an **after-hours / missed-call capture** service for local service
+businesses. It answers the calls a business was already missing (after hours, no-answer, busy),
+captures the caller's request naturally using business knowledge, saves the call, and sends the
+owner **one clean daily report**. It is a lightweight answering service — **not** a full daytime
+staff replacement.
 
 Claude Code is the implementation agent. Eric / ChatGPT are PM, QA, and final approval.
 
 **This file is the root constitution and index — keep it lean.** It holds permanent rules, safety,
 workflow, and pointers. Deep detail lives in `docs/` (linked below). Do not use this file as a
 changelog. When architecture changes, update the relevant doc **in the same task**.
+
+## Current MVP direction
+
+FrontDesk is an **after-hours / missed-call capture** system. The business forwards no-answer /
+busy / after-hours calls to FrontDesk; it answers, captures the caller's request, and saves the
+call. The owner's main deliverable is **one daily report**:
+
+- **Email summary + CSV is the primary report.** **SMS is an optional short alert only** — never
+  required.
+- The **dashboard is secondary** (settings / call history / report archive), not a daily operations
+  cockpit. The owner does not need to live in it.
+- Appointments / service requests are **captured caller outcomes**, not a forced workflow or the
+  core adoption requirement.
+- Do **not** position FrontDesk as a full daytime staff/receptionist replacement.
+- **No-domain mode is valid:** `RESEND_API_KEY` may be set while `NOTIFY_EMAIL_FROM` is intentionally
+  missing until a sender domain is configured. Email then **skips safely**, SMS still works, the cron
+  records status and never crashes. **Never imply production email is fully enabled while the sender
+  domain is missing** — the Settings notice + `/api/notify-status` probe enforce this.
+
+Deeper detail: `docs/product-scope.md` and `docs/after-hours-report.md`.
 
 ## Documentation index
 
@@ -19,13 +41,19 @@ changelog. When architecture changes, update the relevant doc **in the same task
 - Design system & UI conventions → `docs/design-system.md`
 - Demo/real architecture & known debt → `docs/demo-architecture-debt.md`
 - AI collaboration workflow → `docs/ai-collaboration-workflow.md`
+- MVP activation runbook (env, setup, manual end-to-end tests) → `docs/mvp-activation-runbook.md`
 
 ## Tech stack
 
 - Next.js App Router (`src/`), TypeScript strict, Tailwind CSS
 - Supabase Auth + Postgres + RLS
 - OpenAI Realtime API via browser WebRTC; server mints ephemeral sessions, browser never gets the raw key
-- Vercel deployment
+- Vercel deployment (incl. Cron → `/api/cron/digest` for the daily report)
+- Reporting integrations (server-side only): **Resend** (email report + CSV) and **Twilio** (optional
+  SMS report alert). Twilio is also the approved inbound-phone path, but **real call forwarding
+  requires a deployed/verified Twilio bridge** and is not production-verified by default
+  (`docs/twilio-setup.md`). Stripe billing scaffolding exists in the repo but is **not enforced and
+  not part of the reporting MVP focus** (`docs/stripe-setup.md`).
 
 Use the existing configured model and Realtime architecture. **Do not change model, provider, or
 voice platform unless Eric explicitly approves.**
@@ -59,7 +87,10 @@ voice platform unless Eric explicitly approves.**
 14. Keep demo mode working.
 15. Keep the platform generalized across service businesses (restaurants are only the first demo
     vertical — see `docs/product-scope.md`).
-16. Do not add Twilio, SMS, billing, payments, phone numbers, or real phone integration.
+16. Do not add or expand billing, payments, new phone-provider integrations, production
+    phone-number flows, or new messaging/reporting channels unless Eric explicitly approves.
+    Existing approved Twilio/Resend reporting code may be maintained and improved within the
+    missed-call reporting MVP.
 17. Never claim the assistant is a human. Never say an appointment is "confirmed" unless the flow
     truly confirms it.
 

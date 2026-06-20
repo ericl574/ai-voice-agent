@@ -28,6 +28,7 @@ export interface AgentConfig {
   notify_sms?: boolean;
   notify_email_to?: string;       // override email destination; falls back to businesses.email
   notify_sms_to?: string;         // override SMS destination; falls back to businesses.phone
+  attach_csv?: boolean;           // attach the calls CSV to the digest email (default: true)
   // Delivery model. MVP default is the daily after-hours digest (sent by /api/cron/digest); the
   // instant_* modes are optional per-call delivery (kept, but off by default).
   delivery_mode?: 'daily_digest' | 'after_hours_digest' | 'instant_all' | 'instant_action_needed';

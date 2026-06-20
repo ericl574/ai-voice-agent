@@ -79,6 +79,22 @@ font. There are **no** Google Font `@import`s — keep it that way.
 - **No heavy shadows, no large radii.** Hairline borders + soft 10–14px radii carry the
   hierarchy. One accent color, used sparingly.
 
+## Reporting & settings UI (after-hours report)
+
+The product's value is **one calm daily report**, so the settings/reporting surfaces must feel
+calm, premium, simple, and trustworthy — **not** a complex operations cockpit. The dashboard is a
+lightweight control center, not mandatory daily software the owner must monitor.
+
+- **Make report setup obvious.** Settings → After-hours report is a primary configuration surface;
+  it should read at a glance (enable report → where it goes → when) without dense controls.
+- **Email is visually primary; SMS is secondary and clearly optional.** Lead with the email report +
+  CSV; present the SMS alert as a smaller, opt-in add-on with helper text that says it's optional.
+- **No-domain notices: clear, not scary.** When the production email sender isn't configured, use a
+  calm informational tone (soft amber, not red/danger) — reports can still be generated and SMS
+  tested; production email just isn't fully enabled yet. Never imply email is ready when it isn't.
+- **Don't add operations-cockpit complexity** (live queues, dense tables, real-time dashboards) to
+  reporting surfaces. History/archive views stay quiet and scannable (cards over tables).
+
 ## Redesign status (as of working tree)
 
 - Done: Overview, Call History, Appointments, Service Requests, Voice test page, shared chrome

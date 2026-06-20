@@ -2,6 +2,16 @@
 
 > Updated 2026-06-07 after unifying demo mode behind a single source of truth (mixed-mode fix).
 
+## Demo & real — product direction
+
+- **Demo stays isolated and never persists real data** (mock fixtures, no-op writes — see below).
+- **Demo should showcase the value loop:** a call → a captured request → a summary / call-history /
+  report-style output, so a prospect sees what the daily report is built from.
+- **Demo must not imply production phone or email is fully enabled** without real setup. The live
+  report depends on a **signed-in business's configuration** (Settings → After-hours report), and
+  **no-domain mode is a valid pre-customer state** — `NOTIFY_EMAIL_FROM` may be missing, so email
+  skips safely while SMS can still be tested (`docs/after-hours-report.md`).
+
 ## Single source of truth (current design)
 
 Demo vs real is resolved **once on the server** and shared with the entire dashboard subtree:
