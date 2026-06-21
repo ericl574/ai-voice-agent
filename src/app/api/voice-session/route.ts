@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
 import type { AgentConfig } from '@/lib/supabase/businesses';
 import { REALTIME_TRANSCRIPTION_MODEL, TRANSCRIPTION_LANGUAGE_HINT } from '@/lib/call-pipeline/constants';
+import { REALTIME_VAD, REALTIME_NOISE_REDUCTION } from '@/lib/realtime/turnDetection';
 import { buildSystemPrompt } from '@/lib/agents/core/promptBuilder';
 import { getDemoBusiness } from '@/lib/agents/demoBusinesses';
 import { getVertical } from '@/lib/agents/verticals/registry';
@@ -144,35 +145,13 @@ export async function POST(req: Request) {
           // `language` is a soft hint (default English, auto-switches on clearly non-English speech).
           audio: {
             input: {
-              noise_reduction: {
-                type: 'far_field',
-            },
-              turn_detection: {
-                type: 'server_vad',
-                // 0.70 (was 0.65) — slightly higher bar so background noise is less likely to be
-                // committed as a caller turn. prefix_padding 300ms + silence 1000ms unchanged so
-                // short replies ("yes", "Friday", "2 PM") still register quickly.
-                threshold: 0.70,
-                prefix_padding_ms: 300,
-                silence_duration_ms: 1000,
-                // Response creation differs by client:
-                //  • Dashboard test call (`/dashboard/voice`, posts no `demo` flag → isDemo=false):
-                //    APP-CONTROLLED (`create_response:false`). Server VAD still commits the turn and
-                //    runs input transcription, but the browser (`voice/page.tsx sendResponseCreate`)
-                //    creates exactly one response per turn AFTER the caller transcript passes the
-                //    noise + caller-intent gate — so background speech can't trigger a reply early.
-                //    Tradeoff: replies wait ~1-2s for the transcript (Layer 2). See docs/call-pipeline.md.
-                //  • Landing "Try Our Service" demo (`CallSimulatorDemo`, posts `{ demo: true }` →
-                //    isDemo=true): SERVER auto-response (`create_response:true`). That widget is a thin
-                //    marketing client with no data-channel message handler / app-side response creation,
-                //    so it relies on the server to speak. Full Layer-2 orchestration there is deferred.
-                create_response: isDemo === true,
-                // Do NOT let detected speech truncate the assistant mid-reply. Background
-                // noise / nearby speech (or the assistant's own voice leaking into the mic)
-                // was barging in and causing the assistant to cut off and repeat itself.
-                // The assistant now finishes its turn; the next caller turn is handled after.
-                interrupt_response: false,
-              },
+              noise_reduction: REALTIME_NOISE_REDUCTION,
+              // Shared turn-taking config (src/lib/realtime/turnDetection) — IDENTICAL on the phone
+              // bridge so the two paths can't drift (that drift was why phone calls felt worse). Only
+              // create_response is per-client: APP-CONTROLLED (false) for the dashboard test call (the
+              // browser creates one response per turn after the noise/intent gate — Layer 2), and the
+              // SERVER auto-response (true) for the landing "Try Our Service" demo. See docs/call-pipeline.md.
+              turn_detection: { ...REALTIME_VAD, create_response: isDemo === true },
               transcription: {
                 model: REALTIME_TRANSCRIPTION_MODEL,
                 // Include `language` only when a hint is set. It is null by default so

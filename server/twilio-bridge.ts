@@ -25,6 +25,9 @@
 
 import http from 'http';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
+// Shared turn-taking config — the SAME source the browser session uses, so phone and browser can't
+// drift. Relative .ts import (resolved by `node --experimental-strip-types`, like the QA scripts).
+import { REALTIME_VAD, REALTIME_NOISE_REDUCTION } from '../src/lib/realtime/turnDetection.ts';
 
 const PORT = Number(process.env.BRIDGE_PORT ?? 8787);
 const APP_URL = (process.env.FD_APP_URL ?? process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
@@ -134,7 +137,16 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
           instructions: cfg.instructions,
           input_audio_format: 'g711_ulaw',
           output_audio_format: 'g711_ulaw',
-          turn_detection: { type: 'server_vad' },
+          // Same tuned VAD as the GA shape (shared REALTIME_VAD), so the fallback isn't a silent
+          // quality regression. `interrupt_response` is intentionally omitted here — the legacy beta
+          // shape may not support it. This fallback only fires if the GA session.update above errors,
+          // which does not happen on the current `gpt-realtime` model.
+          turn_detection: {
+            type: 'server_vad',
+            threshold: REALTIME_VAD.threshold,
+            prefix_padding_ms: REALTIME_VAD.prefix_padding_ms,
+            silence_duration_ms: REALTIME_VAD.silence_duration_ms,
+          },
           input_audio_transcription: { model: TRANSCRIPTION_MODEL },
           ...(cfg.voice ? { voice: cfg.voice } : {}),
         },
@@ -148,9 +160,12 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
           audio: {
             input: {
               format: { type: 'audio/pcmu' },
-              // Phone path uses the server's default VAD + auto-response (no browser Layer-2
-              // orchestration here). The dashboard's tuned VAD settings are NOT touched.
-              turn_detection: { type: 'server_vad' },
+              // Shared turn-taking config — IDENTICAL to the browser (src/lib/realtime/turnDetection):
+              // tuned VAD + interrupt_response:false, so the assistant finishes its turn instead of
+              // being talked over / truncated. create_response stays at the server default
+              // (auto-response) for the phone path; app-controlled responses are Phase 2.
+              turn_detection: { ...REALTIME_VAD },
+              noise_reduction: REALTIME_NOISE_REDUCTION,
               transcription: { model: TRANSCRIPTION_MODEL },
             },
             output: {
@@ -195,13 +210,13 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
             const discarded = pendingAudio.length;
             pendingAudio.length = 0;
             log(`session ready (discarded ${discarded} pre-greeting frames) — greeting caller`);
-            sendToOpenAI({
-              type: 'response.create',
-              response: {
-                instructions:
-                  'Open the call now with your GREETING from the instructions — one complete sentence using the business name — then stop and wait for the caller.',
-              },
-            });
+            // Bare response.create — NO per-response `instructions`. In the Realtime API,
+            // `response.instructions` REPLACES the session instructions for that one turn, which
+            // stripped the GREETING text, the business name, and the "always open in English" rule —
+            // so the model freelanced the first turn in a random language (it greeted in Vietnamese).
+            // The browser path greets with a bare response.create and stays in English; match it. The
+            // session prompt (buildSystemPrompt GREETING + LANGUAGE rules) drives the greeting.
+            sendToOpenAI({ type: 'response.create' });
           }
           break;
         }
@@ -225,11 +240,10 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
           }
           break;
         }
-        // Caller barge-in: flush Twilio's queued assistant audio so the caller isn't talked over.
-        case 'input_audio_buffer.speech_started': {
-          if (streamSid) sendToTwilio({ event: 'clear', streamSid });
-          break;
-        }
+        // No barge-in: with interrupt_response:false (REALTIME_VAD) the assistant finishes its reply
+        // and the caller's turn is handled after — matching the browser. We deliberately no longer
+        // clear Twilio's queued audio on speech_started; that manual clear previously truncated the
+        // assistant (and the greeting) whenever the caller made any early sound.
         // Transcript turns (same roles the dashboard uses).
         case 'conversation.item.input_audio_transcription.completed': {
           const text = ((event.transcript as string) ?? '').trim();

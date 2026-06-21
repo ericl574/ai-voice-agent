@@ -81,8 +81,9 @@ key never leaves the server. Session payload includes:
   verified accepted by the Realtime API 2026-06-08).
 - **Current business time:** the prompt's BUSINESS INFO injects today + the current local time via
   `nowInTimeZone(business.timezone)` (`src/lib/call-pipeline/time.ts`), computed once at session
-  creation, so the agent can answer "what time is it?" and reject same-day past times. See
-  `promptBuilder.ts`.
+  creation, so the agent can answer "what time is it?" and is *asked* to avoid same-day past times.
+  The model is unreliable at this in-call; the deterministic past-time check is **post-call** (§8,
+  `pastTime.ts`) and reliable in-call rejection is Phase 2. See `promptBuilder.ts`.
 - **Demo isolation:** a `{ demo: true, businessType }` body builds the prompt from
   `getDemoBusiness()` and never reads the signed-in account (see `docs/demo-architecture-debt.md`).
 
@@ -323,15 +324,28 @@ was already missing (`docs/after-hours-report.md`, `docs/product-scope.md`).
 
 ## 8. Real phone path (Twilio bridge) — call-quality notes
 
-The phone path (`server/twilio-bridge.ts`) shares the prompt (`buildSystemPrompt`) and the post-call
-core (`runPostCallExtraction`) with the browser path, so behavior fixes apply to both. Specifics:
+The phone path (`server/twilio-bridge.ts`) shares the prompt (`buildSystemPrompt`), the **turn-taking
+config** (`src/lib/realtime/turnDetection.ts`), and the post-call core (`runPostCallExtraction`) with
+the browser path, so behavior applies to both and the two paths can't drift. Specifics:
 
+- **Turn-taking (shared — `REALTIME_VAD`):** one source of truth for `server_vad` (threshold `0.7`,
+  `prefix_padding_ms 300`, `silence_duration_ms 1000`, **`interrupt_response:false`**) +
+  `REALTIME_NOISE_REDUCTION` (`far_field`), consumed by both `/api/voice-session` and the bridge. The
+  divergence (bridge ran bare defaults) was why phone calls felt worse. `create_response` is the only
+  per-path value (browser dashboard app-controlled `false`; landing demo + phone server `true`).
+- **No barge-in (phone):** with `interrupt_response:false` the assistant finishes its turn; the
+  bridge's old manual `clear` on `speech_started` is **removed** (it truncated the assistant/greeting
+  whenever the caller made any early sound).
 - **Greeting (shared):** the opening line lives in the prompt's `GREETING` section
   (`promptBuilder.ts`) — the owner's saved greeting (with `{business_name}`/`{agent_name}` resolved)
-  or a complete default using the business name. The bridge triggers it via `response.create` on
-  `session.updated`. **Fix:** the bridge now **discards** audio buffered before the session was ready
-  rather than flushing it, so an early "hello"/line noise can't trigger a competing response or a
-  barge-in `clear` that truncated the greeting (the "…calling the front" bug).
+  or a complete default using the business name. The bridge triggers it with a **bare**
+  `response.create` (no per-response `instructions` — `response.instructions` *replaces* the session
+  prompt for that turn, which stripped the English rule + greeting and made the model open in a random
+  language, e.g. Vietnamese). The bridge also **discards** audio buffered before the session was ready.
+- **Past-time guard (deterministic, shared):** `isPastAppointment()` (`call-pipeline/pastTime.ts`) —
+  after the call, if a captured appointment's local date+time is before "now" in the business
+  timezone, a warning is appended to `next_action` (→ appointment `staff_notes`) and the call stays
+  `pending`, never a clean booking. Phase 1 flags for staff; **in-call rejection is Phase 2.**
 - **Status (shared):** `deriveCallStatus()` (`call-pipeline/callStatus.ts`) sets `calls.status` from
   the outcome — actionable or incomplete → `pending` (the Follow-up state), only a handled call stays
   `resolved`. Both insert paths still write `resolved` initially; the post-call core corrects it. A
@@ -350,8 +364,9 @@ core (`runPostCallExtraction`) with the browser path, so behavior fixes apply to
 
 - **Business local time:** the prompt injects today + the current local time at session creation via
   `nowInTimeZone(business.timezone)` (computed once — no live refresh for MVP). The agent uses it for
-  "what time is it?", "today"/"tomorrow", same-day past-time rejection, and business-hours checks,
-  and must **never** ask the caller what time it is. (See §1; `promptBuilder.ts`.)
+  "what time is it?", "today"/"tomorrow", and business-hours guidance, and must **never** ask the
+  caller what time it is. (Same-day past-time *rejection* is only prompted, not reliable in-call — the
+  deterministic guard is post-call; see §8. See §1; `promptBuilder.ts`.)
 - **Language policy:** transcription auto-detects the caller's language (no `language` hint); the
   assistant's response language is prompt-driven and "newest clear request wins" — full behavior in
   `docs/agent-behavior.md`.

@@ -19,6 +19,9 @@ import { looksLikeNoiseOrEmpty } from '../src/lib/call-pipeline/noise.ts';
 import { classifyCallerIntent } from '../src/lib/call-pipeline/intent.ts';
 import { looksLikeEndCall } from '../src/lib/call-pipeline/endCall.ts';
 import { deriveCallStatus } from '../src/lib/call-pipeline/callStatus.ts';
+import { isPastAppointment } from '../src/lib/call-pipeline/pastTime.ts';
+import { REALTIME_VAD, REALTIME_NOISE_REDUCTION } from '../src/lib/realtime/turnDetection.ts';
+import { readFileSync } from 'node:fs';
 import {
   decideDelivery,
   composeCallSms,
@@ -596,6 +599,56 @@ test('deriveCallStatus — actionable but missing required details → pending',
 test('deriveCallStatus — answered question / nothing to do → resolved', () => {
   eq(deriveCallStatus('general_question', 0), 'resolved', 'plain question → resolved');
   eq(deriveCallStatus('other', 0), 'resolved', 'no actionable intent → resolved');
+});
+
+// ── Realtime session parity (browser ⇄ phone share ONE turn-taking config) ────
+
+test('REALTIME_VAD — locked safety-critical turn-taking values', () => {
+  eq(REALTIME_VAD.type, 'server_vad', 'server VAD');
+  eq(REALTIME_VAD.threshold, 0.7, 'threshold');
+  eq(REALTIME_VAD.prefix_padding_ms, 300, 'prefix padding');
+  eq(REALTIME_VAD.silence_duration_ms, 1000, 'silence duration');
+  eq(REALTIME_VAD.interrupt_response, false, 'no barge-in — assistant finishes its turn');
+  eq(REALTIME_NOISE_REDUCTION.type, 'far_field', 'far-field noise reduction');
+});
+
+test('browser + phone both consume the shared turn-taking config (no drift)', () => {
+  const voiceSession = readFileSync('src/app/api/voice-session/route.ts', 'utf8');
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  assert(voiceSession.includes('REALTIME_VAD'), 'voice-session uses shared REALTIME_VAD');
+  assert(bridge.includes('REALTIME_VAD'), 'phone bridge uses shared REALTIME_VAD');
+  assert(bridge.includes('REALTIME_NOISE_REDUCTION'), 'phone bridge uses shared noise reduction');
+});
+
+test('phone greeting uses the session prompt (bare response.create), not a per-response override', () => {
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  assert(bridge.includes("sendToOpenAI({ type: 'response.create' })"), 'bridge sends a bare response.create');
+  assert(!bridge.includes('your GREETING from the instructions'), 'no per-response greeting override remains');
+});
+
+test('phone bridge no longer force-clears Twilio audio on caller speech (no barge-in truncation)', () => {
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  assert(!bridge.includes("sendToTwilio({ event: 'clear', streamSid })"), 'manual barge-in clear removed');
+});
+
+// ── Past-time appointment guard (deterministic; flags, never silently books) ──
+
+test('isPastAppointment — earlier-today time is flagged as past', () => {
+  const now = new Date('2026-06-21T18:30:00-07:00'); // 6:30 PM in America/Vancouver (PDT)
+  eq(isPastAppointment('2026-06-21', '17:00', 'America/Vancouver', now), true, '5pm today already passed');
+  eq(isPastAppointment('2026-06-21', '9:00', 'America/Vancouver', now), true, 'unpadded morning time also past');
+});
+
+test('isPastAppointment — future time is not flagged', () => {
+  const now = new Date('2026-06-21T18:30:00-07:00');
+  eq(isPastAppointment('2026-06-21', '19:00', 'America/Vancouver', now), false, '7pm today is upcoming');
+  eq(isPastAppointment('2026-06-22', '09:00', 'America/Vancouver', now), false, 'tomorrow is not past');
+});
+
+test('isPastAppointment — missing date or time is never flagged', () => {
+  const now = new Date('2026-06-21T18:30:00-07:00');
+  eq(isPastAppointment(null, '17:00', 'America/Vancouver', now), false, 'no date');
+  eq(isPastAppointment('2026-06-21', null, 'America/Vancouver', now), false, 'no time');
 });
 
 // ── Results ──────────────────────────────────────────────────────────────────

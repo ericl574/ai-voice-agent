@@ -18,6 +18,7 @@ import {
 } from './extraction';
 import { getVertical } from '@/lib/agents/verticals/registry';
 import { deriveCallStatus } from './callStatus';
+import { isPastAppointment } from './pastTime';
 import { todayInTimeZone, DEFAULT_BUSINESS_TIMEZONE } from './time';
 import type { AgentConfig } from '@/lib/supabase/businesses';
 import { sendReservationSms, reservationConfirmUrl } from '@/lib/sms/sendReservationSms';
@@ -237,6 +238,23 @@ export async function runPostCallExtraction(opts: {
       extraction.next_action =
         `${extraction.next_action} Missing from call: ${missingRequired.join(', ')}.`.trim();
     }
+  }
+
+  // Deterministic past-time guard (Phase 1: flag for staff; in-call rejection is Phase 2). A voice
+  // model can't reliably tell that a requested time is already past, so verify it in code: if the
+  // captured appointment time is before "now" in the business timezone, warn staff and don't let it
+  // read as a clean booking. Status stays 'pending' (actionable) via deriveCallStatus below.
+  if (
+    extraction.appointment?.should_create &&
+    isPastAppointment(
+      extraction.appointment.requested_date ?? null,
+      extraction.appointment.requested_time ?? null,
+      businessTimezone,
+      new Date(),
+    )
+  ) {
+    extraction.next_action =
+      `${extraction.next_action} The requested time appears to be in the past (already passed) — do not treat this as a valid booking; confirm a new time with the caller.`.trim();
   }
 
   // ── Update call row ───────────────────────────────────────────────────────
