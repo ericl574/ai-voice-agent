@@ -30,6 +30,14 @@ transcoding, low latency.
 3. Phone Numbers → your number → Voice Configuration → **A call comes in**:
    Webhook `https://<your-domain>/api/twilio/voice`, HTTP POST.
 
+> **Signature gotcha (causes a silent 403):** `/api/twilio/voice` verifies Twilio's signature
+> against `${NEXT_PUBLIC_SITE_URL}/api/twilio/voice`. So **`NEXT_PUBLIC_SITE_URL` (on Vercel) must
+> exactly equal the webhook origin you set here — same host, `https`, and NO trailing slash.** A
+> mismatch (trailing slash, `www`, a different domain) returns 403 and the call drops. After setting
+> or changing `TWILIO_STREAM_URL` / `NEXT_PUBLIC_SITE_URL` / any Vercel env, **redeploy** — env
+> changes only apply to new deployments, and a fresh ngrok URL means a new `TWILIO_STREAM_URL` +
+> redeploy each time.
+
 ## 2. Environment variables
 
 **Next app (Vercel):**
@@ -86,6 +94,25 @@ without it.)
 4. Check: bridge terminal shows `stream started` → `session ready` → `post-call → 200`; the call
    (with transcript + summary) appears in **Call History**, and any appointment/service request
    shows in the dashboard (when `TWILIO_BUSINESS_ID` is set — demo-fallback calls are not saved).
+
+### Call-quality QA (run after a real call — regression checks)
+
+Verify on the saved call + transcript (these are the behaviors fixed for real phone; see
+`docs/call-pipeline.md` §8 and the eval cases `GREETING-001`, `LANG-CHAOS-*`,
+`SAFETY-NOINVENT-PARTY-001`, `CLOSING-NOLOOP-001`):
+
+1. **Greeting** opens with one complete sentence including the business name (not "…calling the
+   front", not truncated). Bridge log shows `discarded N pre-greeting frames`.
+2. **Language:** say "Hallo" → stays English. Say "我能说中文吗?" → may switch to Chinese and stays
+   there. Then toss in Korean/Japanese fragments → it asks once which language you prefer, doesn't
+   chase, and never mixes two languages in one reply.
+3. **No invented details:** ask to book "tomorrow, maybe 7pm" but don't give a party size → it asks,
+   and never states a number/name you didn't give; the saved call is **not** marked Resolved.
+4. **Status:** an incomplete/actionable call shows **Pending** (Follow-up), not Resolved; summary is
+   real (not "analysis pending"). `select status, intent, summary, next_action from calls order by
+   created_at desc limit 1;`
+5. **End-of-call (known limitation):** after goodbye it should not loop. If the caller keeps talking
+   the assistant may still answer (no auto-hangup yet — prompt-enforced only; see §8).
 
 ## What is honest about the current state
 

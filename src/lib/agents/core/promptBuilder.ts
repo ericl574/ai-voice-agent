@@ -121,7 +121,19 @@ ${profileConfigSection}`.trim();
     ? `\nCUSTOM INSTRUCTIONS:\n${agentConfig.custom_instructions}`
     : '';
 
+  // Concrete opening line — business-aware and complete. Used by BOTH the browser and phone paths
+  // (the phone bridge triggers the greeting via response.create; the prompt supplies the words), so
+  // a real phone call opens with the business name instead of a generic, half-finished greeting.
+  const greeting = (business.greeting?.trim() || 'Hi, thanks for calling {business_name}. How can I help you today?')
+    .replace(/\{business_name\}/gi, name)
+    .replace(/\{agent_name\}/gi, business.ai_agent_name ?? '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
   return `You are the front desk voice assistant for ${name}${business.business_type ? `, a ${business.business_type.replace('_', ' ')} business` : ''}.
+
+GREETING — open the call with exactly this line, spoken as ONE complete sentence, then stop and wait for the caller. Do not start before it and do not cut it short:
+"${greeting}"
 
 ${GLOBAL_RULES}
 

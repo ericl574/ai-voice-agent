@@ -18,6 +18,7 @@ import {
 import { looksLikeNoiseOrEmpty } from '../src/lib/call-pipeline/noise.ts';
 import { classifyCallerIntent } from '../src/lib/call-pipeline/intent.ts';
 import { looksLikeEndCall } from '../src/lib/call-pipeline/endCall.ts';
+import { deriveCallStatus } from '../src/lib/call-pipeline/callStatus.ts';
 import {
   decideDelivery,
   composeCallSms,
@@ -577,6 +578,24 @@ test('toE164 — 11-digit leading-1 and already-E.164 pass through', () => {
 test('toE164 — empty stays empty', () => {
   eq(toE164(''), '', 'empty in → empty out');
   eq(toE164('   '), '', 'whitespace-only → empty');
+});
+
+// ── Call status mapping (no "Resolved" for actionable/incomplete calls) ───────
+
+test('deriveCallStatus — actionable intent → pending, not resolved', () => {
+  eq(deriveCallStatus('appointment_request', 0), 'pending', 'appointment → pending');
+  eq(deriveCallStatus('service_request', 0), 'pending', 'service → pending');
+  eq(deriveCallStatus('complaint', 0), 'pending', 'complaint → pending');
+});
+
+test('deriveCallStatus — actionable but missing required details → pending', () => {
+  // The failing real call: appointment intent, name/party unclear → must NOT be Resolved.
+  eq(deriveCallStatus('appointment_request', 2), 'pending', 'incomplete appointment → pending');
+});
+
+test('deriveCallStatus — answered question / nothing to do → resolved', () => {
+  eq(deriveCallStatus('general_question', 0), 'resolved', 'plain question → resolved');
+  eq(deriveCallStatus('other', 0), 'resolved', 'no actionable intent → resolved');
 });
 
 // ── Results ──────────────────────────────────────────────────────────────────

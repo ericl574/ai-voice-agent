@@ -321,6 +321,31 @@ was already missing (`docs/after-hours-report.md`, `docs/product-scope.md`).
   (same rule as §1); report quality is improved upstream by better capture, not by swapping the
   realtime stack.
 
+## 8. Real phone path (Twilio bridge) — call-quality notes
+
+The phone path (`server/twilio-bridge.ts`) shares the prompt (`buildSystemPrompt`) and the post-call
+core (`runPostCallExtraction`) with the browser path, so behavior fixes apply to both. Specifics:
+
+- **Greeting (shared):** the opening line lives in the prompt's `GREETING` section
+  (`promptBuilder.ts`) — the owner's saved greeting (with `{business_name}`/`{agent_name}` resolved)
+  or a complete default using the business name. The bridge triggers it via `response.create` on
+  `session.updated`. **Fix:** the bridge now **discards** audio buffered before the session was ready
+  rather than flushing it, so an early "hello"/line noise can't trigger a competing response or a
+  barge-in `clear` that truncated the greeting (the "…calling the front" bug).
+- **Status (shared):** `deriveCallStatus()` (`call-pipeline/callStatus.ts`) sets `calls.status` from
+  the outcome — actionable or incomplete → `pending` (the Follow-up state), only a handled call stays
+  `resolved`. Both insert paths still write `resolved` initially; the post-call core corrects it. A
+  confused/incomplete call is never shown "Resolved" anymore.
+- **Language / no-invent (shared):** tightened in `globalRules.ts` — lock language after one switch,
+  ask once when the caller thrashes between languages, never mix two languages in a reply; never
+  fill in a detail (party size, name, time) the caller didn't clearly give.
+- **End-of-call — known limitation (NOT auto-hangup yet):** the phone path uses the **server's
+  auto-response** (`create_response` default true), so the assistant will answer any further caller
+  turn — there is no programmatic hangup after a goodbye. Closing is currently **prompt-enforced**
+  (don't re-open after a goodbye), not bridge-enforced. True auto-hangup / response suppression after
+  a final goodbye would require switching the phone path to app-controlled responses (like the
+  browser's Layer 2) — deferred; **do not** add it without Eric's approval (architecture change).
+
 ## Cross-cutting rules
 
 - **Business local time:** the prompt injects today + the current local time at session creation via

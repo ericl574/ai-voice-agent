@@ -17,6 +17,7 @@ import {
   type ExtractionResult,
 } from './extraction';
 import { getVertical } from '@/lib/agents/verticals/registry';
+import { deriveCallStatus } from './callStatus';
 import { todayInTimeZone, DEFAULT_BUSINESS_TIMEZONE } from './time';
 import type { AgentConfig } from '@/lib/supabase/businesses';
 import { sendReservationSms, reservationConfirmUrl } from '@/lib/sms/sendReservationSms';
@@ -227,9 +228,11 @@ export async function runPostCallExtraction(opts: {
   // needs_staff_followup. Phone is intentionally not a required field on any vertical.
   const isActionable =
     !!extraction.appointment?.should_create || !!extraction.service_request?.should_create;
+  let missingRequiredCount = 0;
   if (isActionable) {
     const vertical = getVertical((bizRow?.business_type as string) ?? null);
     const { missingRequired } = assessCollection(extraction, vertical.requiredFields);
+    missingRequiredCount = missingRequired.length;
     if (missingRequired.length > 0) {
       extraction.next_action =
         `${extraction.next_action} Missing from call: ${missingRequired.join(', ')}.`.trim();
@@ -237,17 +240,22 @@ export async function runPostCallExtraction(opts: {
   }
 
   // ── Update call row ───────────────────────────────────────────────────────
+  // `status` is set from the outcome (deriveCallStatus): actionable or incomplete → 'pending'
+  // (the dashboard's Follow-up state); only a truly handled call stays 'resolved'. This replaces the
+  // hardcoded 'resolved' the insert paths use, so a confused/incomplete call is never shown Resolved.
 
   const callUpdate: Record<string, unknown> = {
     summary: extraction.summary,
     intent: extraction.intent,
+    status: deriveCallStatus(extraction.intent, missingRequiredCount),
     needs_staff_followup:
       extraction.intent !== 'general_question' && extraction.intent !== 'other',
   };
   if (extraction.caller_name) callUpdate.customer_name = extraction.caller_name;
   if (extraction.caller_phone) callUpdate.customer_phone = extraction.caller_phone;
 
-  await supabase.from('calls').update(callUpdate).eq('id', callId);
+  const { error: updErr } = await supabase.from('calls').update(callUpdate).eq('id', callId);
+  if (updErr) console.error('[FD] post-call: calls row update failed:', updErr.message);
 
   // next_action powers the digest's "suggested follow-up". Best-effort, separate from the main
   // update so a missing column (call_digests migration not yet run) can't break the write above.

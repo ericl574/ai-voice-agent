@@ -187,13 +187,20 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
         case 'session.updated': {
           if (!openaiReady) {
             openaiReady = true;
-            log(`session ready (${pendingAudio.length} buffered frames) — greeting caller`);
-            for (const payload of pendingAudio.splice(0)) {
-              sendToOpenAI({ type: 'input_audio_buffer.append', audio: payload });
-            }
+            // Greet FIRST, then listen. Any audio buffered before the session was ready (an early
+            // "hello", line noise) is DISCARDED — previously it was flushed here, which let the
+            // caller's pre-greeting audio trigger a competing response / barge-in clear that
+            // truncated the greeting ("…thank you for calling the front"). The caller's real first
+            // turn starts cleanly after the greeting finishes.
+            const discarded = pendingAudio.length;
+            pendingAudio.length = 0;
+            log(`session ready (discarded ${discarded} pre-greeting frames) — greeting caller`);
             sendToOpenAI({
               type: 'response.create',
-              response: { instructions: 'Greet the caller now as the front desk for this business.' },
+              response: {
+                instructions:
+                  'Open the call now with your GREETING from the instructions — one complete sentence using the business name — then stop and wait for the caller.',
+              },
             });
           }
           break;
