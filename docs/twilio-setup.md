@@ -65,7 +65,69 @@ FD_APP_URL=https://<your-domain>   (where /api/twilio/session-config + post-call
 BRIDGE_PORT=8787                   (optional)
 ```
 
-## 3. Run the bridge locally + ngrok (test path)
+**Operational alerts (Next app, and bridge host too if you want bridge-side SMS capability later):**
+```
+OPS_ALERT_SMS_TO=+1…               (Eric/operator destination for production incidents)
+TWILIO_ACCOUNT_SID=AC…             (required for any outbound SMS, including ops alerts)
+TWILIO_AUTH_TOKEN=…                (required for outbound SMS)
+TWILIO_PHONE_NUMBER=+1…            (SMS-capable sender)
+```
+Ops alerts are best-effort and never block the original request. If `OPS_ALERT_SMS_TO` or Twilio
+SMS env is missing, FrontDesk logs a safe warning and skips the alert.
+
+## 3. Production bridge on Railway
+
+Run the bridge as an always-on Railway service. The service should point at this repo and use:
+
+```bash
+npm install
+npm run twilio:bridge
+```
+
+Railway provides `PORT`; the bridge binds to `0.0.0.0:$PORT` automatically. Configure these Railway
+environment variables:
+
+```
+OPENAI_API_KEY=sk-…
+TWILIO_BRIDGE_SECRET=<same value as the Next app>
+FD_APP_URL=https://<your-vercel-domain>
+OPENAI_REALTIME_MODEL=gpt-realtime   (optional)
+TWILIO_TRANSCRIPTION_MODEL=gpt-4o-transcribe   (optional)
+```
+
+Expose a public Railway domain, then set the Next app's `TWILIO_STREAM_URL` to:
+
+```
+wss://<railway-domain>/twilio-stream
+```
+
+Set Railway's healthcheck path to:
+
+```
+/health
+```
+
+The health endpoint returns safe JSON only:
+
+```json
+{
+  "status": "ok",
+  "timestamp": "2026-06-21T12:00:00.000Z",
+  "uptimeSec": 42,
+  "activeStreams": 0,
+  "callsHandled": 3
+}
+```
+
+It intentionally does not check OpenAI reachability or expose env vars, tokens, phone numbers, app
+URLs, prompt details, or caller data. Railway should handle process-down detection with its
+healthcheck, crash restart policy, and Railway-side alerts. Keep restart/crash recovery enabled for
+the service.
+
+`BRIDGE_HEALTH_URL` is not required yet. The Vercel app does not continuously poll the bridge in the
+current MVP; bridge liveness is owned by Railway health checks/restarts/alerts.
+
+## 4. Run the bridge locally + ngrok (test path)
 
 ```bash
 # terminal 1 — the bridge
@@ -79,13 +141,13 @@ Set `TWILIO_STREAM_URL=wss://abc123.ngrok.app/twilio-stream` in Vercel and redep
 `vercel env` + redeploy). Note: a free ngrok URL changes each run — update the env var when it
 does.
 
-## 4. Run the migration for call-source marking (optional but recommended)
+## 5. Run the migration for call-source marking (optional but recommended)
 
 Supabase SQL editor → `supabase/migrations/20260611000001_calls_source.sql` (adds a nullable
 `source` column to `calls`; phone calls save with `source='phone'`. The save path also works
 without it.)
 
-## 5. Acceptance test — "call from my own phone"
+## 6. Acceptance test — "call from my own phone"
 
 1. Bridge running, ngrok up, Vercel env vars set.
 2. Call the Twilio number from your phone.
@@ -113,6 +175,31 @@ Verify on the saved call + transcript (these are the behaviors fixed for real ph
    created_at desc limit 1;`
 5. **End-of-call (known limitation):** after goodbye it should not loop. If the caller keeps talking
    the assistant may still answer (no auto-hangup yet — prompt-enforced only; see §8).
+
+## 7. Production monitoring checks
+
+Manual Railway bridge checks:
+
+```bash
+curl https://<railway-domain>/health
+```
+
+Expect HTTP 200 and the safe JSON shape above. Then call the Twilio number and confirm Railway logs
+show `twilio stream connected`, `stream started`, `session ready`, and `post-call -> 200`.
+
+Manual app-side alert checks:
+
+- Temporarily simulate a post-call save or extraction failure in a non-production environment and
+  confirm one SMS arrives at `OPS_ALERT_SMS_TO`.
+- Temporarily simulate a digest query or send failure in a non-production environment and confirm
+  one SMS arrives.
+- Re-trigger the same failure immediately and confirm cooldown suppresses repeat alerts for about
+  five minutes.
+
+Vercel Hobby cron cannot provide frequent bridge polling. This MVP relies on Railway for process
+health/restart monitoring and uses event-driven app alerts for silent save, post-call extraction,
+and digest failures. Remaining limitation: the app does not continuously poll `/health`, so a bridge
+that is unhealthy but not restarted by Railway will not be noticed by the app itself.
 
 ## What is honest about the current state
 

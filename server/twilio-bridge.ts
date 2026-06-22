@@ -24,12 +24,13 @@
 //      OPENAI_REALTIME_MODEL        — default gpt-realtime
 
 import http from 'http';
+import { pathToFileURL } from 'url';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 // Shared turn-taking config — the SAME source the browser session uses, so phone and browser can't
 // drift. Relative .ts import (resolved by `node --experimental-strip-types`, like the QA scripts).
 import { REALTIME_VAD, REALTIME_NOISE_REDUCTION } from '../src/lib/realtime/turnDetection.ts';
 
-const PORT = Number(process.env.BRIDGE_PORT ?? 8787);
+const PORT = Number(process.env.PORT ?? process.env.BRIDGE_PORT ?? 8787);
 const APP_URL = (process.env.FD_APP_URL ?? process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 const MODEL = process.env.OPENAI_REALTIME_MODEL ?? 'gpt-realtime';
 const OPENAI_KEY = process.env.OPENAI_API_KEY ?? '';
@@ -37,13 +38,37 @@ const BRIDGE_SECRET = process.env.TWILIO_BRIDGE_SECRET ?? '';
 // Same per-turn transcription model the browser path uses (src/lib/call-pipeline/constants.ts).
 const TRANSCRIPTION_MODEL = process.env.TWILIO_TRANSCRIPTION_MODEL ?? 'gpt-4o-transcribe';
 
-if (!OPENAI_KEY) {
-  console.error('[bridge] OPENAI_API_KEY is required. Start with: npm run twilio:bridge (env from .env.local)');
-  process.exit(1);
+const bridgeStartedAt = Date.now();
+const bridgeMetrics = {
+  activeStreams: 0,
+  callsHandled: 0,
+};
+
+export interface BridgeHealth {
+  status: 'ok';
+  timestamp: string;
+  uptimeSec: number;
+  activeStreams: number;
+  callsHandled: number;
+  version?: string;
+  commit?: string;
 }
-if (!BRIDGE_SECRET) {
-  console.error('[bridge] TWILIO_BRIDGE_SECRET is required (same value as the Next app env).');
-  process.exit(1);
+
+function shortCommit(raw: string | undefined): string | undefined {
+  const safe = (raw ?? '').trim().match(/^[a-fA-F0-9]{7,40}$/)?.[0];
+  return safe ? safe.slice(0, 12) : undefined;
+}
+
+export function buildBridgeHealth(now = new Date()): BridgeHealth {
+  return {
+    status: 'ok',
+    timestamp: now.toISOString(),
+    uptimeSec: Math.max(0, Math.round((now.getTime() - bridgeStartedAt) / 1000)),
+    activeStreams: bridgeMetrics.activeStreams,
+    callsHandled: bridgeMetrics.callsHandled,
+    ...(process.env.npm_package_version ? { version: process.env.npm_package_version } : {}),
+    ...(shortCommit(process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.VERCEL_GIT_COMMIT_SHA) ? { commit: shortCommit(process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.VERCEL_GIT_COMMIT_SHA) } : {}),
+  };
 }
 
 interface Turn {
@@ -108,6 +133,7 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
   let openaiWs: WebSocket | null = null;
   let openaiReady = false;
   let closed = false;
+  let countedCall = false;
   let triedLegacyFormat = false;
   const turns: Turn[] = [];
   // Caller audio arriving before OpenAI is ready is buffered (≈20ms/frame; cap ≈10s).
@@ -271,6 +297,7 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
   async function finish(reason: string): Promise<void> {
     if (closed) return;
     closed = true;
+    bridgeMetrics.activeStreams = Math.max(0, bridgeMetrics.activeStreams - 1);
     log(`call ended (${reason}) — ${turns.length} transcript turns`);
     try {
       openaiWs?.close();
@@ -311,6 +338,10 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
         businessId = start.customParameters?.businessId ?? '';
         fromNumber = start.customParameters?.from ?? '';
         started = new Date();
+        if (!countedCall) {
+          countedCall = true;
+          bridgeMetrics.callsHandled += 1;
+        }
         log(`stream started (business: ${businessId || 'demo fallback'})`);
         void fetchSessionConfig(businessId, fromNumber).then((cfg) => {
           if (!closed) connectOpenAI(cfg);
@@ -346,22 +377,45 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
 
 // ── Server ────────────────────────────────────────────────────────────────────
 
-const server = http.createServer((req, res) => {
-  if (req.url === '/' || req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('FrontDesk Twilio bridge running\n');
-    return;
+export function startBridge(): http.Server {
+  if (!OPENAI_KEY) {
+    console.error('[bridge] OPENAI_API_KEY is required. Start with: npm run twilio:bridge (env from .env.local)');
+    process.exit(1);
   }
-  res.writeHead(404);
-  res.end();
-});
+  if (!BRIDGE_SECRET) {
+    console.error('[bridge] TWILIO_BRIDGE_SECRET is required (same value as the Next app env).');
+    process.exit(1);
+  }
 
-const wss = new WebSocketServer({ server, path: '/twilio-stream' });
-wss.on('connection', (ws) => {
-  console.log('[bridge] twilio stream connected');
-  handleTwilioConnection(ws);
-});
+  const server = http.createServer((req, res) => {
+    const pathname = new URL(req.url ?? '/', 'http://bridge.local').pathname;
+    if (pathname === '/' || pathname === '/health') {
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store',
+      });
+      res.end(JSON.stringify(buildBridgeHealth()));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
 
-server.listen(PORT, () => {
-  console.log(`[bridge] listening on :${PORT} (ws path /twilio-stream) → app: ${APP_URL}, model: ${MODEL}`);
-});
+  const wss = new WebSocketServer({ server, path: '/twilio-stream' });
+  wss.on('connection', (ws) => {
+    bridgeMetrics.activeStreams += 1;
+    console.log('[bridge] twilio stream connected');
+    handleTwilioConnection(ws);
+  });
+
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`[bridge] listening on 0.0.0.0:${PORT} (ws path /twilio-stream) -> app: ${APP_URL}, model: ${MODEL}`);
+  });
+
+  return server;
+}
+
+const isMain = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false;
+if (isMain) {
+  startBridge();
+}

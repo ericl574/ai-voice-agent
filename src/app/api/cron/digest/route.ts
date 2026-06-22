@@ -11,6 +11,7 @@ import {
 } from '@/lib/notify/digest';
 import { sendEmail, isEmailConfigured } from '@/lib/notify/email';
 import { sendSms, isSmsConfigured } from '@/lib/notify/sms';
+import { notifyOps } from '@/lib/notify/ops';
 
 // After-hours daily digest cron. Vercel Cron calls this HOURLY (vercel.json); for each business it
 // sends the digest only when the LOCAL hour has reached the business's send hour (default 8am) and
@@ -98,6 +99,12 @@ async function processBusiness(
     .order('created_at', { ascending: true });
   if (callErr) {
     console.error(`[FD] digest: call query failed for ${biz.id}:`, callErr.message);
+    await notifyOps({
+      component: 'cron/digest',
+      event: 'call_query_failed',
+      error: callErr.message,
+      context: { businessId: biz.id },
+    });
     return 'skipped';
   }
   const rows = (callRows ?? []) as Array<Record<string, unknown>>;
@@ -158,6 +165,14 @@ async function processBusiness(
       const r = await sendEmail(emailTo, subject, text, html, attachments);
       emailStatus = r.ok ? 'sent' : 'failed';
       console.log(`[FD] digest email (${biz.id}) → ${emailStatus}${r.reason ? ` (${r.reason})` : ''}`);
+      if (!r.ok) {
+        await notifyOps({
+          component: 'cron/digest',
+          event: 'email_send_failed',
+          error: r.reason ?? 'provider failure',
+          context: { businessId: biz.id },
+        });
+      }
     }
   }
 
@@ -170,6 +185,14 @@ async function processBusiness(
       const r = await sendSms(smsTo, composeDigestSms(digestCalls.length));
       smsStatus = r.ok ? 'sent' : 'failed';
       console.log(`[FD] digest sms (${biz.id}) → ${smsStatus}${r.reason ? ` (${r.reason})` : ''}`);
+      if (!r.ok) {
+        await notifyOps({
+          component: 'cron/digest',
+          event: 'sms_send_failed',
+          error: r.reason ?? 'provider failure',
+          context: { businessId: biz.id },
+        });
+      }
     }
   }
 
@@ -186,7 +209,15 @@ async function processBusiness(
     },
     { onConflict: 'business_id,digest_date' },
   );
-  if (recErr) console.error(`[FD] digest: could not record digest for ${biz.id}:`, recErr.message);
+  if (recErr) {
+    console.error(`[FD] digest: could not record digest for ${biz.id}:`, recErr.message);
+    await notifyOps({
+      component: 'cron/digest',
+      event: 'record_digest_failed',
+      error: recErr.message,
+      context: { businessId: biz.id },
+    });
+  }
 
   return 'sent';
 }
@@ -206,6 +237,11 @@ async function runDigest(req: NextRequest): Promise<NextResponse> {
   const admin = createAdminClient();
   if (!admin) {
     console.error('[FD] digest cron: SUPABASE_SERVICE_ROLE_KEY missing');
+    await notifyOps({
+      component: 'cron/digest',
+      event: 'storage_not_configured',
+      error: 'SUPABASE_SERVICE_ROLE_KEY missing',
+    });
     return NextResponse.json({ error: 'Server storage not configured' }, { status: 503 });
   }
 
@@ -215,6 +251,11 @@ async function runDigest(req: NextRequest): Promise<NextResponse> {
     .select('id, name, timezone, phone, email, agent_config');
   if (error) {
     console.error('[FD] digest cron: business query failed:', error.message);
+    await notifyOps({
+      component: 'cron/digest',
+      event: 'business_query_failed',
+      error: error.message,
+    });
     return NextResponse.json({ error: 'Query failed' }, { status: 500 });
   }
 
@@ -228,6 +269,12 @@ async function runDigest(req: NextRequest): Promise<NextResponse> {
     } catch (err) {
       // One business failing must never stop the rest.
       console.error('[FD] digest: business failed (non-fatal):', err instanceof Error ? err.message : err);
+      await notifyOps({
+        component: 'cron/digest',
+        event: 'business_processing_failed',
+        error: err,
+        context: { businessId: biz.id },
+      });
     }
   }
 

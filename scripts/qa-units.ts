@@ -35,8 +35,17 @@ import {
   type DigestCall,
 } from '../src/lib/notify/digest.ts';
 import { toE164 } from '../src/lib/notify/sms.ts';
+import {
+  buildOpsAlert,
+  dueForAlert,
+  markAlertSent,
+  notifyOps,
+  opsAlertKey,
+  OPS_ALERT_COOLDOWN_MS,
+} from '../src/lib/notify/ops.ts';
 import { buildTranscript, countCallerTurns } from '../src/lib/call-pipeline/transcript.ts';
 import { nowInTimeZone } from '../src/lib/call-pipeline/time.ts';
+import { buildBridgeHealth } from '../server/twilio-bridge.ts';
 
 // Vertical profiles imported DIRECTLY (each file's only import is `import type`, stripped at
 // runtime), so the Node QA runner can load them — unlike registry.ts, which has extensionless
@@ -56,18 +65,25 @@ import type { VerticalProfile, CollectableField } from '../src/lib/agents/core/t
 let passed = 0;
 let failed = 0;
 const failures: string[] = [];
+const tests: Array<{ name: string; fn: () => void | Promise<void> }> = [];
 
-function test(name: string, fn: () => void): void {
-  try {
-    fn();
-    console.log(`  ✓  ${name}`);
-    passed++;
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(`  ✗  ${name}`);
-    console.error(`     ${msg}`);
-    failures.push(`${name}: ${msg}`);
-    failed++;
+function test(name: string, fn: () => void | Promise<void>): void {
+  tests.push({ name, fn });
+}
+
+async function runTests(): Promise<void> {
+  for (const { name, fn } of tests) {
+    try {
+      await fn();
+      console.log(`  ✓  ${name}`);
+      passed++;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`  ✗  ${name}`);
+      console.error(`     ${msg}`);
+      failures.push(`${name}: ${msg}`);
+      failed++;
+    }
   }
 }
 
@@ -583,6 +599,65 @@ test('toE164 — empty stays empty', () => {
   eq(toE164('   '), '', 'whitespace-only → empty');
 });
 
+// ── Ops alerts (operator SMS: safe, best-effort, cooled down) ────────────────
+
+test('buildOpsAlert — short safe SMS redacts obvious secrets and contact details', () => {
+  const msg = buildOpsAlert({
+    component: 'cron/digest',
+    event: 'business_query_failed',
+    error: 'bad provider credential [redacted-test-credential] and account [redacted-test-account-id]',
+    context: {
+      businessId: 'biz_123',
+      email: 'owner@example.com',
+      phone: '+1 (778) 798-5201',
+    },
+    at: new Date('2026-06-21T12:00:00.000Z'),
+  });
+  assert(msg.startsWith('FrontDesk ALERT | cron/digest | business_query_failed'), `prefix: ${msg}`);
+  assert(msg.includes('2026-06-21T12:00:00.000Z'), 'timestamp included');
+  assert(msg.includes('businessId=biz_123'), 'safe context included');
+  assert(msg.includes('[redacted-test-credential]'), 'safe credential placeholder included');
+  assert(msg.includes('[redacted-test-account-id]'), 'safe account placeholder included');
+  assert(!/AC[a-fA-F0-9]{20,}/.test(msg), 'no Twilio Account SID-shaped value');
+  assert(!/SK[a-fA-F0-9]{20,}/.test(msg), 'no Twilio API Key SID-shaped value');
+  assert(!msg.includes('owner@example.com'), 'email redacted');
+  assert(!msg.includes('7787985201'), 'phone redacted');
+  assert(msg.length <= 300, 'bounded for SMS');
+});
+
+test('notifyOps — missing OPS_ALERT_SMS_TO no-ops without throwing', async () => {
+  const before = process.env.OPS_ALERT_SMS_TO;
+  delete process.env.OPS_ALERT_SMS_TO;
+  const result = await notifyOps({
+    component: 'qa',
+    event: 'missing_destination',
+    error: 'simulated',
+    at: new Date('2026-06-21T12:00:00.000Z'),
+  });
+  if (before === undefined) delete process.env.OPS_ALERT_SMS_TO;
+  else process.env.OPS_ALERT_SMS_TO = before;
+  eq(result.sent, false, 'not sent');
+  eq(result.skippedReason, 'missing_destination', 'safe no-op reason');
+});
+
+test('ops alert cooldown — repeated same event is suppressed', () => {
+  const last = new Map<string, number>();
+  const key = opsAlertKey({ component: 'twilio/post-call', event: 'call_save_failed' });
+  assert(dueForAlert(key, 1_000, last), 'first alert is due');
+  markAlertSent(key, 1_000, last);
+  assert(!dueForAlert(key, 1_000 + OPS_ALERT_COOLDOWN_MS - 1, last), 'same event suppressed within cooldown');
+  assert(dueForAlert(key, 1_000 + OPS_ALERT_COOLDOWN_MS, last), 'same event due after cooldown');
+});
+
+test('ops alert cooldown — different event keys alert independently', () => {
+  const last = new Map<string, number>();
+  const keyA = opsAlertKey({ component: 'twilio/post-call', event: 'call_save_failed' });
+  const keyB = opsAlertKey({ component: 'cron/digest', event: 'business_query_failed' });
+  markAlertSent(keyA, 1_000, last);
+  assert(!dueForAlert(keyA, 2_000, last), 'same key suppressed');
+  assert(dueForAlert(keyB, 2_000, last), 'different key still due');
+});
+
 // ── Call status mapping (no "Resolved" for actionable/incomplete calls) ───────
 
 test('deriveCallStatus — actionable intent → pending, not resolved', () => {
@@ -631,6 +706,30 @@ test('phone bridge no longer force-clears Twilio audio on caller speech (no barg
   assert(!bridge.includes("sendToTwilio({ event: 'clear', streamSid })"), 'manual barge-in clear removed');
 });
 
+test('phone bridge /health shape is safe JSON', () => {
+  const health = buildBridgeHealth(new Date('2026-06-21T12:00:00.000Z'));
+  eq(health.status, 'ok', 'status');
+  eq(health.timestamp, '2026-06-21T12:00:00.000Z', 'timestamp');
+  assert(Number.isInteger(health.uptimeSec) && health.uptimeSec >= 0, 'uptimeSec integer');
+  assert(Number.isInteger(health.activeStreams), 'activeStreams integer');
+  assert(Number.isInteger(health.callsHandled), 'callsHandled integer');
+  const json = JSON.stringify(health);
+  for (const unsafe of ['OPENAI_API_KEY', 'TWILIO_AUTH_TOKEN', 'TWILIO_BRIDGE_SECRET', 'FD_APP_URL', 'TWILIO_STREAM_URL']) {
+    assert(!json.includes(unsafe), `health must not expose ${unsafe}`);
+  }
+});
+
+test('silent-failure routes wire best-effort ops alerts', () => {
+  const postCall = readFileSync('src/app/api/twilio/post-call/route.ts', 'utf8');
+  const digest = readFileSync('src/app/api/cron/digest/route.ts', 'utf8');
+  for (const needle of ['call_save_failed', 'extraction_failed', 'transcript_rows_failed']) {
+    assert(postCall.includes(needle), `post-call alerts ${needle}`);
+  }
+  for (const needle of ['business_query_failed', 'call_query_failed', 'email_send_failed', 'sms_send_failed', 'business_processing_failed']) {
+    assert(digest.includes(needle), `digest alerts ${needle}`);
+  }
+});
+
 // ── Past-time appointment guard (deterministic; flags, never silently books) ──
 
 test('isPastAppointment — earlier-today time is flagged as past', () => {
@@ -652,6 +751,8 @@ test('isPastAppointment — missing date or time is never flagged', () => {
 });
 
 // ── Results ──────────────────────────────────────────────────────────────────
+
+await runTests();
 
 const total = passed + failed;
 console.log('\n────────────────────────────────────────────────────────────────');

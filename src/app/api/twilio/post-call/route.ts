@@ -5,6 +5,7 @@ import { buildTranscript } from '@/lib/call-pipeline/transcript';
 import { looksLikeNoiseOrEmpty } from '@/lib/call-pipeline/noise';
 import { runPostCallExtraction } from '@/lib/call-pipeline/postCallCore';
 import { SITE_URL } from '@/lib/site';
+import { notifyOps } from '@/lib/notify/ops';
 
 // Bridge-only endpoint: saves a finished PHONE call into the normal dashboard flow (calls +
 // call_messages) and runs the SAME post-call extraction core as browser calls. Guarded by the
@@ -63,6 +64,12 @@ export async function POST(req: NextRequest) {
   const admin = createAdminClient();
   if (!admin) {
     console.error('[FD] twilio/post-call: SUPABASE_SERVICE_ROLE_KEY missing — phone call NOT saved');
+    await notifyOps({
+      component: 'twilio/post-call',
+      event: 'storage_not_configured',
+      error: 'SUPABASE_SERVICE_ROLE_KEY missing',
+      context: { businessId: body.businessId },
+    });
     return NextResponse.json({ error: 'Server storage not configured' }, { status: 503 });
   }
 
@@ -115,6 +122,12 @@ export async function POST(req: NextRequest) {
 
   if (!callId) {
     console.error('[FD] twilio/post-call: call insert failed:', insertError);
+    await notifyOps({
+      component: 'twilio/post-call',
+      event: 'call_save_failed',
+      error: insertError ?? 'unknown insert error',
+      context: { businessId: body.businessId },
+    });
     return NextResponse.json({ error: 'Could not save call' }, { status: 500 });
   }
 
@@ -128,7 +141,15 @@ export async function POST(req: NextRequest) {
     }));
   if (turnRows.length > 0) {
     const { error: msgError } = await admin.from('call_messages').insert(turnRows);
-    if (msgError) console.warn('[FD] twilio/post-call: transcript rows failed:', msgError.message);
+    if (msgError) {
+      console.warn('[FD] twilio/post-call: transcript rows failed:', msgError.message);
+      await notifyOps({
+        component: 'twilio/post-call',
+        event: 'transcript_rows_failed',
+        error: msgError.message,
+        context: { businessId: body.businessId, callId },
+      });
+    }
   }
 
   // Same extraction core as browser calls — appointments/service requests land in the dashboard.
@@ -154,6 +175,12 @@ export async function POST(req: NextRequest) {
       extractionRan = true;
     } catch (err) {
       console.error('[FD] twilio/post-call extraction failed:', err instanceof Error ? err.message : err);
+      await notifyOps({
+        component: 'twilio/post-call',
+        event: 'extraction_failed',
+        error: err,
+        context: { businessId: body.businessId, callId },
+      });
     }
   }
 
