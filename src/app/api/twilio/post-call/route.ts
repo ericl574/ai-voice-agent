@@ -182,7 +182,30 @@ export async function POST(req: NextRequest) {
         context: { businessId: body.businessId, callId },
       });
     }
+  } else {
+    // Phone call saved, but extraction was SKIPPED because the app deployment has no OPENAI_API_KEY.
+    // The call stays "Phone call / analysis pending" with no caller name, summary, or intent — which
+    // is exactly how a broken morning report looks. The key is easy to set on the bridge and forget
+    // on the Vercel app (they're separate deployments), so surface it loudly before the first pilot
+    // report goes out, not after the owner sees a useless email.
+    console.error(
+      '[FD] twilio/post-call: OPENAI_API_KEY is MISSING on the app — phone call saved WITHOUT extraction. ' +
+        'The morning report will show "analysis pending" with no caller name. ' +
+        'Set OPENAI_API_KEY on the Vercel app (it must be set on BOTH the bridge and the app).',
+    );
+    await notifyOps({
+      component: 'twilio/post-call',
+      event: 'extraction_skipped_no_api_key',
+      error: 'OPENAI_API_KEY missing on the app deployment — phone call saved without analysis',
+      context: { businessId: body.businessId, callId },
+    });
   }
 
-  return NextResponse.json({ ok: true, saved: true, callId, extractionRan });
+  return NextResponse.json({
+    ok: true,
+    saved: true,
+    callId,
+    extractionRan,
+    ...(extractionRan ? {} : { reason: 'extraction_skipped_no_api_key' }),
+  });
 }

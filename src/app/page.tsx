@@ -9,9 +9,9 @@ import { createClient } from '@/lib/supabase/server';
 
 const FEATURES = [
   {
-    title: '24/7 Call Answering',
+    title: 'After-Hours Call Capture',
     description:
-      'Your front desk picks up any time — after hours, during peak periods, and on weekends. Reduce missed calls and voicemail pileups.',
+      "When you're closed, busy, or already on a call, FrontDesk answers the calls that would otherwise hit voicemail — after hours, weekends, and during the rush.",
     icon: (
       <svg className="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
@@ -75,21 +75,21 @@ const FEATURES = [
 const STEPS = [
   {
     number: '01',
-    title: 'Set up your business',
+    title: 'Forward the calls you miss',
     description:
-      'Add your business info, hours, services, FAQs, and front desk instructions. Your front desk uses this to answer callers accurately.',
+      'Send your after-hours, busy, and no-answer calls to your FrontDesk number. Your normal daytime line never changes — you only forward the calls already going to voicemail.',
   },
   {
     number: '02',
-    title: 'Your front desk answers',
+    title: 'FrontDesk answers and captures',
     description:
-      'It handles common questions, captures appointment requests, and logs service inquiries — any time of day.',
+      'It greets callers in your business name, answers common questions from your own info, and captures who called, what they need, and when.',
   },
   {
     number: '03',
-    title: 'Your staff follows up',
+    title: 'You get one morning report',
     description:
-      'Review call summaries, transcripts, and pending requests from the dashboard. Confirm what needs confirming.',
+      'Every morning, one email: who called, what they wanted, and what to follow up on — plus a CSV. No new dashboard to babysit.',
   },
 ];
 
@@ -169,12 +169,12 @@ const BENEFITS = [
     ),
   },
   {
-    title: 'Free up your staff',
+    title: 'One report every morning',
     description:
-      'Repetitive questions and routine call handling pull your team away from the work that matters. Your front desk handles the predictable calls.',
+      "No new dashboard to live in. Each morning you get a single email — who called overnight, what they needed, and what to follow up on — with a CSV attached.",
     icon: (
       <svg className="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
       </svg>
     ),
   },
@@ -283,20 +283,22 @@ export default async function LandingPage() {
         <div className="relative z-10 flex-1 flex items-center justify-center px-4 sm:px-6 py-20">
           <div className="text-center max-w-3xl mx-auto">
             <span className="inline-block bg-white/10 border border-white/20 text-white/90 text-xs font-semibold px-4 py-1.5 rounded-full mb-8 uppercase tracking-widest">
-              For Service Businesses
+              After-hours call capture for service businesses
             </span>
             <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold text-white leading-tight mb-6">
-              Never Miss a<br />Customer
+              Never miss<br />an after-hours call
             </h1>
             <p className="text-lg sm:text-xl text-white/70 max-w-2xl mx-auto mb-12 leading-relaxed">
-              Takes care of your business 24/7 — answering calls, capturing appointments, and organizing follow-ups for your team. So you can focus on what matters.
+              When you&apos;re closed or already on the line, FrontDesk answers the calls you&apos;d
+              otherwise lose to voicemail, captures who called and what they need, and sends you one
+              simple report every morning. Stop losing jobs to voicemail.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Link
-                href="/dashboard?demo=1"
+                href="/contact"
                 className="inline-flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold px-8 py-3.5 rounded-lg transition-colors text-base"
               >
-                View Demo
+                Start a pilot
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
@@ -305,9 +307,15 @@ export default async function LandingPage() {
                 href="#call-demo"
                 className="inline-flex items-center justify-center gap-2 border border-white/30 hover:border-white/60 bg-white/10 hover:bg-white/15 text-white font-semibold px-8 py-3.5 rounded-lg transition-colors text-base backdrop-blur-sm"
               >
-                Watch a demo call
+                Hear a sample call
               </Link>
             </div>
+            <p className="mt-6 text-sm text-white/50">
+              Want to look around first?{' '}
+              <Link href="/dashboard?demo=1" className="text-white/80 underline hover:text-white transition-colors">
+                Explore the demo dashboard →
+              </Link>
+            </p>
           </div>
         </div>
 
@@ -328,10 +336,11 @@ export default async function LandingPage() {
           <div className="max-w-6xl mx-auto px-4 sm:px-6">
             <div className="text-center mb-12">
               <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-3">
-                What FrontDesk handles
+                What FrontDesk does after hours
               </h2>
               <p className="text-gray-500 max-w-xl mx-auto">
-                A complete virtual front desk — from answering calls to organizing follow-ups for your team.
+                It answers the calls you&apos;d otherwise miss, captures the details, and hands you a
+                clean summary every morning — without a new system to babysit.
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -372,11 +381,11 @@ export default async function LandingPage() {
           <div className="max-w-6xl mx-auto px-4 sm:px-6">
             <div className="text-center mb-14">
               <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-3">
-                See what happens after a customer calls
+                What lands in your inbox the next morning
               </h2>
               <p className="text-gray-500 max-w-xl mx-auto">
-                Every call is answered, summarized, and organized — so nothing gets lost and your
-                staff knows exactly what to follow up on.
+                Every missed call is answered, captured, and summarized overnight — then delivered as
+                one report, so you start the day knowing exactly who to call back.
               </p>
             </div>
 
@@ -456,8 +465,20 @@ export default async function LandingPage() {
                 </div>
               </div>
 
-              {/* Right: mock appointment card */}
+              {/* Right: sample morning report (email subject bar + one captured call) */}
               <div className="bg-gray-50 rounded-2xl p-3 border border-gray-100 shadow-sm">
+                {/* Email-style report header */}
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-5 py-3.5 mb-3">
+                  <p className="text-[11px] font-semibold text-orange-600 uppercase tracking-wide mb-1">
+                    FrontDesk · 7:00 AM
+                  </p>
+                  <p className="text-sm font-semibold text-gray-900">
+                    After-hours report — 4 calls captured overnight
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    To: you@yourbusiness.com · CSV attached · 1 shown below
+                  </p>
+                </div>
                 <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
 
                   {/* Card header */}
@@ -648,17 +669,18 @@ export default async function LandingPage() {
         <section className="border-t border-gray-100 py-20">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 text-center">
             <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-4">
-              Ready to see your virtual front desk in action?
+              Stop losing after-hours calls to voicemail
             </h2>
             <p className="text-gray-500 mb-8 max-w-lg mx-auto">
-              Explore the demo dashboard or watch a live call demo — no sign-up required.
+              We&apos;re onboarding a small number of local service businesses. We&apos;ll set it up
+              with you and forward your missed calls — you just start getting the morning report.
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <Link
-                href="/dashboard?demo=1"
+                href="/contact"
                 className="inline-flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold px-8 py-3 rounded-lg transition-colors"
               >
-                View Demo
+                Start a pilot
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
@@ -667,7 +689,7 @@ export default async function LandingPage() {
                 href="#call-demo"
                 className="inline-flex items-center justify-center gap-2 border border-gray-200 hover:border-gray-300 bg-white text-gray-700 font-semibold px-8 py-3 rounded-lg transition-colors"
               >
-                Watch a demo call
+                Hear a sample call
               </Link>
             </div>
           </div>

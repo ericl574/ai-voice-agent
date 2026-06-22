@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import CheckoutButton from '@/components/CheckoutButton';
 import { SITE_NAME } from '@/lib/site';
 
 export const metadata: Metadata = {
@@ -15,8 +14,8 @@ const PLANS = [
     id: 'starter' as const,
     name: 'Starter',
     price: '$49',
-    blurb: 'A full virtual front desk for one location.',
-    cta: 'Start with Starter',
+    blurb: 'After-hours call capture + the daily morning report, for one location.',
+    cta: 'Start a pilot',
     highlight: false,
     features: [
       'Calls answered around the clock',
@@ -31,7 +30,7 @@ const PLANS = [
     name: 'Pro',
     price: '$99',
     blurb: 'For busier teams that want more hands-on help.',
-    cta: 'Start with Pro',
+    cta: 'Start a pilot',
     highlight: true,
     features: [
       'Everything in Starter',
@@ -76,9 +75,10 @@ export default function PricingPage() {
               Simple monthly pricing
             </h1>
             <p className="text-gray-500 max-w-xl mx-auto">
-              A virtual front desk that answers every customer call, captures appointments and
-              service requests, and keeps your staff dashboard organized. Try the demo free —
-              no account needed.
+              FrontDesk answers the calls you miss after hours, captures who called and what they
+              need, and sends you one report every morning. We&apos;re onboarding pilot businesses
+              now — we set it up with you, and you&apos;re billed once it&apos;s live and capturing
+              your calls.
             </p>
           </div>
 
@@ -112,18 +112,24 @@ export default function PricingPage() {
                   ))}
                 </ul>
                 <div className="mt-auto">
-                  <CheckoutButton
-                    plan={plan.id}
-                    label={plan.cta}
-                    variant={plan.highlight ? 'primary' : 'outline'}
-                  />
+                  <Link
+                    href="/contact"
+                    className={
+                      plan.highlight
+                        ? 'block w-full text-center bg-orange-500 hover:bg-orange-600 text-white font-semibold px-6 py-3 rounded-lg text-sm transition-colors'
+                        : 'block w-full text-center border border-gray-300 hover:border-gray-400 bg-white text-gray-900 font-semibold px-6 py-3 rounded-lg text-sm transition-colors'
+                    }
+                  >
+                    {plan.cta}
+                  </Link>
                 </div>
               </div>
             ))}
           </div>
 
           <p className="text-center text-xs text-gray-400 mt-10 max-w-md mx-auto">
-            Cancel anytime from your billing portal. Questions about plans or the pilot?{' '}
+            No card needed to start a pilot — we set it up with you first, and you can cancel anytime.
+            Questions about plans or the pilot?{' '}
             <Link href="/contact" className="text-gray-500 hover:underline">Contact us</Link>.
           </p>
         </div>
