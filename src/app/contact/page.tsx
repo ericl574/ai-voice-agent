@@ -1,45 +1,41 @@
 import type { Metadata } from 'next';
 import LegalShell, { LegalSection } from '@/components/LegalShell';
+import PilotRequestForm from '@/components/PilotRequestForm';
 import { SITE_NAME, SUPPORT_EMAIL } from '@/lib/site';
 
 export const metadata: Metadata = {
-  title: 'Contact & Support',
-  description: `Get help with ${SITE_NAME} or ask a question.`,
+  title: 'Start a pilot',
+  description: `Start a ${SITE_NAME} pilot — after-hours call capture and a morning report for your business.`,
 };
 
 export default function ContactPage() {
   return (
-    <LegalShell title="Contact & Support">
+    <LegalShell title="Start a pilot">
       <p>
-        Whether you&rsquo;re a business using {SITE_NAME}, considering it, or a caller with a
-        question about your information — we&rsquo;re happy to help.
+        {SITE_NAME} is onboarding a small number of local service businesses. Tell us about your
+        business and we&rsquo;ll set it up with you — forward the calls you miss after hours, and
+        start getting one clear report every morning. Setup help is included; no account needed to
+        get started.
       </p>
 
-      <LegalSection title="Support">
+      <PilotRequestForm />
+
+      <LegalSection title="Prefer email, or have a question?">
         <p>
           Email{' '}
           <a className="text-orange-600 hover:underline" href={`mailto:${SUPPORT_EMAIL}`}>
             {SUPPORT_EMAIL}
           </a>{' '}
-          and include your business name and a short description of the issue. For call-related
-          problems, the approximate time of the call helps us find it quickly. We aim to respond
-          within one business day.
+          with your business name and a short note. We aim to respond within one business day.
         </p>
       </LegalSection>
 
       <LegalSection title="Privacy and data requests">
         <p>
-          To request access to or deletion of your data (as a business or as a caller), use the
-          same address with the subject line &ldquo;Data request&rdquo;. See the{' '}
-          <a className="text-orange-600 hover:underline" href="/privacy">Privacy Policy</a> for
-          details on what we store.
-        </p>
-      </LegalSection>
-
-      <LegalSection title="Interested in the pilot?">
-        <p>
-          {SITE_NAME} is onboarding a small number of local service businesses. If you&rsquo;d like
-          a walkthrough with your own business&rsquo;s details, reach out — setup help is included.
+          To request access to or deletion of your data (as a business or as a caller), use the same
+          address with the subject line &ldquo;Data request&rdquo;. See the{' '}
+          <a className="text-orange-600 hover:underline" href="/privacy">Privacy Policy</a> for what
+          we store.
         </p>
       </LegalSection>
     </LegalShell>

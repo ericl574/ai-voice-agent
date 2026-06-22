@@ -45,6 +45,11 @@ import {
 } from '../src/lib/notify/ops.ts';
 import { buildTranscript, countCallerTurns } from '../src/lib/call-pipeline/transcript.ts';
 import { nowInTimeZone } from '../src/lib/call-pipeline/time.ts';
+import {
+  EXTRACTION_SKIPPED_NO_API_KEY,
+  extractionSkippedResponse,
+  extractionSkippedOpsAlert,
+} from '../src/lib/call-pipeline/extractionSkip.ts';
 import { buildBridgeHealth } from '../server/twilio-bridge.ts';
 
 // Vertical profiles imported DIRECTLY (each file's only import is `import type`, stripped at
@@ -728,6 +733,46 @@ test('silent-failure routes wire best-effort ops alerts', () => {
   for (const needle of ['business_query_failed', 'call_query_failed', 'email_send_failed', 'sms_send_failed', 'business_processing_failed']) {
     assert(digest.includes(needle), `digest alerts ${needle}`);
   }
+});
+
+// ── Phone post-call: OPENAI_API_KEY-missing extraction-skip path (pure) ───────
+// When the app deployment has no OPENAI_API_KEY, the phone call is still SAVED but analysis is
+// skipped. The response must say so explicitly, the operator gets a best-effort alert, and neither
+// the response nor the alert may carry the caller transcript or personal details.
+
+test('extractionSkippedResponse — explicit reason, saved, extraction did not run', () => {
+  const r = extractionSkippedResponse('call_abc');
+  eq(r.reason, 'extraction_skipped_no_api_key', 'reason code');
+  eq(r.reason, EXTRACTION_SKIPPED_NO_API_KEY, 'reason uses the shared constant');
+  eq(r.extractionRan, false, 'extraction did not run');
+  eq(r.saved, true, 'call is still saved');
+  eq(r.callId, 'call_abc', 'echoes the call id');
+});
+
+test('extractionSkippedOpsAlert — best-effort alert names the event and carries only ids', () => {
+  const a = extractionSkippedOpsAlert('biz_1', 'call_abc');
+  eq(a.component, 'twilio/post-call', 'component');
+  eq(a.event, 'extraction_skipped_no_api_key', 'event name');
+  eq(Object.keys(a.context).sort().join(','), 'businessId,callId', 'context has ONLY the two ids');
+  eq(a.context.businessId, 'biz_1', 'businessId');
+  eq(a.context.callId, 'call_abc', 'callId');
+});
+
+test('extraction-skip outcome leaks no caller transcript or personal details', () => {
+  // Builders take only ids, so PII is impossible by construction — asserted here so it can't regress.
+  const serialized = JSON.stringify({
+    response: extractionSkippedResponse('call_xyz'),
+    alert: extractionSkippedOpsAlert('biz_9', 'call_xyz'),
+  });
+  for (const pii of ['Caller:', 'Front desk:', 'transcript', '778-798-5201', 'Sarah', '@']) {
+    assert(!serialized.includes(pii), `skip outcome must not include "${pii}"`);
+  }
+});
+
+test('phone post-call wires the skip alert + explicit response from the shared helper', () => {
+  const postCall = readFileSync('src/app/api/twilio/post-call/route.ts', 'utf8');
+  assert(postCall.includes('extractionSkippedOpsAlert'), 'route sends the best-effort skip ops alert');
+  assert(postCall.includes('extractionSkippedResponse'), 'route returns the explicit skip response');
 });
 
 // ── Past-time appointment guard (deterministic; flags, never silently books) ──

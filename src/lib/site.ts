@@ -6,7 +6,7 @@
 export const SITE_NAME = 'FrontDesk';
 export const SITE_TAGLINE = 'A virtual front desk for service businesses';
 export const SITE_DESCRIPTION =
-  'FrontDesk answers your business calls, captures appointments and service requests, and gives your staff clear next steps — 24/7.';
+  'FrontDesk answers the calls you miss after hours, captures who called and what they need, and sends you one clear report every morning.';
 
 // TODO(Eric): replace with the real support inbox before the pilot.
 export const SUPPORT_EMAIL = 'support@frontdesk.example';

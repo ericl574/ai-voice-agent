@@ -18,7 +18,7 @@ const PLANS = [
     cta: 'Start a pilot',
     highlight: false,
     features: [
-      'Calls answered around the clock',
+      'After-hours, busy, and no-answer calls answered',
       'Call summaries and full transcripts',
       'Appointment & service request capture',
       'Business knowledge base',
