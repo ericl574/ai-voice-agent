@@ -21,6 +21,35 @@ assistant's job is to **capture**, not to staff a front desk. So:
 the daily report. The detailed rules below all serve that outcome. (Saved calls feed the after-hours
 report — see `docs/call-pipeline.md` and `docs/after-hours-report.md`.)
 
+## Behavior policies (quick reference)
+
+The load-bearing decision framework is **front-loaded at the top of `GLOBAL_RULES`** (the "HOW TO
+HANDLE EVERY CALL" playbook + NON-NEGOTIABLES), so the Realtime model weights it first. Summary:
+
+- **Can confirm / state plainly:** what the caller said and what was captured (the request and the
+  details given), that staff will follow up, and anything explicitly in the business info / knowledge
+  base (hours, listed services, stated policy).
+- **Must NOT confirm or state:** that an appointment, time, slot, price, or staff member is confirmed
+  or available; any hours / price / availability / policy / service **not** in the knowledge base; or
+  a guarantee of any kind. The agent **captures requests — staff confirm them.**
+- **Unknown-answer policy:** if it isn't in the business info or knowledge base, don't invent it and
+  don't guess from the business type. Help with what's known, name the specific thing staff will
+  confirm, and **capture the question as an open item.** An unanswered question becomes a staff
+  follow-up — never a dead end.
+- **Staff-confirmation policy:** call a staff-confirmed booking a **"request"** ("I'll pass this to
+  the team and they'll confirm with you"). Post-call extraction creates appointments as
+  `status: 'pending'` (or `awaiting_customer` in auto-confirm mode); the agent never marks a booking
+  confirmed.
+- **Escalation / follow-up policy:** urgent/safety-sensitive or upset callers are acknowledged once
+  and routed to staff per the business `staff_handoff_rule`, with no advice beyond the agent's role.
+  Follow-up flagging (`calls.needs_staff_followup`) is deterministic (`deriveNeedsStaffFollowup`):
+  actionable intents always flag; a plain answered question does not — **except** an UNANSWERED
+  question (extraction's `unresolved_question`), which is flagged so it reaches staff in the report.
+- **Vertical-neutral behavior:** `GLOBAL_RULES` carries no industry words; all industry judgment
+  (terminology, what to collect, what not to assume) lives in `src/lib/agents/verticals/*` and is
+  injected per business type. The agent must never use wrong-industry language (a salon doesn't offer
+  takeout; an auto shop doesn't book a "table"). A `qa:units` test guards core-rule neutrality.
+
 ## Request lifecycle
 
 1. Understand the caller's goal (a question, appointment, service request, quote, callback,

@@ -18,6 +18,7 @@ import {
 } from './extraction';
 import { getVertical } from '@/lib/agents/verticals/registry';
 import { deriveCallStatus } from './callStatus';
+import { deriveNeedsStaffFollowup } from './followup';
 import { isPastAppointment } from './pastTime';
 import { todayInTimeZone, DEFAULT_BUSINESS_TIMEZONE } from './time';
 import type { AgentConfig } from '@/lib/supabase/businesses';
@@ -67,7 +68,8 @@ Return ONLY valid JSON — no explanation, no markdown fences:
     "description": string | null,
     "urgency": "normal" | "urgent" | null
   } | null,
-  "next_action": "one sentence in English on what staff should do next"
+  "next_action": "one sentence in English on what staff should do next",
+  "unresolved_question": boolean
 }
 
 SEMANTIC INTENT RULES:
@@ -87,6 +89,7 @@ intent = service_request — use only when the caller wants a callback, quote, r
 Additional rules:
 - Extract caller_name / caller_phone only if stated or confirmed (see CONTACT & APPOINTMENT DETAILS above)
 - Set service_request.should_create=true only when the caller explicitly requests service/repair/callback AND appointment.should_create is false
+- Set unresolved_question=true when the caller asked something the front desk could NOT answer from the business info/knowledge (a price, policy, hours, availability, or service not provided) and staff must follow up; otherwise false. A question fully answered from known info is NOT unresolved.
 - Convert relative dates (tomorrow/明天, Saturday, next week/下周) → YYYY-MM-DD; null if ambiguous
 - Convert times → 24h HH:MM (e.g. 下午五点 → 17:00, "around five" → 17:00); null if ambiguous
 - Do NOT invent data
@@ -266,8 +269,10 @@ export async function runPostCallExtraction(opts: {
     summary: extraction.summary,
     intent: extraction.intent,
     status: deriveCallStatus(extraction.intent, missingRequiredCount),
-    needs_staff_followup:
-      extraction.intent !== 'general_question' && extraction.intent !== 'other',
+    needs_staff_followup: deriveNeedsStaffFollowup(
+      extraction.intent,
+      extraction.unresolved_question === true,
+    ),
   };
   if (extraction.caller_name) callUpdate.customer_name = extraction.caller_name;
   if (extraction.caller_phone) callUpdate.customer_phone = extraction.caller_phone;

@@ -19,6 +19,7 @@ import { looksLikeNoiseOrEmpty } from '../src/lib/call-pipeline/noise.ts';
 import { classifyCallerIntent } from '../src/lib/call-pipeline/intent.ts';
 import { looksLikeEndCall } from '../src/lib/call-pipeline/endCall.ts';
 import { deriveCallStatus } from '../src/lib/call-pipeline/callStatus.ts';
+import { deriveNeedsStaffFollowup } from '../src/lib/call-pipeline/followup.ts';
 import { isPastAppointment } from '../src/lib/call-pipeline/pastTime.ts';
 import { REALTIME_VAD, REALTIME_NOISE_REDUCTION } from '../src/lib/realtime/turnDetection.ts';
 import { readFileSync } from 'node:fs';
@@ -407,9 +408,21 @@ test('GLOBAL_RULES — safety-critical lines are present', () => {
     ['passwords', 'sensitive-data decline (passwords)'],
     ['stay in english', 'language default stability'],
     ['until the caller clearly switches again', 'language switch hysteresis'],
+    // Behavior-upgrade contract — the load-bearing decision framework + non-negotiables.
+    ['how to handle every call', 'front-loaded decision contract'],
+    ['non-negotiables', 'non-negotiables block'],
+    ['pass this to the team', 'capture as request, never false-confirm'],
+    ['unanswered question is a follow-up', 'unknown question becomes staff follow-up'],
   ];
   for (const [needle, label] of fragments) {
     assert(rules.includes(needle), `GLOBAL_RULES must contain "${needle}" (${label})`);
+  }
+});
+
+test('GLOBAL_RULES — stays vertical-neutral (industry words live only in vertical profiles)', () => {
+  const rules = GLOBAL_RULES.toLowerCase();
+  for (const word of ['party size', 'takeout', 'vehicle', 'oil change', 'haircut', 'stylist', 'prescription', 'tutor']) {
+    assert(!rules.includes(word), `core rules must stay vertical-neutral — found "${word}"`);
   }
 });
 
@@ -679,6 +692,71 @@ test('deriveCallStatus — actionable but missing required details → pending',
 test('deriveCallStatus — answered question / nothing to do → resolved', () => {
   eq(deriveCallStatus('general_question', 0), 'resolved', 'plain question → resolved');
   eq(deriveCallStatus('other', 0), 'resolved', 'no actionable intent → resolved');
+});
+
+// ── Staff follow-up flag (unanswered questions must reach staff) ───────────────
+
+test('deriveNeedsStaffFollowup — actionable intents always need follow-up', () => {
+  for (const intent of ['appointment_request', 'service_request', 'quote_request', 'complaint']) {
+    eq(deriveNeedsStaffFollowup(intent, false), true, `${intent} → follow-up`);
+  }
+});
+
+test('deriveNeedsStaffFollowup — answered question / empty call → no follow-up', () => {
+  eq(deriveNeedsStaffFollowup('general_question', false), false, 'answered question');
+  eq(deriveNeedsStaffFollowup('other', false), false, 'no-content call');
+});
+
+test('deriveNeedsStaffFollowup — an UNANSWERED question is flagged for staff', () => {
+  // The gap this closes: a question the front desk could not answer must still reach staff.
+  eq(deriveNeedsStaffFollowup('general_question', true), true, 'unresolved question → follow-up');
+  eq(deriveNeedsStaffFollowup('other', true), true, 'unresolved "other" → follow-up');
+});
+
+// ── Behavior-eval dataset integrity (lightweight — NOT a live-model runner) ────
+// Guards the static eval dataset so it can't drift into bad future signals: it parses, the declared
+// count matches, every case is well-formed, ids are unique, and every expected_intent is in the
+// documented taxonomy (canonical app intents ∪ legacy eval labels). New cases should use canonical
+// app intents (meta.intent_taxonomy.canonical) — see docs/agent-behavior.md.
+
+test('eval dataset — parses, count matches, cases well-formed, intents in documented taxonomy', () => {
+  const data = JSON.parse(
+    readFileSync('tests/voice-agent-evals/frontdesk-ai-eval-cases.json', 'utf8'),
+  ) as {
+    meta: { total_cases: number; intent_taxonomy: { canonical: string[]; legacy: string[] } };
+    cases: Array<Record<string, unknown>>;
+  };
+
+  eq(data.meta.total_cases, data.cases.length, 'meta.total_cases matches actual case count');
+
+  const allowedIntents = new Set([
+    ...data.meta.intent_taxonomy.canonical,
+    ...data.meta.intent_taxonomy.legacy,
+  ]);
+  const stringFields = [
+    'id', 'business_type', 'category', 'scenario',
+    'customer_utterance', 'expected_behavior', 'expected_intent', 'severity_if_failed',
+  ];
+  const ids = new Set<string>();
+
+  for (const c of data.cases) {
+    const id = String(c.id);
+    for (const f of stringFields) {
+      assert(typeof c[f] === 'string' && (c[f] as string).length > 0, `case ${id}: "${f}" must be a non-empty string`);
+    }
+    assert(Array.isArray(c.must_include), `case ${id}: must_include must be an array`);
+    assert(Array.isArray(c.must_not_include), `case ${id}: must_not_include must be an array`);
+    assert(typeof c.expected_followup_required === 'boolean', `case ${id}: expected_followup_required must be boolean`);
+    assert(
+      c.expected_structured_fields != null &&
+        typeof c.expected_structured_fields === 'object' &&
+        !Array.isArray(c.expected_structured_fields),
+      `case ${id}: expected_structured_fields must be an object`,
+    );
+    assert(allowedIntents.has(c.expected_intent as string), `case ${id}: expected_intent "${String(c.expected_intent)}" not in documented taxonomy`);
+    assert(!ids.has(id), `case ${id}: duplicate id`);
+    ids.add(id);
+  }
 });
 
 // ── Realtime session parity (browser ⇄ phone share ONE turn-taking config) ────

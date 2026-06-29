@@ -31,6 +31,10 @@ export interface ExtractionResult {
     urgency: 'normal' | 'urgent' | null;
   } | null;
   next_action: string;
+  // True when the caller asked something the front desk could NOT answer from the business info /
+  // knowledge base (an open question staff must address). Optional: absent/undefined ⇒ treated as
+  // false. Lets a general question the agent couldn't answer still be flagged for staff follow-up.
+  unresolved_question?: boolean;
 }
 
 // Result of checking how complete an actionable request is, against a vertical's required fields.
