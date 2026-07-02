@@ -71,8 +71,16 @@ healthcheck path `/health`, keep crash-restart on. Then set `TWILIO_STREAM_URL=w
 ## Step 5 — Acceptance call (the moment of truth)
 1. Bridge up, ngrok/Railway up, Vercel env set + redeployed, `TWILIO_BUSINESS_ID` = the pilot business.
 2. Call the number. Expect: disclosure → greeting in the business name → a normal booking chat → hang up.
-3. Confirm bridge logs: `stream started` → `session ready (discarded N pre-greeting frames)` →
-   `post-call → 200`.
+3. Confirm bridge logs (each line is prefixed with a per-call trace id, e.g. `[bridge a1b2c3d4/xxxxxx]`):
+   `stream started` → `session-config loaded (business: …)` → `session ready (discarded N pre-greeting
+   frames)` → `first assistant audio → caller` → `first caller transcript captured` →
+   `call ended (<reason>) — duration Ns, M transcript turns` → `post-call → 200`.
+   - A `⚠️  USING FALLBACK INSTRUCTIONS` line means `/api/twilio/session-config` could not be reached
+     (wrong `TWILIO_BRIDGE_SECRET`/`FD_APP_URL`, or app down) — the caller got a **generic** front desk
+     with no business identity/KB. Fix this before trusting the call.
+   - `call ended` reasons: `twilio stop` (caller hung up), `end-cue` (deterministic goodbye), `idle-timeout`
+     (~30s of silence), `max-duration` (10-min cost cap), or a socket close/error. Exactly one
+     `post-call` runs regardless of which fired.
 4. Confirm in the app: the call (transcript + a **real** summary, not "analysis pending") shows in
    **Call History**, and any appointment/service request appears in the dashboard.
 5. If summary says "analysis pending" with no caller name → `OPENAI_API_KEY` is missing on the app
@@ -93,4 +101,10 @@ healthcheck path `/health`, keep crash-restart on. Then set `TWILIO_STREAM_URL=w
 - One env-configured number → one business (per-business numbers are a later phase).
 - Reservation auto-confirm SMS is stubbed; **staff-confirm is the supported flow**.
 - One report per business per local day; no retry on a failed send (the call stays saved).
-- After "goodbye" the agent won't auto-hang-up — prompt-enforced only.
+- **Call ending is now bridge-enforced** via three deterministic caps in `server/twilio-bridge.ts`:
+  a clear goodbye/end cue (`looksLikeEndCall`, ~4s drain), a ~30s idle timeout, and a hard 10-min
+  max-duration cost cap. These **close the bridge↔OpenAI↔Twilio sockets** to end the call (not a
+  Twilio REST hangup), and the phone path still uses the server's auto-response (no Layer 2). So the
+  caps make calls **safe to test** (can't run forever, dead/abandoned calls close), but mid-call
+  turn-taking is still thinner than the browser path — this is a controlled-test safety patch, **not**
+  full pilot/production hardening.

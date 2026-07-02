@@ -51,7 +51,12 @@ import {
   extractionSkippedResponse,
   extractionSkippedOpsAlert,
 } from '../src/lib/call-pipeline/extractionSkip.ts';
-import { buildBridgeHealth } from '../server/twilio-bridge.ts';
+import {
+  buildBridgeHealth,
+  MAX_CALL_DURATION_MS,
+  IDLE_TIMEOUT_MS,
+  END_CUE_DRAIN_MS,
+} from '../server/twilio-bridge.ts';
 
 // Vertical profiles imported DIRECTLY (each file's only import is `import type`, stripped at
 // runtime), so the Node QA runner can load them — unlike registry.ts, which has extensionless
@@ -871,6 +876,68 @@ test('isPastAppointment — missing date or time is never flagged', () => {
   const now = new Date('2026-06-21T18:30:00-07:00');
   eq(isPastAppointment(null, '17:00', 'America/Vancouver', now), false, 'no date');
   eq(isPastAppointment('2026-06-21', null, 'America/Vancouver', now), false, 'no time');
+});
+
+// ── Phone bridge safety caps + clean shutdown (controlled real-call readiness) ─
+// The phone path uses the server's auto-response (no Layer 2), so these safety caps live in the
+// bridge itself: a hard max duration (cost backstop), a conservative idle timeout, and a
+// deterministic goodbye/end-cue shutdown — all funnelling through the single idempotent finish().
+// Source-grepped because the bridge's socket/timer wiring has no unit-test seam (no socket mock
+// harness in the repo); the numeric sanity is also asserted via the exported constants below.
+
+test('bridge defines a hard max call duration cap (cost backstop, matches browser 10 min)', () => {
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  assert(/MAX_CALL_DURATION_MS\s*=\s*10\s*\*\s*60_000/.test(bridge), 'MAX_CALL_DURATION_MS = 10 * 60_000');
+  assert(bridge.includes('maxDurationTimer'), 'arms a max-duration timer');
+  assert(bridge.includes("finish('max-duration')"), 'finalizes with the max-duration reason');
+});
+
+test('bridge defines a conservative idle timeout (not aggressive — avoids cutting normal pauses)', () => {
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  const m = bridge.match(/IDLE_TIMEOUT_MS\s*=\s*([0-9_]+)/);
+  assert(!!m, 'IDLE_TIMEOUT_MS is defined');
+  const ms = Number(m![1].replace(/_/g, ''));
+  assert(ms >= 20_000 && ms <= 60_000, `idle timeout conservative (20–60s), got ${ms}`);
+  assert(bridge.includes('idleTimer'), 'arms an idle timer');
+  assert(bridge.includes("finish('idle-timeout')"), 'finalizes with the idle-timeout reason');
+  assert(bridge.includes('resetIdle'), 'resets idle on meaningful caller/assistant activity');
+});
+
+test('bridge reuses the shared looksLikeEndCall helper for a deterministic goodbye shutdown', () => {
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  assert(
+    /import\s*\{\s*looksLikeEndCall\s*\}\s*from\s*'\.\.\/src\/lib\/call-pipeline\/endCall\.ts'/.test(bridge),
+    'imports looksLikeEndCall from the shared, pure helper',
+  );
+  assert(bridge.includes('looksLikeEndCall('), 'calls looksLikeEndCall on a captured turn');
+  assert(bridge.includes("finish('end-cue')"), 'finalizes with the end-cue reason after a goodbye');
+  const m = bridge.match(/END_CUE_DRAIN_MS\s*=\s*([0-9_]+)/);
+  assert(!!m, 'END_CUE_DRAIN_MS drain window is defined');
+  const ms = Number(m![1].replace(/_/g, ''));
+  assert(ms >= 2_000 && ms <= 8_000, `end-cue drain short (2–8s), got ${ms}`);
+});
+
+test('bridge finalization is idempotent and clears every timer (exactly one post-call)', () => {
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  assert(bridge.includes('if (closed) return'), 'finish() short-circuits once closed (single post-call)');
+  assert(bridge.includes('clearAllTimers'), 'clears all timers on finalize so a closed call arms nothing');
+});
+
+test('bridge tags every call with a trace id and loudly warns when business identity is missing', () => {
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  assert(bridge.includes('traceId'), 'per-call trace id for correlatable logs');
+  // A session-config failure drops business identity/KB (generic fallback prompt) — must be loud.
+  assert(/FALLBACK INSTRUCTIONS/i.test(bridge), 'loud warning when the call falls back to generic instructions');
+});
+
+test('bridge safety caps are sane and correctly ordered (max > idle > end-cue drain)', () => {
+  eq(MAX_CALL_DURATION_MS, 600_000, 'max duration is 10 minutes');
+  assert(IDLE_TIMEOUT_MS >= 20_000 && IDLE_TIMEOUT_MS <= 60_000, 'idle conservative (20–60s)');
+  assert(END_CUE_DRAIN_MS >= 2_000 && END_CUE_DRAIN_MS <= 8_000, 'end-cue drain short (2–8s)');
+  assert(
+    MAX_CALL_DURATION_MS > IDLE_TIMEOUT_MS && IDLE_TIMEOUT_MS > END_CUE_DRAIN_MS,
+    'ordered: max > idle > drain',
+  );
 });
 
 // ── Results ──────────────────────────────────────────────────────────────────

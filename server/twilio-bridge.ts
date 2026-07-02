@@ -29,6 +29,11 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws';
 // Shared turn-taking config — the SAME source the browser session uses, so phone and browser can't
 // drift. Relative .ts import (resolved by `node --experimental-strip-types`, like the QA scripts).
 import { REALTIME_VAD, REALTIME_NOISE_REDUCTION } from '../src/lib/realtime/turnDetection.ts';
+// Same conservative, context-free goodbye/end-cue detector the browser path uses, so a "goodbye"
+// is recognized identically on both paths. It is deliberately pure + self-contained (no imports),
+// so it is safe to load into this standalone bridge runtime via a relative .ts import.
+import { looksLikeEndCall } from '../src/lib/call-pipeline/endCall.ts';
+import { randomUUID } from 'crypto';
 
 const PORT = Number(process.env.PORT ?? process.env.BRIDGE_PORT ?? 8787);
 const APP_URL = (process.env.FD_APP_URL ?? process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
@@ -37,6 +42,20 @@ const OPENAI_KEY = process.env.OPENAI_API_KEY ?? '';
 const BRIDGE_SECRET = process.env.TWILIO_BRIDGE_SECRET ?? '';
 // Same per-turn transcription model the browser path uses (src/lib/call-pipeline/constants.ts).
 const TRANSCRIPTION_MODEL = process.env.TWILIO_TRANSCRIPTION_MODEL ?? 'gpt-4o-transcribe';
+
+// ── Per-call safety caps ──────────────────────────────────────────────────────────────────────
+// The phone path uses the server's auto-response (no Layer 2 orchestration), so these caps live in
+// the bridge itself. All three end the call through the single idempotent finish().
+//
+// Hard ceiling on ONE call — a cost backstop above OpenAI's ~5-min session expiry, matched to the
+// browser path's MAX_CALL_DURATION_MS so neither path can run a call forever.
+export const MAX_CALL_DURATION_MS = 10 * 60_000;
+// Close a call after this much CONTINUOUS silence (no caller speech and no assistant audio). Kept
+// conservative so normal mid-call pauses are never cut off — it only catches a genuinely dead call.
+export const IDLE_TIMEOUT_MS = 30_000;
+// After a clear goodbye/end cue, let the closing line play out for this long, then hang up. A later
+// non-cue caller turn cancels it (the caller kept talking), so it never ends a live conversation.
+export const END_CUE_DRAIN_MS = 4_000;
 
 const bridgeStartedAt = Date.now();
 const bridgeMetrics = {
@@ -126,6 +145,9 @@ async function postCall(payload: {
 
 // One bridged call: Twilio leg + OpenAI leg.
 function handleTwilioConnection(twilioWs: WebSocket): void {
+  // Short per-call trace id so every log line for one call is correlatable — even before the Twilio
+  // streamSid arrives. Contains no caller data and no secrets.
+  const traceId = randomUUID().slice(0, 8);
   let streamSid = '';
   let businessId = '';
   let fromNumber = '';
@@ -135,12 +157,62 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
   let closed = false;
   let countedCall = false;
   let triedLegacyFormat = false;
+  let loggedFirstAssistantAudio = false;
+  let loggedFirstCallerTranscript = false;
   const turns: Turn[] = [];
   // Caller audio arriving before OpenAI is ready is buffered (≈20ms/frame; cap ≈10s).
   const pendingAudio: string[] = [];
   const MAX_PENDING = 500;
 
-  const log = (msg: string) => console.log(`[bridge${streamSid ? ' ' + streamSid.slice(-6) : ''}] ${msg}`);
+  // ── Per-call safety timers (all cleared exactly once in finish via clearAllTimers) ──
+  let maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let endCueTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const log = (msg: string) =>
+    console.log(`[bridge ${traceId}${streamSid ? '/' + streamSid.slice(-6) : ''}] ${msg}`);
+
+  function clearAllTimers(): void {
+    if (maxDurationTimer) { clearTimeout(maxDurationTimer); maxDurationTimer = null; }
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+    if (endCueTimer) { clearTimeout(endCueTimer); endCueTimer = null; }
+  }
+
+  // Cost backstop — armed once when the media stream starts.
+  function armMaxDuration(): void {
+    if (maxDurationTimer) return;
+    maxDurationTimer = setTimeout(() => {
+      log(`max-duration reached (${Math.round(MAX_CALL_DURATION_MS / 1000)}s) — ending to cap cost`);
+      void finish('max-duration');
+    }, MAX_CALL_DURATION_MS);
+  }
+
+  // (Re)arm the idle timer on any meaningful caller/assistant activity. A genuinely dead call (no
+  // audio either way for IDLE_TIMEOUT_MS) is closed cleanly; normal pauses just keep resetting it.
+  function resetIdle(): void {
+    if (closed) return;
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      log(`idle-timeout — no caller/assistant activity for ${Math.round(IDLE_TIMEOUT_MS / 1000)}s`);
+      void finish('idle-timeout');
+    }, IDLE_TIMEOUT_MS);
+  }
+
+  // A clear goodbye/end cue starts a short drain, then hangs up. Idempotent: only the first cue arms.
+  function armEndCue(by: 'caller' | 'assistant'): void {
+    if (closed || endCueTimer) return;
+    log(`end-cue detected (${by}) — draining ${Math.round(END_CUE_DRAIN_MS / 1000)}s then closing`);
+    endCueTimer = setTimeout(() => void finish('end-cue'), END_CUE_DRAIN_MS);
+  }
+
+  // The caller kept talking after a goodbye — cancel the pending hangup so a live call is never cut.
+  function cancelEndCue(reason: string): void {
+    if (endCueTimer) {
+      clearTimeout(endCueTimer);
+      endCueTimer = null;
+      log(`end-cue canceled (${reason})`);
+    }
+  }
 
   function sendToOpenAI(obj: Record<string, unknown>): void {
     if (openaiWs && openaiWs.readyState === WebSocket.OPEN) {
@@ -236,6 +308,7 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
             const discarded = pendingAudio.length;
             pendingAudio.length = 0;
             log(`session ready (discarded ${discarded} pre-greeting frames) — greeting caller`);
+            resetIdle(); // start the idle clock now that the call is conversational
             // Bare response.create — NO per-response `instructions`. In the Realtime API,
             // `response.instructions` REPLACES the session instructions for that one turn, which
             // stripped the GREETING text, the business name, and the "always open in English" rule —
@@ -262,8 +335,19 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
         case 'response.audio.delta': {
           const payload = (event.delta as string) ?? '';
           if (payload && streamSid) {
+            if (!loggedFirstAssistantAudio) {
+              loggedFirstAssistantAudio = true;
+              log('first assistant audio → caller');
+            }
             sendToTwilio({ event: 'media', streamSid, media: { payload } });
+            resetIdle(); // assistant is actively speaking — keep the call alive
           }
+          break;
+        }
+        // Caller started speaking — an activity signal only (no barge-in clear; that is handled by
+        // interrupt_response:false in the shared VAD). Used to keep the idle timer from firing.
+        case 'input_audio_buffer.speech_started': {
+          resetIdle();
           break;
         }
         // No barge-in: with interrupt_response:false (REALTIME_VAD) the assistant finishes its reply
@@ -273,13 +357,30 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
         // Transcript turns (same roles the dashboard uses).
         case 'conversation.item.input_audio_transcription.completed': {
           const text = ((event.transcript as string) ?? '').trim();
-          if (text) turns.push({ role: 'caller', text });
+          if (text) {
+            if (!loggedFirstCallerTranscript) {
+              loggedFirstCallerTranscript = true;
+              log('first caller transcript captured');
+            }
+            turns.push({ role: 'caller', text });
+            resetIdle();
+            // Deterministic goodbye shutdown (same conservative, context-free helper as the browser
+            // path). A clear end cue arms the drain; any other caller turn cancels a pending one so
+            // a caller who keeps talking is never cut off.
+            if (looksLikeEndCall(text)) armEndCue('caller');
+            else cancelEndCue('caller continued');
+          }
           break;
         }
         case 'response.output_audio_transcript.done':
         case 'response.audio_transcript.done': {
           const text = ((event.transcript as string) ?? '').trim();
-          if (text) turns.push({ role: 'assistant', text });
+          if (text) {
+            turns.push({ role: 'assistant', text });
+            // If the assistant itself delivered a clear goodbye, the call is wrapping up — drain the
+            // closing line, then close. A subsequent caller turn still cancels it (handled above).
+            if (looksLikeEndCall(text)) armEndCue('assistant');
+          }
           break;
         }
         default:
@@ -295,16 +396,22 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
   }
 
   async function finish(reason: string): Promise<void> {
+    // Idempotent: a call can end from Twilio stop, OpenAI close, max-duration, idle-timeout,
+    // end-cue, or a socket error — but only the FIRST caller gets past here, so exactly one
+    // post-call save runs and the timers are cleared exactly once.
     if (closed) return;
     closed = true;
+    clearAllTimers();
     bridgeMetrics.activeStreams = Math.max(0, bridgeMetrics.activeStreams - 1);
-    log(`call ended (${reason}) — ${turns.length} transcript turns`);
+    const durationSec = Math.max(0, Math.round((Date.now() - started.getTime()) / 1000));
+    log(`call ended (${reason}) — duration ${durationSec}s, ${turns.length} transcript turns`);
     try {
       openaiWs?.close();
     } catch {
       /* already closed */
     }
     if (turns.length > 0) {
+      log('posting call for save + extraction…');
       await postCall({
         businessId: businessId || null,
         fromNumber: fromNumber || null,
@@ -312,6 +419,8 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
         endedAt: new Date().toISOString(),
         turns,
       });
+    } else {
+      log('no transcript turns captured — skipping post-call (nothing to save)');
     }
     try {
       twilioWs.close();
@@ -343,8 +452,21 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
           bridgeMetrics.callsHandled += 1;
         }
         log(`stream started (business: ${businessId || 'demo fallback'})`);
+        armMaxDuration(); // cost backstop from the moment the call is live
         void fetchSessionConfig(businessId, fromNumber).then((cfg) => {
-          if (!closed) connectOpenAI(cfg);
+          if (closed) return;
+          // A session-config failure means the call runs on generic FALLBACK_INSTRUCTIONS — the
+          // business identity / knowledge base did NOT load. That is a silent quality failure, so
+          // make it LOUD here (fetchSessionConfig also warns on the underlying fetch error).
+          if (cfg.instructions === FALLBACK_INSTRUCTIONS) {
+            log(
+              `⚠️  USING FALLBACK INSTRUCTIONS — business identity/KB NOT loaded (session-config ` +
+                `fetch failed). Caller hears a GENERIC front desk. businessId=${businessId || '(none)'}`,
+            );
+          } else {
+            log(`session-config loaded (business: ${cfg.businessName})`);
+          }
+          connectOpenAI(cfg);
         });
         break;
       }
