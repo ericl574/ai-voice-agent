@@ -20,6 +20,7 @@ import { getVertical } from '@/lib/agents/verticals/registry';
 import { deriveCallStatus } from './callStatus';
 import { deriveNeedsStaffFollowup } from './followup';
 import { isPastAppointment } from './pastTime';
+import { buildAnalystResult, type AnalystResult } from './analyst';
 import { todayInTimeZone, DEFAULT_BUSINESS_TIMEZONE } from './time';
 import type { AgentConfig } from '@/lib/supabase/businesses';
 import { sendReservationSms, reservationConfirmUrl } from '@/lib/sms/sendReservationSms';
@@ -110,6 +111,7 @@ export interface PostCallBizRow {
 
 export interface PostCallResult {
   extraction: ExtractionResult;
+  analysis: AnalystResult;
   appointmentCreated: boolean;
   serviceRequestCreated: boolean;
   appointmentError: string | null;
@@ -230,35 +232,38 @@ export async function runPostCallExtraction(opts: {
   // know what to follow up on. Additive only — appended to next_action (which flows into the
   // appointment / service-request staff_notes). Does not change intent, record creation, status, or
   // needs_staff_followup. Phone is intentionally not a required field on any vertical.
+  const vertical = getVertical((bizRow?.business_type as string) ?? null);
+  const assessment = assessCollection(extraction, vertical.requiredFields);
   const isActionable =
     !!extraction.appointment?.should_create || !!extraction.service_request?.should_create;
-  let missingRequiredCount = 0;
-  if (isActionable) {
-    const vertical = getVertical((bizRow?.business_type as string) ?? null);
-    const { missingRequired } = assessCollection(extraction, vertical.requiredFields);
-    missingRequiredCount = missingRequired.length;
-    if (missingRequired.length > 0) {
-      extraction.next_action =
-        `${extraction.next_action} Missing from call: ${missingRequired.join(', ')}.`.trim();
-    }
+  const missingRequiredCount = isActionable ? assessment.missingRequired.length : 0;
+  if (isActionable && assessment.missingRequired.length > 0) {
+    extraction.next_action =
+      `${extraction.next_action} Missing from call: ${assessment.missingRequired.join(', ')}.`.trim();
   }
 
   // Deterministic past-time guard (Phase 1: flag for staff; in-call rejection is Phase 2). A voice
   // model can't reliably tell that a requested time is already past, so verify it in code: if the
   // captured appointment time is before "now" in the business timezone, warn staff and don't let it
   // read as a clean booking. Status stays 'pending' (actionable) via deriveCallStatus below.
-  if (
-    extraction.appointment?.should_create &&
+  const pastTime =
+    !!extraction.appointment?.should_create &&
     isPastAppointment(
       extraction.appointment.requested_date ?? null,
       extraction.appointment.requested_time ?? null,
       businessTimezone,
       new Date(),
-    )
-  ) {
+    );
+  if (pastTime) {
     extraction.next_action =
       `${extraction.next_action} The requested time appears to be in the past (already passed) — do not treat this as a valid booking; confirm a new time with the caller.`.trim();
   }
+
+  // ── Post-call Analyst ─────────────────────────────────────────────────────
+  // Structured, staff-facing analysis (intent, booking status, staff-action flag, confidence, risk
+  // flags, short staff summary) derived from the extraction — NOT a rewrite of the transcript, which
+  // stays verbatim in calls.transcript. Pure; persisted best-effort below.
+  const analysis: AnalystResult = buildAnalystResult({ extraction, assessment, pastTime });
 
   // ── Update call row ───────────────────────────────────────────────────────
   // `status` is set from the outcome (deriveCallStatus): actionable or incomplete → 'pending'
@@ -287,6 +292,12 @@ export async function runPostCallExtraction(opts: {
     .update({ next_action: extraction.next_action })
     .eq('id', callId);
   if (naErr) console.warn('[FD] could not save next_action (run the call_digests migration):', naErr.message);
+
+  // Structured analyst result → calls.analysis (jsonb). Best-effort + separate from the writes above:
+  // a missing column (calls_analysis migration not yet run) must never break the save. The verbatim
+  // transcript remains untouched in calls.transcript.
+  const { error: anErr } = await supabase.from('calls').update({ analysis }).eq('id', callId);
+  if (anErr) console.warn('[FD] could not save analysis (run the calls_analysis migration):', anErr.message);
 
   // The per-turn caller transcription is lossy on digits; the front-desk confirmation (what the
   // model actually understood) is the accurate number. Overwrite the saved phone-number caller
@@ -423,5 +434,5 @@ export async function runPostCallExtraction(opts: {
     }
   }
 
-  return { extraction, appointmentCreated, serviceRequestCreated, appointmentError, serviceRequestError };
+  return { extraction, analysis, appointmentCreated, serviceRequestCreated, appointmentError, serviceRequestError };
 }

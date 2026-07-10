@@ -5,6 +5,7 @@ import { buildTranscript } from '@/lib/call-pipeline/transcript';
 import { looksLikeNoiseOrEmpty } from '@/lib/call-pipeline/noise';
 import { runPostCallExtraction } from '@/lib/call-pipeline/postCallCore';
 import { extractionSkippedOpsAlert, extractionSkippedResponse } from '@/lib/call-pipeline/extractionSkip';
+import { buildCallQualityMetric } from '@/lib/call-pipeline/callQuality';
 import { SITE_URL } from '@/lib/site';
 import { notifyOps } from '@/lib/notify/ops';
 
@@ -42,6 +43,9 @@ export async function POST(req: NextRequest) {
     startedAt?: string;
     endedAt?: string;
     turns?: PhoneTurn[];
+    // Reported by the bridge for the per-call quality metric (optional — older bridges omit them).
+    endReason?: string;
+    usedFallbackInstructions?: boolean;
   };
   try {
     body = await req.json();
@@ -130,6 +134,34 @@ export async function POST(req: NextRequest) {
       context: { businessId: body.businessId },
     });
     return NextResponse.json({ error: 'Could not save call' }, { status: 500 });
+  }
+
+  // Per-call quality metric — observability (always logged) + best-effort ops alert on a broken
+  // call. Turn counts come from the saved turns; endReason + usedFallbackInstructions are reported
+  // by the bridge (absent on older bridges → treated as no signal, never a false alert).
+  const metric = buildCallQualityMetric({
+    endReason: body.endReason ?? 'unknown',
+    callerTurns: turns.filter((t) => t.role === 'caller').length,
+    assistantTurns: turns.filter((t) => t.role === 'assistant').length,
+    usedFallbackInstructions: body.usedFallbackInstructions === true,
+    durationSec: durationSeconds,
+    extraction: process.env.OPENAI_API_KEY ? 'ran' : 'skipped',
+  });
+  console.log(`[FD] twilio/post-call call-quality (${callId}):`, JSON.stringify(metric));
+  if (metric.shouldAlert) {
+    await notifyOps({
+      component: 'twilio/post-call',
+      event: 'call_quality_alert',
+      error: `low-quality call: ${metric.concerns.join(', ') || 'unknown'}`,
+      context: {
+        businessId: body.businessId,
+        callId,
+        endReason: metric.endReason,
+        callerTurns: metric.callerTurns,
+        assistantTurns: metric.assistantTurns,
+        usedFallbackInstructions: metric.usedFallbackInstructions,
+      },
+    });
   }
 
   // Per-turn rows for Call History (same filtering rules as the browser save path).

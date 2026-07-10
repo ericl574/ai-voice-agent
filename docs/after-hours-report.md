@@ -110,6 +110,7 @@ captured calls today and the email toggle on, you should receive the report + CS
 
 - One report per business per local day; the cron only acts at/after the send hour.
 - Vercel Hobby = **one daily cron only** (`0 13 * * *`); hourly would fail the build (see plan note).
-- No retry queue: a failed send is logged with status `failed` on the `call_digests` row, not
-  retried (calls remain safely saved).
+- Failed-send retry: a **failed** send does NOT advance the coverage high-water mark and does not
+  write the day's `call_digests` row (`shouldAdvanceCoverage`), so the same calls are **retried on the
+  next cron run** — no silent report loss. Calls are always saved regardless.
 - Per-call instant modes exist but are off by default and intentionally not surfaced in the MVP UI.

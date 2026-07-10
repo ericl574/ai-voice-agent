@@ -10,6 +10,7 @@ import { looksLikeNoiseOrEmpty } from '@/lib/call-pipeline/noise';
 import { classifyCallerIntent } from '@/lib/call-pipeline/intent';
 import { looksLikeEndCall } from '@/lib/call-pipeline/endCall';
 import { buildTranscript, countCallerTurns, FRONT_DESK_LABEL } from '@/lib/call-pipeline/transcript';
+import { classifyConnectionState } from '@/lib/realtime/connectionState';
 
 type CallStatus =
   | 'idle'
@@ -40,6 +41,10 @@ type EndReason =
   | 'unknown';
 
 const CONNECT_TIMEOUT_MS = 30_000;
+
+// A WebRTC 'disconnected' is often a momentary blip that self-heals back to 'connected'. Wait this
+// long for auto-recovery before ending the call, instead of tearing down on the instant flip.
+const RECONNECT_GRACE_MS = 8_000;
 
 // Cost safety net: hard cap on a single browser test call so a forgotten/abandoned session can't run
 // up Realtime minutes. The call ends gracefully (same path as the End-call button) at this point.
@@ -264,6 +269,9 @@ export default function VoicePage() {
   const startedAtRef = useRef<Date | null>(null);
   const statusRef = useRef<CallStatus>('idle');
   const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Grace timer armed on a transient WebRTC 'disconnected' — ends the call only if it doesn't
+  // recover to 'connected' within RECONNECT_GRACE_MS (see onconnectionstatechange).
+  const reconnectGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Cost safety net — force-ends an over-long call (see MAX_CALL_DURATION_MS).
   const maxDurationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // End-of-call state (freeze). endRequested = a graceful end is draining → no new responses.
@@ -1028,6 +1036,10 @@ export default function VoicePage() {
     clearTurnTimers();
     clearEndTimers();
     clearConnectTimeout();
+    if (reconnectGraceTimerRef.current) {
+      clearTimeout(reconnectGraceTimerRef.current);
+      reconnectGraceTimerRef.current = null;
+    }
     if (maxDurationTimerRef.current) {
       clearTimeout(maxDurationTimerRef.current);
       maxDurationTimerRef.current = null;
@@ -1121,19 +1133,48 @@ export default function VoicePage() {
       const pc = new RTCPeerConnection();
       pcRef.current = pc;
 
-      // Handle unexpected connection drops
+      // Handle connection drops. A transient 'disconnected' often self-heals, so we wait a bounded
+      // grace period for recovery instead of tearing the call down on the instant flip; only
+      // 'failed'/'closed' end immediately. (classifyConnectionState is the single, tested rule.)
+      const endOnDrop = (s: string) => {
+        endReasonRef.current = 'peer-disconnect';
+        console.log(`[FD debug] peer connection ${s} → ending call`);
+        setErrorMsg('The connection was interrupted. The call has ended unexpectedly.');
+        setStatus('error');
+        cleanup();
+      };
       pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
-        if (
-          (s === 'failed' || s === 'disconnected' || s === 'closed') &&
-          statusRef.current === 'connected'
-        ) {
-          endReasonRef.current = 'peer-disconnect';
-          console.log(`[FD debug] peer connection ${s} → ending call`);
-          setErrorMsg('The connection was interrupted. The call has ended unexpectedly.');
-          setStatus('error');
-          cleanup();
+        const disposition = classifyConnectionState(s);
+
+        // Recovered before the grace timer fired → cancel the pending teardown, keep the call live.
+        if (s === 'connected' && reconnectGraceTimerRef.current) {
+          clearTimeout(reconnectGraceTimerRef.current);
+          reconnectGraceTimerRef.current = null;
+          setErrorMsg('');
+          console.log('[FD debug] peer connection recovered from transient disconnect');
+          recordVoiceEvent('app:connection recovered (transient disconnect)');
+          return;
         }
+
+        if (disposition === 'ignore' || statusRef.current !== 'connected') return;
+
+        if (disposition === 'recover-wait') {
+          if (reconnectGraceTimerRef.current) return; // already waiting out this blip
+          console.log(`[FD debug] peer connection ${s} → waiting ${RECONNECT_GRACE_MS / 1000}s for auto-recovery`);
+          recordVoiceEvent('app:transient disconnect — waiting for recovery');
+          reconnectGraceTimerRef.current = setTimeout(() => {
+            reconnectGraceTimerRef.current = null;
+            // Still not recovered when the grace elapsed → end the call.
+            if (statusRef.current === 'connected' && pcRef.current?.connectionState !== 'connected') {
+              endOnDrop(pcRef.current?.connectionState ?? 'disconnected');
+            }
+          }, RECONNECT_GRACE_MS);
+          return;
+        }
+
+        // 'failed' | 'closed' — terminal, end now.
+        endOnDrop(s);
       };
 
       // Remote audio → hidden <audio> element

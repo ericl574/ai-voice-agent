@@ -33,6 +33,9 @@ import { REALTIME_VAD, REALTIME_NOISE_REDUCTION } from '../src/lib/realtime/turn
 // is recognized identically on both paths. It is deliberately pure + self-contained (no imports),
 // so it is safe to load into this standalone bridge runtime via a relative .ts import.
 import { looksLikeEndCall } from '../src/lib/call-pipeline/endCall.ts';
+// Shared, self-contained per-call quality metric — the app post-call route uses the SAME builder,
+// so the logged metric and the alert decision can't drift between bridge and app.
+import { buildCallQualityMetric } from '../src/lib/call-pipeline/callQuality.ts';
 import { randomUUID } from 'crypto';
 
 const PORT = Number(process.env.PORT ?? process.env.BRIDGE_PORT ?? 8787);
@@ -56,6 +59,28 @@ export const IDLE_TIMEOUT_MS = 30_000;
 // After a clear goodbye/end cue, let the closing line play out for this long, then hang up. A later
 // non-cue caller turn cancels it (the caller kept talking), so it never ends a live conversation.
 export const END_CUE_DRAIN_MS = 4_000;
+
+// Bounded single reconnect: if the OpenAI socket drops mid-call, try ONE re-open within this window;
+// if it isn't ready again by then, end the call rather than leave the caller in dead air. Well under
+// IDLE_TIMEOUT_MS so it resolves long before the idle watchdog would otherwise fire.
+export const OPENAI_RECONNECT_MAX_MS = 5_000;
+
+export type OpenAIDropAction = 'ignore' | 'reconnect' | 'end';
+
+// Decide what to do when the OpenAI socket closes. Pure so the decision is unit-tested; the socket
+// wiring lives in the bridge. 'ignore' = an expected teardown during finish(); 'reconnect' = the
+// first unexpected drop while we still have the session config (context is LOST on the new session —
+// graceful degrade, not a seamless resume); 'end' = give up (already retried once, or no config) and
+// stop promptly — never leave the caller in dead air.
+export function decideOpenAIDropAction(state: {
+  closed: boolean;
+  reconnectAttempted: boolean;
+  haveConfig: boolean;
+}): OpenAIDropAction {
+  if (state.closed) return 'ignore';
+  if (!state.reconnectAttempted && state.haveConfig) return 'reconnect';
+  return 'end';
+}
 
 const bridgeStartedAt = Date.now();
 const bridgeMetrics = {
@@ -129,6 +154,8 @@ async function postCall(payload: {
   startedAt: string;
   endedAt: string;
   turns: Turn[];
+  endReason: string;
+  usedFallbackInstructions: boolean;
 }): Promise<void> {
   try {
     const res = await fetch(`${APP_URL}/api/twilio/post-call`, {
@@ -159,6 +186,15 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
   let triedLegacyFormat = false;
   let loggedFirstAssistantAudio = false;
   let loggedFirstCallerTranscript = false;
+  // True when session-config could not be fetched and the call ran on generic FALLBACK_INSTRUCTIONS
+  // (no business identity/KB). Reported in the per-call quality metric so the app can page ops.
+  let usedFallback = false;
+  // Reconnect state — one bounded OpenAI reconnect per call on an unexpected drop (see
+  // handleOpenAIDrop). sessionCfg is stored so the reconnect can reuse the same prompt/voice.
+  let sessionCfg: SessionConfig | null = null;
+  let greeted = false; // suppress a re-greeting after a mid-call reconnect
+  let openaiReconnectAttempted = false;
+  let openaiReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   const turns: Turn[] = [];
   // Caller audio arriving before OpenAI is ready is buffered (≈20ms/frame; cap ≈10s).
   const pendingAudio: string[] = [];
@@ -176,6 +212,7 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
     if (maxDurationTimer) { clearTimeout(maxDurationTimer); maxDurationTimer = null; }
     if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
     if (endCueTimer) { clearTimeout(endCueTimer); endCueTimer = null; }
+    if (openaiReconnectTimer) { clearTimeout(openaiReconnectTimer); openaiReconnectTimer = null; }
   }
 
   // Cost backstop — armed once when the media stream starts.
@@ -278,16 +315,22 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
   }
 
   function connectOpenAI(cfg: SessionConfig): void {
-    openaiWs = new WebSocket(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(MODEL)}`, {
+    // Capture THIS socket. After a reconnect, openaiWs points at the new socket; the old socket's
+    // late events (including its 'close') are then ignored via the `ws !== openaiWs` guard, so a
+    // stale close can never end the call or double-trigger reconnect.
+    const ws = new WebSocket(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(MODEL)}`, {
       headers: { Authorization: `Bearer ${OPENAI_KEY}` },
     });
+    openaiWs = ws;
 
-    openaiWs.on('open', () => {
+    ws.on('open', () => {
+      if (ws !== openaiWs) return;
       log('openai connected — configuring session');
       sessionUpdate(cfg, false);
     });
 
-    openaiWs.on('message', (raw: RawData) => {
+    ws.on('message', (raw: RawData) => {
+      if (ws !== openaiWs) return;
       let event: Record<string, unknown>;
       try {
         event = JSON.parse(raw.toString());
@@ -300,22 +343,32 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
         case 'session.updated': {
           if (!openaiReady) {
             openaiReady = true;
-            // Greet FIRST, then listen. Any audio buffered before the session was ready (an early
-            // "hello", line noise) is DISCARDED — previously it was flushed here, which let the
-            // caller's pre-greeting audio trigger a competing response / barge-in clear that
-            // truncated the greeting ("…thank you for calling the front"). The caller's real first
-            // turn starts cleanly after the greeting finishes.
-            const discarded = pendingAudio.length;
-            pendingAudio.length = 0;
-            log(`session ready (discarded ${discarded} pre-greeting frames) — greeting caller`);
-            resetIdle(); // start the idle clock now that the call is conversational
-            // Bare response.create — NO per-response `instructions`. In the Realtime API,
-            // `response.instructions` REPLACES the session instructions for that one turn, which
-            // stripped the GREETING text, the business name, and the "always open in English" rule —
-            // so the model freelanced the first turn in a random language (it greeted in Vietnamese).
-            // The browser path greets with a bare response.create and stays in English; match it. The
-            // session prompt (buildSystemPrompt GREETING + LANGUAGE rules) drives the greeting.
-            sendToOpenAI({ type: 'response.create' });
+            resetIdle(); // start/refresh the idle clock now that the session is live
+            // A reconnect succeeded — cancel the pending "reconnect failed → end" watchdog.
+            if (openaiReconnectTimer) { clearTimeout(openaiReconnectTimer); openaiReconnectTimer = null; }
+            if (!greeted) {
+              greeted = true;
+              // Greet FIRST, then listen. Any audio buffered before the session was ready (an early
+              // "hello", line noise) is DISCARDED — previously it was flushed here, which let the
+              // caller's pre-greeting audio trigger a competing response / barge-in clear that
+              // truncated the greeting ("…thank you for calling the front"). The caller's real first
+              // turn starts cleanly after the greeting finishes.
+              const discarded = pendingAudio.length;
+              pendingAudio.length = 0;
+              log(`session ready (discarded ${discarded} pre-greeting frames) — greeting caller`);
+              // Bare response.create — NO per-response `instructions`. In the Realtime API,
+              // `response.instructions` REPLACES the session instructions for that one turn, which
+              // stripped the GREETING text, the business name, and the "always open in English" rule —
+              // so the model freelanced the first turn in a random language (it greeted in Vietnamese).
+              // The browser path greets with a bare response.create and stays in English; match it. The
+              // session prompt (buildSystemPrompt GREETING + LANGUAGE rules) drives the greeting.
+              sendToOpenAI({ type: 'response.create' });
+            } else {
+              // Re-established after a mid-call drop — do NOT re-greet; resume listening. The new
+              // session has no memory of earlier turns (graceful degrade, not a seamless resume).
+              pendingAudio.length = 0; // stale frames from the gap aren't useful
+              log('openai session re-established after a drop — resuming without re-greeting');
+            }
           }
           break;
         }
@@ -388,11 +441,50 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
       }
     });
 
-    openaiWs.on('close', () => {
+    ws.on('close', () => {
+      if (ws !== openaiWs) return; // a replaced/stale socket closing — ignore
       log('openai closed');
       openaiReady = false;
+      handleOpenAIDrop('close');
     });
-    openaiWs.on('error', (err: Error) => log(`openai ws error: ${err.message}`));
+    ws.on('error', (err: Error) => {
+      if (ws !== openaiWs) return;
+      // 'error' is followed by 'close', which drives reconnect/end — don't double-handle here.
+      log(`openai ws error: ${err.message}`);
+    });
+  }
+
+  // One bounded reconnect on an UNEXPECTED OpenAI drop, else end promptly — never leave the caller in
+  // dead air (previously an OpenAI close left silence until the 30s idle timeout). Context is LOST on
+  // the new session, so this is graceful degrade (no re-greet, no memory of earlier turns), not resume.
+  function handleOpenAIDrop(why: string): void {
+    const action = decideOpenAIDropAction({
+      closed,
+      reconnectAttempted: openaiReconnectAttempted,
+      haveConfig: sessionCfg !== null,
+    });
+    if (action === 'ignore') return; // expected teardown during finish()
+    if (action === 'reconnect') {
+      openaiReconnectAttempted = true;
+      log(`openai dropped (${why}) — attempting one reconnect (context will reset)`);
+      if (openaiReconnectTimer) clearTimeout(openaiReconnectTimer);
+      openaiReconnectTimer = setTimeout(() => {
+        openaiReconnectTimer = null;
+        if (!closed && !openaiReady) {
+          log('openai reconnect did not become ready in time — ending call');
+          void finish('openai-reconnect-failed');
+        }
+      }, OPENAI_RECONNECT_MAX_MS);
+      try {
+        connectOpenAI(sessionCfg as SessionConfig);
+      } catch (err) {
+        log(`openai reconnect failed to start: ${(err as Error).message} — ending call`);
+        void finish('openai-closed');
+      }
+      return;
+    }
+    log(`openai dropped (${why}) and no reconnect available — ending call`);
+    void finish('openai-closed');
   }
 
   async function finish(reason: string): Promise<void> {
@@ -405,6 +497,16 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
     bridgeMetrics.activeStreams = Math.max(0, bridgeMetrics.activeStreams - 1);
     const durationSec = Math.max(0, Math.round((Date.now() - started.getTime()) / 1000));
     log(`call ended (${reason}) — duration ${durationSec}s, ${turns.length} transcript turns`);
+    // Per-call quality metric (log-based observability; the app also alerts on shouldAlert). Same
+    // pure builder the app uses, so bridge logs and app alerts agree.
+    const metric = buildCallQualityMetric({
+      endReason: reason,
+      callerTurns: turns.filter((t) => t.role === 'caller').length,
+      assistantTurns: turns.filter((t) => t.role === 'assistant').length,
+      usedFallbackInstructions: usedFallback,
+      durationSec,
+    });
+    log(`call-quality ${JSON.stringify(metric)}`);
     try {
       openaiWs?.close();
     } catch {
@@ -418,6 +520,8 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
         startedAt: started.toISOString(),
         endedAt: new Date().toISOString(),
         turns,
+        endReason: reason,
+        usedFallbackInstructions: usedFallback,
       });
     } else {
       log('no transcript turns captured — skipping post-call (nothing to save)');
@@ -459,6 +563,7 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
           // business identity / knowledge base did NOT load. That is a silent quality failure, so
           // make it LOUD here (fetchSessionConfig also warns on the underlying fetch error).
           if (cfg.instructions === FALLBACK_INSTRUCTIONS) {
+            usedFallback = true;
             log(
               `⚠️  USING FALLBACK INSTRUCTIONS — business identity/KB NOT loaded (session-config ` +
                 `fetch failed). Caller hears a GENERIC front desk. businessId=${businessId || '(none)'}`,
@@ -466,6 +571,7 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
           } else {
             log(`session-config loaded (business: ${cfg.businessName})`);
           }
+          sessionCfg = cfg; // stored so a mid-call reconnect can reuse the same prompt/voice
           connectOpenAI(cfg);
         });
         break;

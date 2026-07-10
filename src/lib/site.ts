@@ -8,7 +8,7 @@ export const SITE_DESCRIPTION =
 
 // Support inbox: shown publicly (privacy/terms/contact) and the destination for /contact pilot
 // requests. A personal Gmail is intentional for the supervised first pilot; upgrade to a domain
-// support address before broader public launch (see docs/pilot-public-readiness.md).
+// support address before broader public launch (see docs/deployment-checklist.md).
 export const SUPPORT_EMAIL = 'ericliu2364@gmail.com';
 
 // Legal operator identity shown on /privacy and /terms. Sole operator (individual) for the first

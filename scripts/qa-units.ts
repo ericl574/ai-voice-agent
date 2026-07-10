@@ -20,8 +20,17 @@ import { classifyCallerIntent } from '../src/lib/call-pipeline/intent.ts';
 import { looksLikeEndCall } from '../src/lib/call-pipeline/endCall.ts';
 import { deriveCallStatus } from '../src/lib/call-pipeline/callStatus.ts';
 import { deriveNeedsStaffFollowup } from '../src/lib/call-pipeline/followup.ts';
+import { buildCallQualityMetric } from '../src/lib/call-pipeline/callQuality.ts';
+import { routeIntent, SPECIALISTS, CALLER_INTENTS } from '../src/lib/agents/routing/intents.ts';
+import { buildAnalystResult } from '../src/lib/call-pipeline/analyst.ts';
+import { ROUTER_PLAYBOOK } from '../src/lib/agents/specialists/router.ts';
+import { BOOKING_PLAYBOOK } from '../src/lib/agents/specialists/booking.ts';
+import { FAQ_PLAYBOOK } from '../src/lib/agents/specialists/faq.ts';
+import { ESCALATION_PLAYBOOK } from '../src/lib/agents/specialists/escalation.ts';
+import { classifyCallHealth } from '../src/lib/call-pipeline/callHealth.ts';
 import { isPastAppointment } from '../src/lib/call-pipeline/pastTime.ts';
 import { REALTIME_VAD, REALTIME_NOISE_REDUCTION } from '../src/lib/realtime/turnDetection.ts';
+import { classifyConnectionState } from '../src/lib/realtime/connectionState.ts';
 import { readFileSync } from 'node:fs';
 import {
   decideDelivery,
@@ -33,9 +42,13 @@ import {
   composeDigestEmail,
   composeDigestSms,
   buildCallsCsv,
+  shouldAdvanceCoverage,
   type DigestCall,
+  type DigestChannelStatus,
 } from '../src/lib/notify/digest.ts';
 import { toE164 } from '../src/lib/notify/sms.ts';
+import { canonicalPhone, matchBusinessIdByNumber } from '../src/lib/twilio/numberRouting.ts';
+import { buildPilotLead } from '../src/lib/leads/pilotLead.ts';
 import {
   buildOpsAlert,
   dueForAlert,
@@ -56,6 +69,8 @@ import {
   MAX_CALL_DURATION_MS,
   IDLE_TIMEOUT_MS,
   END_CUE_DRAIN_MS,
+  OPENAI_RECONNECT_MAX_MS,
+  decideOpenAIDropAction,
 } from '../server/twilio-bridge.ts';
 
 // Vertical profiles imported DIRECTLY (each file's only import is `import type`, stripped at
@@ -604,6 +619,39 @@ test('buildCallsCsv — empty caller fields render as empty cells, not "null"', 
   assert(!/null/.test(csv), 'no literal null');
 });
 
+// ── shouldAdvanceCoverage — never mark calls "covered" on a failed send (retry next run) ───────
+// The digest's high-water mark (covered_through) must only advance when the report was actually
+// delivered. A transient provider failure must leave the mark unchanged so the SAME calls are
+// retried on the next cron tick — otherwise a failed email silently drops that day's report forever.
+// Email is the PRIMARY deliverable; SMS is an optional alert. 'skipped' (no-domain mode) and
+// 'disabled' are intentional non-error states and still advance (never an unbounded backlog).
+
+test('shouldAdvanceCoverage — a FAILED email (primary channel) never advances → retried next run', () => {
+  const cases: DigestChannelStatus[] = ['sent', 'failed', 'skipped', 'disabled'];
+  for (const sms of cases) {
+    eq(shouldAdvanceCoverage('failed', sms), false, `email failed + sms=${sms} must not advance`);
+  }
+});
+
+test('shouldAdvanceCoverage — SMS-only setup: a failed SMS does not advance (retries)', () => {
+  // Email not the deliverable this run (disabled or no-domain skip), SMS was the channel and failed.
+  eq(shouldAdvanceCoverage('disabled', 'failed'), false, 'sms-only + sms failed → retry');
+  eq(shouldAdvanceCoverage('skipped', 'failed'), false, 'email skipped + sms failed → retry');
+});
+
+test('shouldAdvanceCoverage — a failed OPTIONAL sms does not block a delivered email', () => {
+  // Email is primary; if it sent, one failed optional SMS must NOT cause a duplicate email next run.
+  eq(shouldAdvanceCoverage('sent', 'failed'), true, 'email sent, optional sms failed → advance');
+});
+
+test('shouldAdvanceCoverage — successful / intentional non-error states advance', () => {
+  eq(shouldAdvanceCoverage('sent', 'sent'), true, 'both sent');
+  eq(shouldAdvanceCoverage('sent', 'disabled'), true, 'email sent, sms off');
+  eq(shouldAdvanceCoverage('skipped', 'disabled'), true, 'no-domain skip advances (no backlog)');
+  eq(shouldAdvanceCoverage('disabled', 'disabled'), true, 'nothing enabled → nothing to retry');
+  eq(shouldAdvanceCoverage('disabled', 'sent'), true, 'sms-only delivered');
+});
+
 // ── SMS phone normalization (Twilio requires E.164) ───────────────────────────
 
 test('toE164 — bare 10-digit US/Canada number gets +1 (the SMS-test 400 fix)', () => {
@@ -620,6 +668,138 @@ test('toE164 — 11-digit leading-1 and already-E.164 pass through', () => {
 test('toE164 — empty stays empty', () => {
   eq(toE164(''), '', 'empty in → empty out');
   eq(toE164('   '), '', 'whitespace-only → empty');
+});
+
+// ── Multi-business Twilio routing — resolve the business from the dialed number ────────────────
+// A real inbound call must map to the correct business by the number it was dialed on (params.To),
+// so ONE deployment can serve many pilots instead of a single env-pinned TWILIO_BUSINESS_ID. The
+// matcher is NANP-aware so a stored '(604) 555-0100' matches Twilio's E.164 '+16045550100'.
+
+test('canonicalPhone — NANP forms all reduce to the same 10 digits', () => {
+  eq(canonicalPhone('+16045550100'), '6045550100', 'E.164');
+  eq(canonicalPhone('16045550100'), '6045550100', '11-digit leading 1');
+  eq(canonicalPhone('(604) 555-0100'), '6045550100', 'formatted');
+  eq(canonicalPhone('604.555.0100'), '6045550100', 'dotted');
+  eq(canonicalPhone(' 604 555 0100 '), '6045550100', 'spaced/trimmed');
+});
+
+test('canonicalPhone — empty / null / no-digit input → empty string', () => {
+  eq(canonicalPhone(''), '', 'empty');
+  eq(canonicalPhone('   '), '', 'whitespace');
+  eq(canonicalPhone(null), '', 'null');
+  eq(canonicalPhone(undefined), '', 'undefined');
+  eq(canonicalPhone('abc'), '', 'letters only');
+});
+
+test('canonicalPhone — non-NANP international digits are preserved (no leading-1 strip)', () => {
+  eq(canonicalPhone('+44 7911 123456'), '447911123456', 'UK number kept whole');
+});
+
+const numberRows = [
+  { id: 'biz_a', twilio_number: '+16045550100' },
+  { id: 'biz_b', twilio_number: '(778) 555-0200' },
+  { id: 'biz_c', twilio_number: null },
+];
+
+test('matchBusinessIdByNumber — resolves the owning business across formats', () => {
+  eq(matchBusinessIdByNumber(numberRows, '+16045550100'), 'biz_a', 'E.164 dialed → biz_a');
+  eq(matchBusinessIdByNumber(numberRows, '+17785550200'), 'biz_b', 'matches formatted stored number');
+});
+
+test('matchBusinessIdByNumber — unknown / blank number resolves to null (no accidental match)', () => {
+  eq(matchBusinessIdByNumber(numberRows, '+15559999999'), null, 'unmapped number');
+  eq(matchBusinessIdByNumber(numberRows, ''), null, 'blank dialed number');
+  eq(matchBusinessIdByNumber(numberRows, null), null, 'null dialed number');
+  // A row with a null/blank stored number must never be matched by a blank dialed number.
+  eq(matchBusinessIdByNumber([{ id: 'biz_c', twilio_number: null }], ''), null, 'blank never matches null row');
+});
+
+test('twilio/voice resolves the business from the dialed number, with an env fallback', () => {
+  const route = readFileSync('src/app/api/twilio/voice/route.ts', 'utf8');
+  assert(route.includes('matchBusinessIdByNumber'), 'route resolves business by dialed number');
+  assert(route.includes('resolveBusinessId'), 'route uses the number → business resolver');
+  assert(route.includes('TWILIO_BUSINESS_ID'), 'legacy single-tenant env kept as dev/back-compat fallback');
+  // The businessId must come from the resolver, not straight from the env var anymore.
+  assert(route.includes('await resolveBusinessId(to)'), 'businessId is resolved from params.To');
+});
+
+// ── buildPilotLead — normalize + validate a pilot request into a durable lead row ─────────────
+// Every pilot request must be storable in Supabase (source of truth) so a lead is never lost to an
+// unconfigured/failed email. This pure builder normalizes + validates; the route stores + emails.
+
+const validLeadBody = {
+  businessName: '  Sunrise Auto  ',
+  contactName: '  Jamie Lee ',
+  email: ' jamie@sunriseauto.com ',
+  phone: '(604) 555-0100',
+  businessType: 'auto_repair',
+  city: ' Vancouver ',
+  message: '  Miss a lot of after-hours calls.  ',
+};
+
+test('buildPilotLead — valid body → trimmed, typed lead with default source', () => {
+  const r = buildPilotLead(validLeadBody);
+  assert(r.ok, 'valid body accepted');
+  if (!r.ok) return;
+  eq(r.lead.business_name, 'Sunrise Auto', 'business name trimmed');
+  eq(r.lead.contact_name, 'Jamie Lee', 'contact name trimmed');
+  eq(r.lead.email, 'jamie@sunriseauto.com', 'email trimmed');
+  eq(r.lead.phone, '(604) 555-0100', 'phone kept as given');
+  eq(r.lead.business_type, 'auto_repair', 'business type');
+  eq(r.lead.city, 'Vancouver', 'city trimmed');
+  eq(r.lead.message, 'Miss a lot of after-hours calls.', 'message trimmed');
+  eq(r.lead.source, 'contact_form', 'default source');
+});
+
+test('buildPilotLead — minimal body → optional fields null, business_type defaults to other', () => {
+  const r = buildPilotLead({ businessName: 'Acme', contactName: 'Pat', email: 'pat@acme.com' });
+  assert(r.ok, 'minimal accepted');
+  if (!r.ok) return;
+  eq(r.lead.phone, null, 'no phone → null');
+  eq(r.lead.city, null, 'no city → null');
+  eq(r.lead.message, null, 'no message → null');
+  eq(r.lead.business_type, 'other', 'business type default');
+});
+
+test('buildPilotLead — missing required fields / bad email → error (never a partial lead)', () => {
+  eq(buildPilotLead({ contactName: 'Pat', email: 'pat@acme.com' }).ok, false, 'missing business name');
+  eq(buildPilotLead({ businessName: 'Acme', email: 'pat@acme.com' }).ok, false, 'missing contact name');
+  eq(buildPilotLead({ businessName: 'Acme', contactName: 'Pat', email: 'not-an-email' }).ok, false, 'bad email');
+  eq(buildPilotLead({ businessName: 'Acme', contactName: 'Pat', email: '' }).ok, false, 'empty email');
+});
+
+test('buildPilotLead — over-long fields are length-capped', () => {
+  const r = buildPilotLead({
+    businessName: 'B'.repeat(500),
+    contactName: 'Pat',
+    email: 'pat@acme.com',
+    message: 'm'.repeat(5000),
+  });
+  assert(r.ok, 'accepted');
+  if (!r.ok) return;
+  assert(r.lead.business_name.length <= 120, `business name capped: ${r.lead.business_name.length}`);
+  assert((r.lead.message ?? '').length <= 2000, `message capped: ${(r.lead.message ?? '').length}`);
+});
+
+test('buildPilotLead — source can be overridden', () => {
+  const r = buildPilotLead({ businessName: 'Acme', contactName: 'Pat', email: 'pat@acme.com' }, { source: 'api' });
+  assert(r.ok && r.lead.source === 'api', 'custom source applied');
+});
+
+test('pilot-request route stores the lead durably (Supabase) before/besides emailing', () => {
+  const route = readFileSync('src/app/api/pilot-request/route.ts', 'utf8');
+  assert(route.includes('buildPilotLead'), 'route builds a normalized lead');
+  assert(route.includes("from('pilot_requests').insert"), 'route inserts the lead into pilot_requests');
+  assert(route.includes('createAdminClient'), 'route uses the service-role client for storage');
+  assert(route.includes('lead_store_failed') || route.includes('lead_store_unconfigured'), 'route alerts if storage fails');
+});
+
+test('getActiveBusiness scopes business_members by the signed-in user (tenant isolation, not RLS-only)', () => {
+  // Defense-in-depth: the active-business lookup must filter memberships by the authenticated user id,
+  // so a missing/wrong business_members RLS policy can never resolve a user to another business.
+  const src = readFileSync('src/lib/supabase/businesses.ts', 'utf8');
+  assert(src.includes('auth.getUser()'), 'resolves the signed-in user');
+  assert(/\.eq\('user_id',\s*userId\)/.test(src), "filters business_members by .eq('user_id', userId)");
 });
 
 // ── Ops alerts (operator SMS: safe, best-effort, cooled down) ────────────────
@@ -775,6 +955,38 @@ test('REALTIME_VAD — locked safety-critical turn-taking values', () => {
   eq(REALTIME_NOISE_REDUCTION.type, 'far_field', 'far-field noise reduction');
 });
 
+// ── classifyConnectionState — survive a transient WebRTC blip instead of tearing down ─────────
+// WebRTC 'disconnected' is often momentary and self-heals back to 'connected'; only 'failed'/'closed'
+// are terminal. The browser call must WAIT out a 'disconnected' (grace period) rather than ending
+// the call the instant the state flips — a brief network hiccup should not drop a live call.
+
+test('classifyConnectionState — transient disconnect waits for recovery', () => {
+  eq(classifyConnectionState('disconnected'), 'recover-wait', 'disconnected → wait, not end');
+});
+
+test('classifyConnectionState — failed/closed are terminal (end the call)', () => {
+  eq(classifyConnectionState('failed'), 'fatal', 'failed → end');
+  eq(classifyConnectionState('closed'), 'fatal', 'closed → end');
+});
+
+test('classifyConnectionState — healthy/normal states are ignored', () => {
+  for (const s of ['new', 'connecting', 'connected']) {
+    eq(classifyConnectionState(s), 'ignore', `${s} → ignore`);
+  }
+});
+
+test('voice page waits out a transient disconnect (does not instantly tear down)', () => {
+  const page = readFileSync('src/app/dashboard/voice/page.tsx', 'utf8');
+  assert(page.includes('classifyConnectionState'), 'page uses the shared disposition rule');
+  assert(page.includes('reconnectGraceTimerRef'), 'page arms a grace timer on a transient disconnect');
+  assert(page.includes('recovered from transient disconnect'), 'page cancels teardown when it recovers');
+  // The old code ended on any of failed/disconnected/closed in one branch — that must be gone.
+  assert(
+    !page.includes("s === 'failed' || s === 'disconnected' || s === 'closed'"),
+    'no longer ends instantly on a bare disconnected',
+  );
+});
+
 test('browser + phone both consume the shared turn-taking config (no drift)', () => {
   const voiceSession = readFileSync('src/app/api/voice-session/route.ts', 'utf8');
   const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
@@ -816,6 +1028,16 @@ test('silent-failure routes wire best-effort ops alerts', () => {
   for (const needle of ['business_query_failed', 'call_query_failed', 'email_send_failed', 'sms_send_failed', 'business_processing_failed']) {
     assert(digest.includes(needle), `digest alerts ${needle}`);
   }
+});
+
+test('digest cron only advances the coverage mark on delivery (failed send retries next run)', () => {
+  const digest = readFileSync('src/app/api/cron/digest/route.ts', 'utf8');
+  assert(digest.includes('shouldAdvanceCoverage'), 'digest route gates the record on shouldAdvanceCoverage');
+  assert(digest.includes('digest_delivery_failed'), 'digest route alerts on a non-delivered digest');
+  // The gate must run BEFORE the call_digests upsert, so a failed send never writes the record.
+  const gateAt = digest.indexOf('shouldAdvanceCoverage(emailStatus, smsStatus)');
+  const upsertAt = digest.indexOf("from('call_digests').upsert");
+  assert(gateAt > 0 && upsertAt > 0 && gateAt < upsertAt, 'delivery gate precedes the digest record write');
 });
 
 // ── Phone post-call: OPENAI_API_KEY-missing extraction-skip path (pure) ───────
@@ -938,6 +1160,292 @@ test('bridge safety caps are sane and correctly ordered (max > idle > end-cue dr
     MAX_CALL_DURATION_MS > IDLE_TIMEOUT_MS && IDLE_TIMEOUT_MS > END_CUE_DRAIN_MS,
     'ordered: max > idle > drain',
   );
+});
+
+// ── OpenAI drop handling — no dead air on a mid-call socket drop ───────────────────────────────
+// Previously an OpenAI WS close mid-call left the caller in silence until the 30s idle timeout. Now
+// the bridge tries ONE bounded reconnect (context is lost — graceful degrade), else ends promptly.
+
+test('decideOpenAIDropAction — expected teardown during finish() is ignored', () => {
+  eq(decideOpenAIDropAction({ closed: true, reconnectAttempted: false, haveConfig: true }), 'ignore', 'closed → ignore');
+  eq(decideOpenAIDropAction({ closed: true, reconnectAttempted: true, haveConfig: false }), 'ignore', 'closed dominates');
+});
+
+test('decideOpenAIDropAction — first unexpected drop with a config → one reconnect', () => {
+  eq(decideOpenAIDropAction({ closed: false, reconnectAttempted: false, haveConfig: true }), 'reconnect', 'first drop → reconnect');
+});
+
+test('decideOpenAIDropAction — already retried, or no config → end (never dead air, never a loop)', () => {
+  eq(decideOpenAIDropAction({ closed: false, reconnectAttempted: true, haveConfig: true }), 'end', 'second drop → end');
+  eq(decideOpenAIDropAction({ closed: false, reconnectAttempted: false, haveConfig: false }), 'end', 'no config → end');
+});
+
+test('OPENAI_RECONNECT_MAX_MS resolves well before the idle timeout would fire', () => {
+  assert(OPENAI_RECONNECT_MAX_MS > 0 && OPENAI_RECONNECT_MAX_MS < IDLE_TIMEOUT_MS, 'reconnect window < idle timeout');
+});
+
+test('bridge wires OpenAI-drop handling (no silent dead-air regression)', () => {
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  assert(bridge.includes('decideOpenAIDropAction'), 'bridge uses the tested drop decision');
+  assert(bridge.includes('handleOpenAIDrop'), 'bridge routes OpenAI closes through the drop handler');
+  assert(bridge.includes("finish('openai-reconnect-failed')") || bridge.includes("finish('openai-closed')"),
+    'bridge ends promptly when reconnect is unavailable/fails');
+});
+
+// ── Per-call quality metric (observability + best-effort alert on a broken call) ──────────────
+// Summarizes one call into machine-readable concerns and a should-page decision. Alerts only on
+// SERIOUS signals (fallback prompt used, the assistant never spoke, or an abnormal/error end) — a
+// bare 0-caller-turn call (hangup/wrong number) and a skipped extraction (its own alert) are noted
+// but do NOT page. Pure so both the phone bridge and the app post-call route share one definition.
+
+const cleanCall = {
+  endReason: 'twilio stop',
+  callerTurns: 4,
+  assistantTurns: 5,
+  usedFallbackInstructions: false,
+  durationSec: 92,
+  extraction: 'ran' as const,
+};
+
+test('buildCallQualityMetric — a clean call has no concerns and does not alert', () => {
+  const m = buildCallQualityMetric(cleanCall);
+  eq(m.concerns.length, 0, 'no concerns');
+  eq(m.shouldAlert, false, 'no alert');
+  eq(m.extraction, 'ran', 'extraction status carried');
+});
+
+test('buildCallQualityMetric — fallback instructions (business identity/KB not loaded) → alert', () => {
+  const m = buildCallQualityMetric({ ...cleanCall, usedFallbackInstructions: true });
+  assert(m.concerns.includes('fallback_instructions'), 'flags fallback');
+  eq(m.shouldAlert, true, 'pages ops — the caller heard a generic front desk');
+});
+
+test('buildCallQualityMetric — assistant never spoke → alert', () => {
+  const m = buildCallQualityMetric({ ...cleanCall, assistantTurns: 0 });
+  assert(m.concerns.includes('no_assistant_turns'), 'flags silent assistant');
+  eq(m.shouldAlert, true, 'pages ops');
+});
+
+test('buildCallQualityMetric — abnormal/error end reason → alert', () => {
+  for (const reason of ['openai-closed', 'twilio ws error', 'realtime-error']) {
+    const m = buildCallQualityMetric({ ...cleanCall, endReason: reason });
+    assert(m.concerns.includes('abnormal_end'), `flags abnormal end: ${reason}`);
+    eq(m.shouldAlert, true, `pages ops on ${reason}`);
+  }
+});
+
+test('buildCallQualityMetric — a bare 0-caller-turn call is noted but NOT paged (hangup/wrong number)', () => {
+  const m = buildCallQualityMetric({ ...cleanCall, callerTurns: 0, endReason: 'idle-timeout' });
+  assert(m.concerns.includes('no_caller_turns'), 'notes no caller turns');
+  eq(m.shouldAlert, false, 'does not page on a lone hangup signal');
+});
+
+test('buildCallQualityMetric — skipped extraction is noted but NOT paged (has its own alert)', () => {
+  const m = buildCallQualityMetric({ ...cleanCall, extraction: 'skipped' });
+  assert(m.concerns.includes('extraction_skipped'), 'notes skipped extraction');
+  eq(m.shouldAlert, false, 'does not double-page for extraction');
+});
+
+test('buildCallQualityMetric — extraction defaults to unknown when unset', () => {
+  const { extraction, ...noExtraction } = cleanCall;
+  void extraction;
+  eq(buildCallQualityMetric(noExtraction).extraction, 'unknown', 'defaults to unknown');
+});
+
+test('buildCallQualityMetric — an unreported/unknown end reason is NOT treated as abnormal (no false alert)', () => {
+  // The app defaults endReason to 'unknown' when an older bridge does not report it — that absence
+  // of signal must never look like an error end, or every such call would page ops.
+  for (const reason of ['unknown', '']) {
+    const m = buildCallQualityMetric({ ...cleanCall, endReason: reason });
+    assert(!m.concerns.includes('abnormal_end'), `unknown end not abnormal: ${JSON.stringify(reason)}`);
+    eq(m.shouldAlert, false, `no false alert for ${JSON.stringify(reason)}`);
+  }
+});
+
+test('bridge + app both emit the per-call quality metric (observability cannot silently regress)', () => {
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  const postCall = readFileSync('src/app/api/twilio/post-call/route.ts', 'utf8');
+  assert(bridge.includes('buildCallQualityMetric'), 'bridge builds the metric');
+  assert(bridge.includes('usedFallbackInstructions'), 'bridge reports fallback-instruction use to the app');
+  assert(postCall.includes('buildCallQualityMetric'), 'post-call builds the metric');
+  assert(postCall.includes('call_quality_alert'), 'post-call pages ops on a low-quality call');
+});
+
+// ── Specialist routing — caller intent → specialist (single source of truth) ──────────────────
+
+test('routeIntent — booking family → booking; faq → faq; complaint/escalation → escalation; else router', () => {
+  eq(routeIntent('booking'), 'booking', 'booking');
+  eq(routeIntent('reschedule'), 'booking', 'reschedule');
+  eq(routeIntent('cancel'), 'booking', 'cancel');
+  eq(routeIntent('faq'), 'faq', 'faq');
+  eq(routeIntent('complaint'), 'escalation', 'complaint');
+  eq(routeIntent('escalation'), 'escalation', 'escalation');
+  eq(routeIntent('general'), 'router', 'general');
+  eq(routeIntent('unknown'), 'router', 'unknown');
+});
+
+test('routeIntent — invalid/empty input falls back to router (never throws, never a dead end)', () => {
+  eq(routeIntent(''), 'router', 'empty');
+  eq(routeIntent(null), 'router', 'null');
+  eq(routeIntent('gibberish'), 'router', 'gibberish');
+});
+
+test('SPECIALISTS registry — every caller intent routes to a specialist that declares it', () => {
+  for (const intent of CALLER_INTENTS) {
+    const sid = routeIntent(intent);
+    assert(SPECIALISTS[sid].handles.includes(intent), `${sid} must handle ${intent}`);
+  }
+  assert(SPECIALISTS.booking.serverFunctions.length > 0, 'booking triggers a server function');
+  eq(SPECIALISTS.router.serverFunctions.length, 0, 'router calls no server function directly');
+});
+
+// ── Post-call Analyst — structured staff-facing analysis (pure) ────────────────────────────────
+
+test('buildAnalystResult — complete booking → captured, staff action, high confidence, no risk flags', () => {
+  const r = buildAnalystResult({
+    extraction: { summary: 'Books an oil change tomorrow 9am.', intent: 'appointment_request', caller_name: 'Sara', caller_phone: '6045550101', appointment: { should_create: true, requested_date: '2026-07-10', requested_time: '09:00', service: 'Oil change', notes: null }, service_request: null, next_action: '' },
+    assessment: { collected: ['name', 'date', 'time', 'service'], missingRequired: [], hasEnoughToAct: true },
+  });
+  eq(r.intent, 'booking', 'intent'); eq(r.booking_status, 'captured', 'captured');
+  eq(r.staff_action_required, true, 'staff confirms'); eq(r.confidence, 'high', 'high');
+  eq(r.requested_service, 'Oil change', 'service'); eq(r.risk_flags.length, 0, 'no flags');
+});
+
+test('buildAnalystResult — incomplete booking → incomplete + missing flags + low confidence', () => {
+  const r = buildAnalystResult({
+    extraction: { summary: 'Wants an appointment, no time given.', intent: 'appointment_request', caller_name: null, caller_phone: null, appointment: { should_create: true, requested_date: null, requested_time: null, service: 'Haircut', notes: null }, service_request: null, next_action: '' },
+    assessment: { collected: ['service'], missingRequired: ['name', 'date', 'time'], hasEnoughToAct: false },
+  });
+  eq(r.booking_status, 'incomplete', 'incomplete');
+  assert(r.risk_flags.includes('incomplete_booking'), 'incomplete flag');
+  assert(r.risk_flags.includes('no_caller_name') && r.risk_flags.includes('no_callback_number'), 'missing name+phone');
+  eq(r.confidence, 'low', 'low (>=2 missing)'); eq(r.staff_action_required, true, 'staff acts');
+});
+
+test('buildAnalystResult — answered FAQ → intent faq, no record, no staff action, high confidence', () => {
+  const r = buildAnalystResult({
+    extraction: { summary: 'Asked hours; answered from KB.', intent: 'general_question', caller_name: null, caller_phone: null, appointment: null, service_request: null, next_action: '', unresolved_question: false },
+    assessment: { collected: [], missingRequired: [], hasEnoughToAct: true },
+  });
+  eq(r.intent, 'faq', 'faq'); eq(r.booking_status, 'none', 'none');
+  eq(r.staff_action_required, false, 'no staff action'); eq(r.confidence, 'high', 'high');
+});
+
+test('buildAnalystResult — unanswered FAQ → unresolved flag + staff action', () => {
+  const r = buildAnalystResult({
+    extraction: { summary: 'Asked a policy not in KB.', intent: 'general_question', caller_name: null, caller_phone: null, appointment: null, service_request: null, next_action: '', unresolved_question: true },
+    assessment: { collected: [], missingRequired: [], hasEnoughToAct: true },
+  });
+  assert(r.risk_flags.includes('unresolved_question'), 'unresolved flagged');
+  eq(r.staff_action_required, true, 'staff acts');
+});
+
+test('buildAnalystResult — complaint → escalation intent, staff action, flag', () => {
+  const r = buildAnalystResult({
+    extraction: { summary: 'Upset about a previous visit.', intent: 'complaint', caller_name: 'Pat', caller_phone: '6045550111', appointment: null, service_request: null, next_action: '' },
+    assessment: { collected: [], missingRequired: [], hasEnoughToAct: true },
+  });
+  eq(r.intent, 'escalation', 'escalation'); eq(r.staff_action_required, true, 'staff acts');
+  assert(r.risk_flags.includes('complaint_or_escalation'), 'complaint flag');
+});
+
+test('buildAnalystResult — past time flagged + staff action', () => {
+  const r = buildAnalystResult({
+    extraction: { summary: 'Wanted 8am today (already passed).', intent: 'appointment_request', caller_name: 'Lee', caller_phone: '6045550122', appointment: { should_create: true, requested_date: '2026-07-09', requested_time: '08:00', service: 'Trim', notes: null }, service_request: null, next_action: '' },
+    assessment: { collected: ['name', 'date', 'time', 'service'], missingRequired: [], hasEnoughToAct: true },
+    pastTime: true,
+  });
+  assert(r.risk_flags.includes('past_time'), 'past_time flagged'); eq(r.staff_action_required, true, 'staff acts');
+});
+
+test('buildAnalystResult — staff_summary is a capped summary, never the transcript', () => {
+  const r = buildAnalystResult({
+    extraction: { summary: 'x'.repeat(400), intent: 'other', caller_name: null, caller_phone: null, appointment: null, service_request: null, next_action: '' },
+    assessment: { collected: [], missingRequired: [], hasEnoughToAct: true },
+  });
+  assert(r.staff_summary.length <= 240, `capped: ${r.staff_summary.length}`);
+  assert(!r.staff_summary.includes('Front desk:') && !r.staff_summary.includes('Caller:'), 'not a transcript');
+});
+
+// ── Specialist playbooks — content + silent-routing contract ──────────────────────────────────
+
+test('specialist playbooks — instruct SILENT routing (one smooth front desk, no announced hand-off)', () => {
+  const router = ROUTER_PLAYBOOK.toLowerCase();
+  assert(router.includes('silently') || router.includes('silent'), 'router routes silently');
+  assert(router.includes('one front desk'), 'reinforces one-assistant experience');
+  assert(router.includes('never announce') || router.includes('never say you are transferring'), 'no announced transfer');
+  for (const [name, text] of Object.entries({ ROUTER_PLAYBOOK, BOOKING_PLAYBOOK, FAQ_PLAYBOOK, ESCALATION_PLAYBOOK })) {
+    assert(text.length > 60, `${name} non-trivial`);
+  }
+});
+
+test('booking playbook — collects required details, validates, never false-confirms', () => {
+  const t = BOOKING_PLAYBOOK.toLowerCase();
+  for (const needle of ['name', 'date and time', 'reschedule', 'cancellation', 'past']) {
+    assert(t.includes(needle), `booking mentions "${needle}"`);
+  }
+  assert(t.includes('staff confirm') || /never say it is[\s\S]{0,30}booked/.test(t), 'never false-confirms');
+});
+
+test('faq playbook — answers only from KB, never invents, offers a note', () => {
+  const t = FAQ_PLAYBOOK.toLowerCase();
+  assert(t.includes('knowledge base'), 'references KB');
+  assert(t.includes('do not invent'), 'no invention');
+  assert(t.includes('note'), 'offers a note for staff');
+});
+
+test('escalation playbook — collects a staff message, promises follow-up, no fake resolution', () => {
+  const t = ESCALATION_PLAYBOOK.toLowerCase();
+  assert(t.includes('message for the team'), 'collects a concise staff message');
+  assert(t.includes('follow up'), 'promises follow-up');
+  assert(t.includes('do not promise') || t.includes('not claim to have fixed'), 'no fake resolution');
+});
+
+test('buildSystemPrompt wires the specialist playbooks into BOTH prompt branches', () => {
+  const src = readFileSync('src/lib/agents/core/promptBuilder.ts', 'utf8');
+  const idx = readFileSync('src/lib/agents/specialists/index.ts', 'utf8');
+  eq((src.match(/renderSpecialistPlaybooks\(\)/g) || []).length, 2, 'rendered in both no-business + business branches');
+  assert(idx.includes('SPECIALIST PLAYBOOKS') && idx.includes('SILENTLY'), 'composer emits the section + silent-routing rule');
+});
+
+// ── classifyCallHealth — operator failed/low-quality call visibility (pure) ────────────────────
+
+test('classifyCallHealth — degraded capture/analysis summary → problem', () => {
+  for (const s of ['Phone call recorded — analysis pending.', 'Call recorded — automatic analysis unavailable.', 'No caller speech was captured on this call.']) {
+    const h = classifyCallHealth({ summary: s });
+    eq(h.problem, true, `problem: ${s}`);
+    assert(h.reasons.includes('capture_or_analysis_failed'), 'flags capture/analysis failure');
+  }
+});
+
+test('classifyCallHealth — low confidence + risk flags from analysis → problem with reasons', () => {
+  const h = classifyCallHealth({ summary: 'Wants a booking.', analysis: { confidence: 'low', risk_flags: ['past_time', 'incomplete_booking'], staff_action_required: true } });
+  eq(h.problem, true, 'problem'); eq(h.needs_followup, true, 'needs followup');
+  assert(h.reasons.includes('low_confidence'), 'low_confidence');
+  assert(h.reasons.includes('risk:past_time') && h.reasons.includes('risk:incomplete_booking'), 'risk flags carried');
+});
+
+test('classifyCallHealth — clean captured booking → NOT a problem, but needs follow-up', () => {
+  const h = classifyCallHealth({ summary: 'Booked an oil change tomorrow 9am.', needs_staff_followup: true, analysis: { confidence: 'high', risk_flags: [], staff_action_required: true } });
+  eq(h.problem, false, 'not a failure'); eq(h.needs_followup, true, 'needs staff confirm');
+});
+
+test('classifyCallHealth — clean answered call → not a problem, no follow-up', () => {
+  const h = classifyCallHealth({ summary: 'Answered hours from the KB.', needs_staff_followup: false });
+  eq(h.problem, false, 'clean'); eq(h.needs_followup, false, 'no follow-up');
+});
+
+test('classifyCallHealth — works with no analysis column present (pre-migration)', () => {
+  const h = classifyCallHealth({ summary: 'analysis pending', needs_staff_followup: false });
+  eq(h.problem, true, 'still detects failure from summary'); eq(h.needs_followup, false, 'no followup');
+});
+
+test('ops/calls route — secret-guarded, service-role, read-only, uses classifyCallHealth', () => {
+  const route = readFileSync('src/app/api/ops/calls/route.ts', 'utf8');
+  assert(route.includes('CRON_SECRET') && route.includes('timingSafeEqual'), 'timing-safe secret guard');
+  assert(route.includes('createAdminClient'), 'service-role read');
+  assert(route.includes('classifyCallHealth'), 'uses the tested health classifier');
+  assert(/export async function GET/.test(route) && !/export async function (POST|PUT|DELETE|PATCH)/.test(route), 'read-only (GET only)');
 });
 
 // ── Results ──────────────────────────────────────────────────────────────────

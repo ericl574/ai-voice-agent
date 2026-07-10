@@ -1,6 +1,7 @@
 import type { AgentConfig, Business } from '@/lib/supabase/businesses';
 import type { KnowledgeRow, VerticalProfile, CollectableField } from './types';
 import { GLOBAL_RULES } from './globalRules';
+import { renderSpecialistPlaybooks } from '../specialists';
 import { getVertical } from '../verticals/registry';
 import { todayInTimeZone, nowInTimeZone } from '@/lib/call-pipeline/time';
 
@@ -101,7 +102,9 @@ ${GLOBAL_RULES}
 
 ${verticalSection}
 
-${profileConfigSection}`.trim();
+${profileConfigSection}
+
+${renderSpecialistPlaybooks()}`.trim();
   }
 
   const name = business.name;
@@ -140,6 +143,8 @@ ${GLOBAL_RULES}
 ${verticalSection}
 
 ${profileConfigSection}
+
+${renderSpecialistPlaybooks()}
 
 BUSINESS INFO:
 Name: ${name}

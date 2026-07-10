@@ -102,7 +102,7 @@ scope without approval.
 
 **Twilio inbound phone (approved path, not production-verified):** Twilio is the approved phone/SMS
 provider path, but **real call forwarding requires a deployed/verified Twilio bridge** and is not
-production-verified by default (`docs/twilio-setup.md`, `docs/deploy-checklist.md`). Do not promise
+production-verified by default (`docs/twilio-setup.md`, `docs/deployment-checklist.md`). Do not promise
 production phone service before manual verification; the default test surface is the browser voice
 line.
 

@@ -7,6 +7,7 @@ import {
   composeDigestEmail,
   composeDigestSms,
   buildCallsCsv,
+  shouldAdvanceCoverage,
   type DigestCall,
 } from '@/lib/notify/digest';
 import { sendEmail, isEmailConfigured } from '@/lib/notify/email';
@@ -58,7 +59,7 @@ async function processBusiness(
   admin: any,
   biz: { id: string; name: string | null; timezone: string | null; phone: string | null; email: string | null; agent_config: AgentConfig | null },
   nowIso: string,
-): Promise<'sent' | 'skipped'> {
+): Promise<'sent' | 'skipped' | 'failed'> {
   const cfg = biz.agent_config ?? {};
   const mode = cfg.delivery_mode ?? 'daily_digest';
   // Only digest modes are handled here; instant modes deliver per-call elsewhere.
@@ -196,6 +197,24 @@ async function processBusiness(
     }
   }
 
+  // Only advance the coverage high-water mark when the report was actually delivered. On a failed
+  // send we DO NOT write the call_digests row — so covered_through is unchanged AND the once-per-day
+  // record is absent, letting the NEXT cron tick retry the exact same calls instead of dropping the
+  // report forever. (Intentional non-error states — no-domain 'skipped' / 'disabled' — still advance.)
+  if (!shouldAdvanceCoverage(emailStatus, smsStatus)) {
+    console.error(
+      `[FD] digest NOT delivered for ${biz.id} (email=${emailStatus}, sms=${smsStatus}) — ` +
+        `high-water mark left unchanged; ${digestCalls.length} call(s) will retry next run`,
+    );
+    await notifyOps({
+      component: 'cron/digest',
+      event: 'digest_delivery_failed',
+      error: `digest not delivered (email=${emailStatus}, sms=${smsStatus}); will retry next run`,
+      context: { businessId: biz.id, emailStatus, smsStatus, callCount: digestCalls.length },
+    });
+    return 'failed';
+  }
+
   // Record the digest (advances the high-water mark; unique(business_id, digest_date) blocks dupes).
   const { error: recErr } = await admin.from('call_digests').upsert(
     {
@@ -261,11 +280,13 @@ async function runDigest(req: NextRequest): Promise<NextResponse> {
 
   let processed = 0;
   let sent = 0;
+  let failed = 0;
   for (const biz of (businesses ?? []) as Parameters<typeof processBusiness>[1][]) {
     processed++;
     try {
       const result = await processBusiness(admin, biz, nowIso);
       if (result === 'sent') sent++;
+      else if (result === 'failed') failed++;
     } catch (err) {
       // One business failing must never stop the rest.
       console.error('[FD] digest: business failed (non-fatal):', err instanceof Error ? err.message : err);
@@ -278,8 +299,11 @@ async function runDigest(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  console.log(`[FD] digest cron complete — ${processed} businesses checked, ${sent} digests sent`);
-  return NextResponse.json({ ok: true, processed, sent });
+  console.log(
+    `[FD] digest cron complete — ${processed} businesses checked, ${sent} digests sent, ` +
+      `${failed} failed (will retry next run)`,
+  );
+  return NextResponse.json({ ok: true, processed, sent, failed });
 }
 
 // Vercel Cron uses GET; allow POST too for manual/local triggering with the same auth.

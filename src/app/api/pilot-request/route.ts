@@ -2,31 +2,22 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sendEmail, isEmailConfigured } from '@/lib/notify/email';
 import { rateLimit, clientKey } from '@/lib/rate-limit';
 import { SUPPORT_EMAIL, SITE_NAME } from '@/lib/site';
+import { buildPilotLead } from '@/lib/leads/pilotLead';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { notifyOps } from '@/lib/notify/ops';
 
 // Pilot signup form handler for /contact. Captures an inbound pilot lead.
 //
-// Where a lead goes:
-//   • Email configured (RESEND_API_KEY + NOTIFY_EMAIL_FROM) → emailed to SUPPORT_EMAIL.
-//   • Email NOT configured → logged server-side ONLY, as a TEMPORARY fallback. Server logs are NOT
-//     durable lead storage — they rotate/expire, so leads can be lost.
-// Before public use, configure RESEND_API_KEY, NOTIFY_EMAIL_FROM, and a real SUPPORT_EMAIL — or add
-// DB lead storage. Returns { ok } once the lead has been emailed and/or logged.
+// Where a lead goes (in priority order):
+//   1. DURABLE STORAGE (source of truth): inserted into public.pilot_requests via the service-role
+//      client. This is the record that must never be lost.
+//   2. Email notification to SUPPORT_EMAIL when email is configured (Resend + verified sender) — a
+//      best-effort heads-up, NOT the record of truth.
+//   3. Server log — last-resort visibility only (rotates/expires; not durable).
+// If storage is unconfigured/failing, an ops alert fires so the lead can be recovered from the log.
+// Returns { ok } once the lead has been stored and/or notified.
 
 export const runtime = 'nodejs';
-
-interface PilotBody {
-  businessName?: string;
-  contactName?: string;
-  email?: string;
-  phone?: string;
-  businessType?: string;
-  city?: string;
-  message?: string;
-}
-
-function clean(v: unknown, max: number): string {
-  return typeof v === 'string' ? v.trim().slice(0, max) : '';
-}
 
 export async function POST(req: NextRequest) {
   const rl = rateLimit(`pilot-request:${clientKey(req)}`, 5, 60_000);
@@ -37,51 +28,68 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: PilotBody;
+  let body: unknown;
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: 'Invalid request.' }, { status: 400 });
   }
 
-  const businessName = clean(body.businessName, 120);
-  const contactName = clean(body.contactName, 120);
-  const email = clean(body.email, 200);
-  const phone = clean(body.phone, 40);
-  const businessType = clean(body.businessType, 40) || 'other';
-  const city = clean(body.city, 120);
-  const message = clean(body.message, 2000);
+  const built = buildPilotLead(body ?? {});
+  if (!built.ok) {
+    return NextResponse.json({ error: built.error }, { status: 400 });
+  }
+  const { lead } = built;
 
-  if (!businessName || !contactName || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-    return NextResponse.json(
-      { error: 'Please include your business name, your name, and a valid email.' },
-      { status: 400 },
-    );
+  // 1. Durable storage (source of truth). If it fails, we do NOT lose the lead: log it in full and
+  //    fire an ops alert so it can be recovered, but still accept the submission for the visitor.
+  let stored = false;
+  const admin = createAdminClient();
+  if (admin) {
+    const { error } = await admin.from('pilot_requests').insert(lead);
+    if (error) {
+      console.error('[FD] pilot request: durable storage FAILED —', error.message);
+      await notifyOps({
+        component: 'pilot-request',
+        event: 'lead_store_failed',
+        error: error.message,
+        context: { businessName: lead.business_name },
+      });
+    } else {
+      stored = true;
+    }
+  } else {
+    console.error('[FD] pilot request: SUPABASE_SERVICE_ROLE_KEY missing — lead not durably stored');
+    await notifyOps({
+      component: 'pilot-request',
+      event: 'lead_store_unconfigured',
+      error: 'SUPABASE_SERVICE_ROLE_KEY missing — lead stored only in logs',
+      context: { businessName: lead.business_name },
+    });
   }
 
-  // Temporary fallback only (NOT durable storage): grep `[FD] pilot request` in the server logs.
-  // Logs rotate/expire — configure email (or DB lead storage) before relying on this in public.
-  const lead =
-    `business=${businessName} | type=${businessType} | contact=${contactName} | ` +
-    `email=${email} | phone=${phone || '—'} | city=${city || '—'}`;
-  console.log(`[FD] pilot request: ${lead}${message ? ` | message=${message}` : ''}`);
+  // Last-resort visibility (logs rotate/expire — durable storage above is the record of truth).
+  console.log(
+    `[FD] pilot request (stored=${stored}): business=${lead.business_name} | type=${lead.business_type} | ` +
+      `contact=${lead.contact_name} | email=${lead.email} | phone=${lead.phone ?? '—'} | city=${lead.city ?? '—'}`,
+  );
 
-  // Best-effort notify the support inbox when email delivery is configured (Resend + verified
-  // sender). In no-domain mode this is a safe no-op — the log above is the capture.
+  // 2. Best-effort notify the support inbox when email delivery is configured. In no-domain mode
+  //    this is a safe no-op — durable storage above is the capture.
   if (isEmailConfigured()) {
-    const subject = `New pilot request — ${businessName}`;
+    const subject = `New pilot request — ${lead.business_name}`;
     const text = [
       `New ${SITE_NAME} pilot request:`,
       '',
-      `Business:  ${businessName}`,
-      `Type:      ${businessType}`,
-      `Contact:   ${contactName}`,
-      `Email:     ${email}`,
-      `Phone:     ${phone || '—'}`,
-      `City:      ${city || '—'}`,
+      `Business:  ${lead.business_name}`,
+      `Type:      ${lead.business_type}`,
+      `Contact:   ${lead.contact_name}`,
+      `Email:     ${lead.email}`,
+      `Phone:     ${lead.phone ?? '—'}`,
+      `City:      ${lead.city ?? '—'}`,
       '',
       'Message:',
-      message || '(none)',
+      lead.message ?? '(none)',
     ].join('\n');
     await sendEmail(SUPPORT_EMAIL, subject, text);
   }

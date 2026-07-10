@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
 import { isValidTwilioSignature } from '@/lib/twilio/signature';
 import { SITE_URL } from '@/lib/site';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { matchBusinessIdByNumber } from '@/lib/twilio/numberRouting';
 
 // Twilio inbound voice webhook. Point the Twilio phone number's "A call comes in" webhook at
 // {NEXT_PUBLIC_SITE_URL}/api/twilio/voice (HTTP POST). Responds with TwiML that:
@@ -33,6 +35,36 @@ function twiml(body: string): Response {
 
 const DISCLOSURE =
   "Hi! You've reached the automated front desk. This call may be processed and summarized for the business. One moment while I connect you.";
+
+// Resolve which business this inbound call is for, from the number it was dialed on (params.To).
+// This is what makes the phone path multi-tenant: many Twilio numbers → many businesses via
+// businesses.twilio_number, resolved by our own server (never trusting caller-supplied input).
+// Fallback order: mapped number → legacy single-tenant TWILIO_BUSINESS_ID (local/dev) → '' (the
+// demo business in session-config), so the line always answers even before a mapping exists.
+async function resolveBusinessId(dialedTo: string): Promise<string> {
+  const envFallback = process.env.TWILIO_BUSINESS_ID ?? '';
+  const admin = createAdminClient();
+  if (admin && dialedTo) {
+    try {
+      const { data, error } = await admin
+        .from('businesses')
+        .select('id, twilio_number')
+        .not('twilio_number', 'is', null);
+      // A query error (e.g. the twilio_number column not migrated yet) → keep legacy behavior.
+      if (!error) {
+        const matched = matchBusinessIdByNumber(
+          (data ?? []) as { id: string; twilio_number: string | null }[],
+          dialedTo,
+        );
+        if (matched) return matched;
+        console.warn('[FD] twilio/voice: dialed number not mapped to a business — using TWILIO_BUSINESS_ID fallback');
+      }
+    } catch (err) {
+      console.warn('[FD] twilio/voice: business-number lookup failed — using fallback:', (err as Error).message);
+    }
+  }
+  return envFallback;
+}
 
 export async function POST(req: NextRequest) {
   const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -72,10 +104,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const businessId = process.env.TWILIO_BUSINESS_ID ?? '';
   const from = params.From ?? '';
   const to = params.To ?? '';
-  console.log(`[FD] twilio/voice inbound call ${params.CallSid ?? ''} from ${from} to ${to}`);
+  const businessId = await resolveBusinessId(to);
+  console.log(`[FD] twilio/voice inbound call ${params.CallSid ?? ''} from ${from} to ${to} → business ${businessId || '(demo fallback)'}`);
 
   // <Connect><Stream> = bidirectional media stream; custom parameters reach the bridge in the
   // stream's "start" message so it can resolve the business and report the caller id.

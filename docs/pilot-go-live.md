@@ -55,7 +55,7 @@ healthcheck path `/health`, keep crash-restart on. Then set `TWILIO_STREAM_URL=w
 | `TWILIO_AUTH_TOKEN` | Vercel | verifies the inbound webhook signature |
 | `TWILIO_STREAM_URL` | Vercel | `wss://<bridge-host>/twilio-stream` |
 | `TWILIO_BRIDGE_SECRET` | Vercel **and** bridge | shared secret for session-config + post-call |
-| `TWILIO_BUSINESS_ID` | Vercel | which `businesses.id` answers the line *(unset → demo restaurant, not saved)* |
+| `TWILIO_BUSINESS_ID` | Vercel | **fallback only** — single-tenant/dev default used when the dialed number isn't mapped (see note below). Unset → demo restaurant, not saved |
 | `SUPABASE_SERVICE_ROLE_KEY` | Vercel | save phone calls + load the business prompt |
 | `OPENAI_API_KEY` | bridge **and** Vercel | bridge = the voice; app = the morning-report analysis |
 | `FD_APP_URL` | bridge | the Vercel origin the bridge calls back to |
@@ -64,12 +64,21 @@ healthcheck path `/health`, keep crash-restart on. Then set `TWILIO_STREAM_URL=w
 
 `TWILIO_ACCOUNT_SID` / `TWILIO_PHONE_NUMBER` are only needed for the optional SMS alert + ops alerts.
 
+> **Multi-business routing (many pilots, one deployment):** map each Twilio number to its business by
+> setting `businesses.twilio_number` to that number (E.164, e.g. `+16045550100`).
+> `/api/twilio/voice` resolves the business from the **dialed number** (`params.To`); `TWILIO_BUSINESS_ID`
+> is only the fallback when a number isn't mapped. So one app + one bridge can serve several pilots —
+> just point each Twilio number's webhook at the same `/api/twilio/voice` and map its `twilio_number`.
+
 ## Step 4 — Migrations (Supabase SQL editor)
 - `supabase/migrations/20260616000000_call_digests.sql` — required for the morning report.
+- `supabase/migrations/20260702000000_business_twilio_number.sql` — required for per-number → business routing (multi-business).
+- `supabase/migrations/20260702000001_pilot_requests.sql` — durable storage for `/contact` pilot leads (so a lead is never lost).
 - `supabase/migrations/20260611000001_calls_source.sql` — optional; marks phone calls `source='phone'`.
 
 ## Step 5 — Acceptance call (the moment of truth)
-1. Bridge up, ngrok/Railway up, Vercel env set + redeployed, `TWILIO_BUSINESS_ID` = the pilot business.
+1. Bridge up, ngrok/Railway up, Vercel env set + redeployed, and the pilot business mapped: set
+   `businesses.twilio_number` to the pilot's Twilio number (or, single-tenant, `TWILIO_BUSINESS_ID` = the pilot business).
 2. Call the number. Expect: disclosure → greeting in the business name → a normal booking chat → hang up.
 3. Confirm bridge logs (each line is prefixed with a per-call trace id, e.g. `[bridge a1b2c3d4/xxxxxx]`):
    `stream started` → `session-config loaded (business: …)` → `session ready (discarded N pre-greeting
@@ -93,14 +102,16 @@ healthcheck path `/health`, keep crash-restart on. Then set `TWILIO_STREAM_URL=w
    ```bash
    curl -X POST https://<your-domain>/api/cron/digest -H "Authorization: Bearer $CRON_SECRET"
    ```
-   Returns `{ ok, processed, sent }`. With captured calls today + local time past the send hour, the
-   report + CSV arrive. (Vercel Hobby = one daily cron at `0 13 * * *`; set each pilot's send hour
+   Returns `{ ok, processed, sent, failed }`. With captured calls today + local time past the send hour,
+   the report + CSV arrive. (Vercel Hobby = one daily cron at `0 13 * * *`; set each pilot's send hour
    at/before that tick.)
 
 ## Known limits to state honestly to the pilot
-- One env-configured number → one business (per-business numbers are a later phase).
+- Numbers map to businesses via `businesses.twilio_number` (resolved from the dialed number); one
+  deployment serves many pilots. `TWILIO_BUSINESS_ID` remains a single-tenant/dev fallback.
 - Reservation auto-confirm SMS is stubbed; **staff-confirm is the supported flow**.
-- One report per business per local day; no retry on a failed send (the call stays saved).
+- One report per business per local day. A **failed** send no longer advances the coverage mark, so
+  those calls are retried on the next cron run (no silent report loss); the call is always saved.
 - **Call ending is now bridge-enforced** via three deterministic caps in `server/twilio-bridge.ts`:
   a clear goodbye/end cue (`looksLikeEndCall`, ~4s drain), a ~30s idle timeout, and a hard 10-min
   max-duration cost cap. These **close the bridge↔OpenAI↔Twilio sockets** to end the call (not a

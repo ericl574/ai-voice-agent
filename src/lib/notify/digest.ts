@@ -19,6 +19,29 @@ export interface DigestBusiness {
   timezone: string;
 }
 
+// Delivery outcome per channel, as recorded on a call_digests row.
+export type DigestChannelStatus = 'sent' | 'failed' | 'skipped' | 'disabled';
+
+// Decide whether a digest run may advance the coverage high-water mark (covered_through) and write
+// its once-per-day record. It may ONLY advance when the report was actually delivered — otherwise
+// the SAME calls must be retried on the next cron tick instead of being silently marked "covered".
+//
+// Rules (email is the PRIMARY deliverable; SMS is an optional alert):
+//   - Email 'failed'                          → do NOT advance (retry the primary report).
+//   - SMS 'failed' and email did NOT deliver  → do NOT advance (SMS was the only channel; retry).
+//   - Otherwise                               → advance. 'sent' delivered; 'skipped' (no-domain mode)
+//     and 'disabled' are intentional non-error states, so they advance and never build a backlog.
+// A failed OPTIONAL SMS when email 'sent' still advances — an optional alert must never trigger a
+// duplicate primary email on the next run.
+export function shouldAdvanceCoverage(
+  emailStatus: DigestChannelStatus,
+  smsStatus: DigestChannelStatus,
+): boolean {
+  if (emailStatus === 'failed') return false;
+  if (smsStatus === 'failed' && emailStatus !== 'sent') return false;
+  return true;
+}
+
 const INTENT_LABEL: Record<string, string> = {
   appointment_request: 'Appointment request',
   service_request: 'Service request',

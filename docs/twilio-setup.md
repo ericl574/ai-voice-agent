@@ -208,7 +208,9 @@ that is unhealthy but not restarted by Railway will not be noticed by the app it
   barge-in clear, transcript capture, save + extraction reuse.
 - **Not yet exercised:** a real Twilio call end-to-end (needs the account/number/ngrok above) —
   expect possible small fixes on first real call (e.g. trial-account notices, regional codecs).
-- **Single-number MVP:** one env-configured number → one business. Per-business numbers need a
-  `business_phone_numbers` mapping table (future phase).
+- **Multi-business routing (implemented):** each Twilio number maps to a business via
+  `businesses.twilio_number`, resolved from the dialed number by `/api/twilio/voice`
+  (`matchBusinessIdByNumber`). `TWILIO_BUSINESS_ID` is now only a single-tenant/dev fallback, so one
+  deployment can serve several pilot numbers.
 - **Disclosure:** every call opens with "automated front desk … may be processed and summarized"
   before connecting — keep this; it's the recording/processing disclosure baseline for BC.
