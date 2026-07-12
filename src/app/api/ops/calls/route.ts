@@ -7,7 +7,7 @@ import { classifyCallHealth } from '@/lib/call-pipeline/callHealth';
 // Operator-only quick view of recent calls + failure/low-quality flags ACROSS all businesses, so a
 // concierge-pilot operator can spot bad calls fast without signing into each dashboard. Guarded by
 // CRON_SECRET (Authorization: Bearer <CRON_SECRET>), read-only, service-role. No caller PII beyond a
-// truncated summary; returns ids + flags. See PILOT_ACTIVATION.md.
+// truncated summary; returns ids + flags. See docs/first-customer-onboarding.md.
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

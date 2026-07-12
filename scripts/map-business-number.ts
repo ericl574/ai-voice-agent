@@ -2,7 +2,7 @@
 //
 // Given a business_id (and optionally a Twilio number), it: verifies the business exists, saves/maps
 // businesses.twilio_number (normalized to E.164), and prints the remaining env/webhook checklist.
-// It does NOT buy Twilio numbers and does NOT deploy anything — those stay manual (PILOT_ACTIVATION.md).
+// It does NOT buy Twilio numbers and does NOT deploy anything — those stay manual (docs/pilot-go-live.md).
 //
 // Run:  npm run pilot:map -- <business_id> [twilio_number]
 //   e.g. npm run pilot:map -- 3f2a…  "+16045550100"
@@ -72,7 +72,7 @@ async function main(): Promise<void> {
 
   // 3) Remaining steps checklist.
   const appUrl = process.env.NEXT_PUBLIC_SITE_URL || '<your-vercel-domain>';
-  console.log('\n── Remaining concierge activation steps (see PILOT_ACTIVATION.md) ──');
+  console.log('\n── Remaining concierge activation steps (see docs/pilot-go-live.md) ──');
   console.log(`  [ ] Twilio number ${mapped ?? '<number>'} → "A call comes in" webhook: ${appUrl}/api/twilio/voice  (HTTP POST)`);
   console.log('  [ ] Vercel env: OPENAI_API_KEY, SUPABASE_SERVICE_ROLE_KEY, NEXT_PUBLIC_SITE_URL, TWILIO_AUTH_TOKEN,');
   console.log('       TWILIO_STREAM_URL, TWILIO_BRIDGE_SECRET, CRON_SECRET  (+ RESEND_API_KEY/NOTIFY_EMAIL_FROM for email)');

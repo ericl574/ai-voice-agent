@@ -34,9 +34,12 @@ Deeper detail: `docs/product-scope.md` and `docs/after-hours-report.md`.
 
 ## Documentation index
 
+- **Launch readiness (what blocks a full publish + P0/P1/P2) → `docs/launch-readiness.md`**
 - Product scope & positioning → `docs/product-scope.md`
 - Voice / call pipeline (and voice-bug diagnosis) → `docs/call-pipeline.md`
 - Agent conversation behavior → `docs/agent-behavior.md`
+- Specialist voice-agent architecture (router + specialists + analyst) → `docs/agent-specialists.md`
+- After-hours report / daily digest (setup + cron behavior) → `docs/after-hours-report.md`
 - Engineering standards (anti-spaghetti, detailed) → `docs/engineering-standards.md`
 - Design system & UI conventions → `docs/design-system.md`
 - Demo/real architecture & known debt → `docs/demo-architecture-debt.md`

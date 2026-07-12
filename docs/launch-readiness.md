@@ -1,0 +1,104 @@
+# FrontDesk — Launch Readiness (what's blocking a full publish)
+
+Single source of truth for "what stands between the current code and a real launch." Replaces the
+old scattered status files (`STATUS.md`, `PRODUCTION_GOAL/TASKS.md`, `report.md`,
+`reports/production-readiness-report.md`). **Honest by rule:** every claim is either **[verified]**
+(read in code / passing tests) or **[EXTERNAL]** (needs Eric's Supabase/Twilio/Vercel/phone — not code).
+
+## Current state — [verified]
+- `npm run build` ✓, `npm run qa:units` **141 ✓**, `npm run qa:call-pipeline` **46 ✓**.
+- The code is at a **supervised concierge-pilot** bar: a browser or phone call answers, captures the
+  request, saves it, and the daily digest can be sent. Security fundamentals are careful (server-only
+  OpenAI key + 300s ephemeral browser secret; Twilio signature verify; timing-safe cron/bridge secrets;
+  shared transcript/turn-taking/post-call core so browser and phone can't drift).
+- It is **not** a self-serve public SaaS yet. The gaps below are launch-readiness, not broken code.
+
+---
+
+## Blockers to a full self-serve public launch (ranked)
+
+### 🔴 Hard blockers — can't safely onboard a paying stranger
+
+1. **No self-serve phone provisioning — the core mechanic is manual-only.** [verified]
+   `businesses.twilio_number` is only ever written by `scripts/map-business-number.ts` (`npm run pilot:map`)
+   or raw SQL. `onboarding/page.tsx` never provisions or shows a number. Every new customer needs Eric to
+   buy a Twilio number, point its webhook at `/api/twilio/voice`, and run the map script. → concierge, not
+   self-serve.
+
+2. ✅ **Tenant isolation (RLS) — RESOLVED & VERIFIED (2026-07-10).**
+   Live-DB audit confirmed all 11 business-data tables have RLS enabled with correct `business_id`/`user_id`-scoped
+   policies covering **both reads and writes** (via `is_business_member()` / `is_business_owner_or_manager()`), plus
+   app-layer defense-in-depth (`getActiveBusiness()` scopes by `user_id`). **No cross-tenant leak.** Migration drift
+   was also reconciled: all 7 repo migrations now match production — `supabase db push` applied 4 that were silently
+   missing (restored durable `pilot_requests` lead storage, `businesses.twilio_number` routing/`pilot:map`,
+   `calls.analysis`, and the reservation auto-confirm functions). **Remaining (optional, DR only):** the *core*
+   tables + RLS + helper functions still aren't captured as a baseline migration — run `supabase db pull` when
+   convenient so a fresh/branch environment is reproducible.
+
+3. **Billing is disconnected — there's no automated way to get paid.** [verified]
+   `stripe.ts` + `/api/billing/*` are wired, but nothing enforces subscription status anywhere, and both
+   pricing CTAs are "Start a pilot" → `/contact`, bypassing checkout (`pricing/page.tsx`). Product is
+   free-by-default. To publish: wire checkout into the funnel + gate on `billing_subscriptions.status`, or
+   deliberately stay concierge.
+
+### 🟠 Functional blockers — the core deliverable can silently fail
+
+4. **Once-a-day cron fights the per-business send-hour logic.** [verified]
+   `vercel.json` = `0 13 * * *` (one tick/day, Hobby) but `cron/digest` only sends when local hour ≥
+   `digest_send_hour` (default 8am). A business whose local time at 13:00 UTC is before its send hour is
+   skipped, and the next tick is 24h later → it may **never** get the report. Fix = Vercel Pro (hourly cron)
+   or rethink the schedule.
+
+5. **The phone path (what real callers hit) is thinner than the browser path.** [verified code; NOT VERIFIED on a live call]
+   The bridge uses OpenAI's server auto-response with none of the browser's Layer-2 turn-taking
+   (`twilio-bridge.ts`). Safety caps make it safe to *test* (10-min max, 30s idle, end-cue drain, one bounded
+   reconnect), but mid-sentence cutoffs are possible and a mid-call reconnect resets conversation context.
+
+### 🟡 Infra & scale ceilings — fine for a pilot, real for "fully published"
+
+6. **Two runtimes, manual per-deploy wiring.** [verified] The bridge can't run on Vercel (needs a durable
+   WebSocket) → separate always-on host. `OPENAI_API_KEY` must be on **both** app and bridge or reports
+   silently degrade to "analysis pending".
+7. **Single bridge process, no failover** — a crash drops every live call (`startBridge()`). [verified]
+8. **In-memory rate limiter is per-instance** (`rate-limit.ts`) — the ~12/min cap on minting **paid** OpenAI
+   sessions is bypassable via serverless fan-out (cost-abuse surface). [verified]
+9. **Whole KB injected into every prompt** (no retrieval); digest cron is sequential N+1; every inbound call
+   scans all businesses. [verified]
+10. **No end-to-end tests on the highest-risk code** — the 187 passing tests cover pure helpers only;
+    `voice/page.tsx`, the bridge, save/extraction routes, and the digest cron have no integration coverage. [verified]
+11. **Legal skim of `/privacy` + `/terms`** — call transcripts are personal info (PIPEDA / BC PIPA) processed on
+    US servers; the pages exist but haven't had the legal review the deployment checklist flags. [EXTERNAL]
+
+---
+
+## Task list
+
+### P0 — before the first real customer
+- [x] **Supabase RLS verified secure** (2026-07-10) — all 11 tables RLS-enabled + correctly scoped (reads + writes); no cross-tenant leak.
+- [x] **Migration drift reconciled** (2026-07-10) — 3 already-applied migrations repaired as `applied`; 4 silently-missing ones applied via `supabase db push` (fixed: durable lead storage, twilio routing, calls.analysis, reservation fns).
+- [ ] (Optional, DR) Capture the **core-schema baseline** via `supabase db pull` so a fresh/branch env is reproducible.
+- [ ] [EXTERNAL] **One real phone acceptance call** end-to-end (`docs/pilot-go-live.md` §5) — the phone path is code-complete but unproven live.
+- [ ] [EXTERNAL] **Deploy**: Vercel app + durable bridge host + full env matrix + Twilio number → `businesses.twilio_number` (`docs/deployment-checklist.md`).
+- [ ] [EXTERNAL] **`OPENAI_API_KEY` on BOTH app and bridge**, plus `OPS_ALERT_SMS_TO` and an OpenAI budget alert.
+- [ ] **Fix the digest cron cadence** (Vercel Pro hourly, or align the single tick to each pilot's send hour).
+- [ ] (Recommended) **Commit a baseline schema migration** so schema + RLS are reproducible (`docs/supabase-rls-verification.md` Step 3).
+
+### P1 — for a self-serve public launch
+- [ ] **Self-serve phone provisioning** (Twilio subaccount/number purchase + auto-map to the business) — removes the concierge step.
+- [ ] **Wire + enforce billing** (checkout in the funnel, gate features on `billing_subscriptions.status`) or a deliberate decision to stay concierge.
+- [ ] **Move rate-limiting to a shared store** (Upstash/Redis) — the in-memory limiter is per-instance.
+- [ ] **In-app data-deletion flow** (replaces the manual SOP in `docs/first-customer-onboarding.md`).
+- [ ] Legal skim of `/privacy` + `/terms`; mobile-device QA pass.
+- [ ] Wire the live conversational eval (`npm run qa:agent-evals`) into CI once a CI key exists.
+
+### P2 — scale / polish
+- [ ] Bridge **horizontal scale / failover** (single Node process today).
+- [ ] **KB retrieval** for large knowledge bases (currently whole-KB prompt injection).
+- [ ] Integration/e2e coverage for `voice/page.tsx`, the bridge, and the digest cron.
+- [ ] Consolidate the duplicate WebRTC clients + demo fixtures (`docs/demo-architecture-debt.md`).
+- [ ] Native OpenAI Agents SDK `RealtimeAgent` handoffs + live mid-call tool-calling (`docs/agent-specialists.md`).
+
+---
+
+_Deep references: `docs/full-codebase-audit.md` (severity-ranked audit), `docs/deployment-checklist.md`
+(env matrix), `docs/pilot-go-live.md` (turn the phone on), `docs/supabase-rls-verification.md` (the RLS gate)._
