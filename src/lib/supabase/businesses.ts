@@ -32,7 +32,7 @@ export interface AgentConfig {
   // Delivery model. MVP default is the daily after-hours digest (sent by /api/cron/digest); the
   // instant_* modes are optional per-call delivery (kept, but off by default).
   delivery_mode?: 'daily_digest' | 'after_hours_digest' | 'instant_all' | 'instant_action_needed';
-  digest_send_hour?: number;      // 0–23, local business time; the digest goes out at/after this hour (default 8)
+  digest_send_hour?: number;      // 0–23 local; preferred send hour (default 8). Best-effort on the daily Hobby cron (delivered once/day on the tick); honored exactly only on an hourly Pro cron.
   // Editable, vertical-aware chip arrays (owner can add/remove/customize). Empty/undefined
   // → the prompt builder falls back to the vertical's suggested defaults.
   main_request_types?: string[];  // request types this front desk handles
@@ -53,7 +53,15 @@ export interface Business {
   id: string;
   name: string;
   business_type: string;
+  // The merchant's OWN public phone number — the number their customers already call. FrontDesk
+  // never replaces, changes, or advertises a new one. Distinct from `twilio_number` below.
   phone: string | null;
+  // Hidden FrontDesk forwarding DESTINATION (a Twilio number) the merchant's carrier forwards
+  // unanswered/after-hours calls TO. Customers never dial it and it's never advertised. Inbound
+  // routing matches this against the dialed `To` to identify the business
+  // (src/lib/twilio/numberRouting.ts). NOT the merchant's public number (that's `phone`). Optional /
+  // absent until a forwarding line is assigned to this business.
+  twilio_number?: string | null;
   email: string | null;
   city: string | null;
   region: string | null;

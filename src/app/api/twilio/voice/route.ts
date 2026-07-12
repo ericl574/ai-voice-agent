@@ -14,7 +14,8 @@ import { matchBusinessIdByNumber } from '@/lib/twilio/numberRouting';
 // the bridge runs (local + ngrok for testing, or a small Node host). See docs/twilio-setup.md.
 //
 // Env: TWILIO_AUTH_TOKEN (signature validation), TWILIO_STREAM_URL (wss://…/twilio-stream),
-//      TWILIO_BUSINESS_ID (optional — which business answers this line; demo fallback otherwise).
+//      TWILIO_BUSINESS_ID (optional single-tenant/dev fallback — production resolves the business from
+//      the forwarded-to number via businesses.twilio_number; the demo business answers if neither matches).
 
 export const runtime = 'nodejs';
 

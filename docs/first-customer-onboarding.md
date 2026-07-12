@@ -38,7 +38,10 @@ Collect these up front (a 15-minute call or a short form):
 2. Set `businesses.twilio_number` for this business to that number (E.164, e.g. `+16045550142`) so the
    inbound call resolves to the right business. (`docs/pilot-go-live.md` has the exact steps.)
 3. Tell the owner how to **forward** their after-hours/busy/no-answer calls to it (their carrier's
-   conditional call forwarding — this is the owner's phone setting, not something in the app).
+   conditional call forwarding — this is the owner's phone setting, not something in the app). The
+   owner **keeps their existing public number**; this Twilio number is a hidden forwarding
+   destination, never advertised. Full per-system setup + testing + rollback:
+   **`docs/call-forwarding-setup.md`**.
 
 ## 5. Test the first call (before the owner relies on it)
 - Dial the number, run a normal booking conversation + one KB question + a goodbye.

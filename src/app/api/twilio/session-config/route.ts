@@ -11,9 +11,11 @@ import type { KnowledgeRow } from '@/lib/agents/core/types';
 // (the bridge has no user session). Prompt assembly stays in buildSystemPrompt (source of truth);
 // the bridge itself never sees Supabase.
 //
-// Business resolution is SERVER-pinned: the businessId comes from the TwiML <Parameter> that our
-// own /api/twilio/voice route emitted from env TWILIO_BUSINESS_ID — never from an end user. When
-// unset (or lookup fails), the demo business answers so the line still works for testing.
+// Business resolution is SERVER-pinned: the businessId comes from the TwiML <Parameter> that our own
+// /api/twilio/voice route emitted — resolved from the number the call was FORWARDED TO (params.To →
+// businesses.twilio_number), with the single-tenant TWILIO_BUSINESS_ID env only as a dev/back-compat
+// fallback. It never comes from an end user. When unresolved (or lookup fails), the demo business
+// answers so the line still works for testing.
 
 export const runtime = 'nodejs';
 
@@ -87,6 +89,12 @@ export async function POST(req: NextRequest) {
 
   // Phone-channel addendum: caller id is known from the network — the agent may offer it back
   // for callback confirmation but must still never invent digits.
+  //
+  // FORWARDING CAVEAT (verify per carrier — see docs/call-forwarding-setup.md): `from` is assumed to
+  // be the ORIGINAL caller, which holds on most PSTN forwards. On some carriers a forwarded call can
+  // instead present the FORWARDING line (the merchant's own number) as `from`. The prompt only asks
+  // the caller to CONFIRM the number (never invents it), so a wrong `from` degrades to a clarifying
+  // question rather than a bad callback — but confirm the real behavior on an acceptance call.
   if (body.from) {
     instructions += `\n\nPHONE CALL NOTE:\n- This is a real phone call. The caller's number from caller ID is ${body.from}. If they want a callback, confirm whether this number is the right one to use — do not re-ask for it digit by digit unless they want a different number.`;
   }

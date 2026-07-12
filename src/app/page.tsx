@@ -77,7 +77,7 @@ const STEPS = [
     number: '01',
     title: 'Forward the calls you miss',
     description:
-      'Send your after-hours, busy, and no-answer calls to your FrontDesk number. Your normal daytime line never changes — you only forward the calls already going to voicemail.',
+      'Keep your existing business number — customers call you exactly as they do today. Your phone system just forwards after-hours, busy, and no-answer calls to FrontDesk behind the scenes. Your daytime line never changes, and there is no new number to advertise.',
   },
   {
     number: '02',
@@ -404,7 +404,7 @@ export default async function LandingPage() {
                     <div className="w-px flex-1 bg-orange-100 my-1" />
                   </div>
                   <div className="pb-8">
-                    <p className="font-semibold text-gray-900 mb-1">Customer calls your business</p>
+                    <p className="font-semibold text-gray-900 mb-1">A customer calls your existing number</p>
                     <p className="text-sm text-gray-500 leading-relaxed">
                       FrontDesk picks up and greets them using your business name and custom greeting.
                     </p>

@@ -14,10 +14,13 @@ import { sendEmail, isEmailConfigured } from '@/lib/notify/email';
 import { sendSms, isSmsConfigured } from '@/lib/notify/sms';
 import { notifyOps } from '@/lib/notify/ops';
 
-// After-hours daily digest cron. Vercel Cron calls this HOURLY (vercel.json); for each business it
-// sends the digest only when the LOCAL hour has reached the business's send hour (default 8am) and
-// no digest has gone out for that local day yet. Decoupled from the call-save path — a digest
-// failure can never affect saved calls. Demo calls are never saved, so they're excluded by nature.
+// After-hours daily digest cron. Vercel Cron (Hobby) calls this ONCE PER DAY (vercel.json = 0 13 * * *).
+// A single daily tick cannot fire at 24 different per-business local hours, so delivery is NOT gated on
+// `digest_send_hour`: every business with un-reported calls gets its report on the tick, deduped to at
+// most one per business per local day via call_digests. (`digest_send_hour` is therefore best-effort under
+// the daily cron; to honor it exactly, move to Vercel Pro, set the schedule to hourly `0 * * * *`, and
+// re-add a `hour >= sendHour` gate.) Decoupled from the call-save path — a digest failure can never affect
+// saved calls. Demo calls are never saved, so they're excluded by nature.
 //
 // Auth: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`. If CRON_SECRET is unset, the route
 // refuses (so it's never an open endpoint). Storage uses the service-role admin client.
@@ -66,10 +69,12 @@ async function processBusiness(
   if (mode !== 'daily_digest' && mode !== 'after_hours_digest') return 'skipped';
 
   const tz = biz.timezone || 'America/Vancouver';
-  const sendHour = typeof cfg.digest_send_hour === 'number' ? cfg.digest_send_hour : 8;
-  const { hour, date } = localHourAndDate(tz, new Date(nowIso));
-  // Send once the local time has reached the send hour (>= so a missed hourly tick still goes out).
-  if (hour < sendHour) return 'skipped';
+  // Only the LOCAL DATE is needed. Under Vercel Hobby's single daily tick we cannot honor a per-business
+  // send hour (one tick can't fire at 24 different local hours), so we deliver on the tick and dedupe to
+  // once per local day below — this is what fixes Pacific/Mountain/etc. businesses (and the
+  // America/Vancouver default) previously NEVER receiving a report. `digest_send_hour` is best-effort
+  // under the daily cron (see the file header); it would gate delivery only on an hourly cron.
+  const { date } = localHourAndDate(tz, new Date(nowIso));
 
   // Idempotency: at most one digest per business per local day.
   const { data: already } = await admin

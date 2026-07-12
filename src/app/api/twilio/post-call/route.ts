@@ -91,6 +91,9 @@ export async function POST(req: NextRequest) {
   const baseRow: Record<string, unknown> = {
     business_id: body.businessId,
     customer_name: 'Phone call',
+    // Caller ID of the FORWARDED call. Assumes the carrier preserves the ORIGINAL caller's number on
+    // forward (true for most PSTN forwards); some carriers may instead present the merchant's own
+    // forwarding line here. Verify on an acceptance call — see docs/call-forwarding-setup.md.
     customer_phone: body.fromNumber ?? null,
     started_at: started.toISOString(),
     ended_at: ended.toISOString(),

@@ -367,6 +367,9 @@ export default function SettingsPage() {
                   </option>
                 ))}
               </select>
+              <p className="text-xs text-gray-400 mt-1">
+                Your report is delivered once a day. The exact hour is approximate.
+              </p>
             </div>
 
             {/* SMS alert (optional) */}

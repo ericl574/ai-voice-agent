@@ -1040,6 +1040,16 @@ test('digest cron only advances the coverage mark on delivery (failed send retri
   assert(gateAt > 0 && upsertAt > 0 && gateAt < upsertAt, 'delivery gate precedes the digest record write');
 });
 
+test('digest cron does NOT gate delivery on a per-business send hour (single daily Hobby tick must deliver)', () => {
+  // Regression guard: the old `if (hour < sendHour) return 'skipped'` gate made Pacific/Mountain/Alaska/
+  // Hawaii businesses (incl. the America/Vancouver default) NEVER receive a report under Vercel Hobby's
+  // one-tick-per-day cron. With a single daily tick that gate must stay removed.
+  const digest = readFileSync('src/app/api/cron/digest/route.ts', 'utf8');
+  assert(!/hour\s*<\s*sendHour/.test(digest), 'send-hour gate must be removed (one daily tick cannot honor per-business hours)');
+  // Delivery is still deduped to at most one digest per business per LOCAL day via the call_digests read.
+  assert(digest.includes("eq('digest_date', date)"), 'once-per-local-day idempotency guard remains');
+});
+
 // ── Phone post-call: OPENAI_API_KEY-missing extraction-skip path (pure) ───────
 // When the app deployment has no OPENAI_API_KEY, the phone call is still SAVED but analysis is
 // skipped. The response must say so explicitly, the operator gets a best-effort alert, and neither

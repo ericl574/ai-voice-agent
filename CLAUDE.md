@@ -45,6 +45,7 @@ Deeper detail: `docs/product-scope.md` and `docs/after-hours-report.md`.
 - Demo/real architecture & known debt → `docs/demo-architecture-debt.md`
 - Deployment (env matrix, Vercel/Supabase/Twilio, rollback) → `docs/deployment-checklist.md`
 - Phone go-live (Twilio + bridge, step-by-step) → `docs/pilot-go-live.md`
+- Call forwarding — merchant keeps their number; setup, testing, rollback → `docs/call-forwarding-setup.md`
 - First-customer onboarding (concierge pilot path) → `docs/first-customer-onboarding.md`
 - Supabase RLS verification (tenant-isolation gate) → `docs/supabase-rls-verification.md`
 - Codebase audit (known issues, severity-ranked) → `docs/full-codebase-audit.md`
