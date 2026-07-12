@@ -14,9 +14,13 @@ changelog. When architecture changes, update the relevant doc **in the same task
 
 ## Current MVP direction
 
-FrontDesk is an **after-hours / missed-call capture** system. The business forwards no-answer /
-busy / after-hours calls to FrontDesk; it answers, captures the caller's request, and saves the
-call. The owner's main deliverable is **one daily report**:
+FrontDesk is an **after-hours / missed-call capture** system. **The merchant keeps their existing
+public phone number** — customers keep calling it exactly as they do today. The merchant's
+carrier/PBX **conditionally forwards** the calls they miss to a **hidden, per-business FrontDesk
+destination number** (a Twilio number; never advertised, never dialed by customers). Twilio hits
+`/api/twilio/voice`; FrontDesk identifies the business from the **dialed `To` number**
+(`businesses.twilio_number`, not `ForwardedFrom`), answers with that business's knowledge, and saves
+the call. The owner's main deliverable is **one daily report**:
 
 - **Email summary + CSV is the primary report.** **SMS is an optional short alert only** — never
   required.
@@ -30,7 +34,13 @@ call. The owner's main deliverable is **one daily report**:
   records status and never crashes. **Never imply production email is fully enabled while the sender
   domain is missing** — the Settings notice + `/api/notify-status` probe enforce this.
 
-Deeper detail: `docs/product-scope.md` and `docs/after-hours-report.md`.
+**Pilot #1 scope: after-hours forwarding only.** Onboarding is **concierge** — Eric helps the merchant
+set up carrier/PBX forwarding, configures the FrontDesk/Twilio side, and runs a real forwarded-call
+acceptance test (verifying **caller-ID preservation per carrier**). **Future, not current
+architecture:** no-answer / busy / daytime-overflow forwarding, self-serve number purchasing,
+SIP / BYOC / number porting, and customer-facing SMS / A2P — do not build or document these as current.
+
+Deeper detail: `docs/product-scope.md`, `docs/after-hours-report.md`, `docs/call-forwarding-setup.md`.
 
 ## Documentation index
 
@@ -43,12 +53,10 @@ Deeper detail: `docs/product-scope.md` and `docs/after-hours-report.md`.
 - Engineering standards (anti-spaghetti, detailed) → `docs/engineering-standards.md`
 - Design system & UI conventions → `docs/design-system.md`
 - Demo/real architecture & known debt → `docs/demo-architecture-debt.md`
-- Deployment (env matrix, Vercel/Supabase/Twilio, rollback) → `docs/deployment-checklist.md`
-- Phone go-live (Twilio + bridge, step-by-step) → `docs/pilot-go-live.md`
+- Deployment + phone go-live (env matrix, Vercel/Supabase, Twilio + bridge, rollback) → `docs/deployment-checklist.md`, `docs/twilio-setup.md`
 - Call forwarding — merchant keeps their number; setup, testing, rollback → `docs/call-forwarding-setup.md`
 - First-customer onboarding (concierge pilot path) → `docs/first-customer-onboarding.md`
-- Supabase RLS verification (tenant-isolation gate) → `docs/supabase-rls-verification.md`
-- Codebase audit (known issues, severity-ranked) → `docs/full-codebase-audit.md`
+- Supabase RLS verification (tenant-isolation gate; verified 2026-07-12) → `docs/supabase-rls-verification.md`
 
 ## Tech stack
 

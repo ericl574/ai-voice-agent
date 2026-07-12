@@ -7,7 +7,10 @@ where the **bridge** runs.
 ## Architecture (why there are two pieces)
 
 ```
-Caller's phone ──► Twilio number ──► POST /api/twilio/voice   (Next app, Vercel-hostable)
+Customer dials the MERCHANT'S existing public number   (unchanged, never advertised/replaced)
+   -> merchant's carrier/PBX: in hours staff answer; AFTER HOURS -> forward to:
+Hidden FrontDesk Twilio number ──► POST /api/twilio/voice   (Next app, Vercel-hostable)
+   -> business resolved from the dialed `To` (businesses.twilio_number, not ForwardedFrom)
                                         └─ TwiML: disclosure + <Connect><Stream>
 Twilio Media Stream ◄──ws──► twilio-bridge (standalone Node, NOT Vercel) ◄──ws──► OpenAI Realtime
                                         └─ on hangup: POST /api/twilio/post-call → saves the call
@@ -22,6 +25,11 @@ serverless cannot host one, so the bridge (`server/twilio-bridge.ts`) runs separ
 
 Audio is G.711 μ-law end-to-end (Twilio's native format; OpenAI accepts `audio/pcmu`) — no
 transcoding, low latency.
+
+> **This number is a hidden forwarding destination**, never dialed by customers — the merchant keeps
+> their existing public number. This guide is the **operator** Twilio + bridge setup. The merchant-side
+> forwarding setup (per carrier), the real forwarded-call acceptance test, and rollback live in
+> **`docs/call-forwarding-setup.md`**. Pilot #1 is **after-hours forwarding only**.
 
 ## 1. Twilio account + number (~10 min)
 
@@ -50,8 +58,8 @@ SUPABASE_SERVICE_ROLE_KEY=…    (needed to save phone calls + load the business
 NEXT_PUBLIC_SITE_URL=https://<your-domain>
 ```
 For the inbound phone call, `TWILIO_ACCOUNT_SID` / `TWILIO_PHONE_NUMBER` aren't required. They
-**are** required if you turn on **Call Delivery SMS** (texting the business after each call) —
-see `docs/call-delivery-setup.md`:
+**are** required only if you enable the optional **SMS report alert** (not a pilot blocker) —
+see `docs/after-hours-report.md`:
 ```
 TWILIO_ACCOUNT_SID=AC…        (Console → Account Info)
 TWILIO_PHONE_NUMBER=+1…       (SMS-capable "from" number; reuse the inbound number if it sends SMS)
@@ -147,10 +155,14 @@ Supabase SQL editor → `supabase/migrations/20260611000001_calls_source.sql` (a
 `source` column to `calls`; phone calls save with `source='phone'`. The save path also works
 without it.)
 
-## 6. Acceptance test — "call from my own phone"
+## 6. Bridge smoke test — "call the Twilio number directly"
+
+> This tests the **bridge/answer path only**, not forwarding. Dialing the hidden number directly is
+> **not** the real acceptance test — that's a **forwarded** call from the merchant's line
+> (`docs/call-forwarding-setup.md`).
 
 1. Bridge running, ngrok up, Vercel env vars set.
-2. Call the Twilio number from your phone.
+2. Call the Twilio number directly from your phone.
 3. Expect: the short automated-front-desk disclosure, then the FrontDesk greeting; have a normal
    booking conversation; hang up.
 4. Check: bridge terminal shows `stream started` → `session ready` → `post-call → 200`; the call

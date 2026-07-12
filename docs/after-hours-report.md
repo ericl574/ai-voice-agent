@@ -21,9 +21,12 @@ after hours.
    both run through the same post-call core).
 2. **Per-call SMS/email is OFF by default** (`delivery_mode = 'daily_digest'`). The per-call code
    still exists for the optional `instant_all` / `instant_action_needed` modes.
-3. **Vercel Cron** hits `/api/cron/digest` **once daily (13:00 UTC ≈ early-morning Pacific)**. For
-   each business it sends the digest only when the **local hour ≥ the business's send hour** (default
-   **8 AM** in the business timezone) and no digest has gone out for that local day yet.
+3. **Vercel Cron** hits `/api/cron/digest` **once daily (13:00 UTC ≈ early-morning Pacific)**. On that
+   tick, each business with un-reported calls gets its digest, **deduped to at most one per business
+   per local day** (via `call_digests`). A single daily tick can't fire at 24 different local hours, so
+   `digest_send_hour` is **best-effort** here — a preference the UI records; it would gate the exact
+   send hour only under an hourly **Pro** cron. (This replaced an earlier `hour ≥ send_hour` gate that
+   silently skipped Pacific/Mountain/Alaska/Hawaii businesses — incl. the `America/Vancouver` default — forever.)
 4. The digest email contains: total calls, and per call — caller name, phone, request type,
    preferred date/time (if captured), short summary, suggested follow-up, and call time. A
    **CSV** with the same columns is attached when the owner's **Attach CSV** toggle is on
@@ -67,7 +70,7 @@ writes).
 ```
 CRON_SECRET=<generate one: openssl rand -hex 24>   # Vercel sends it as Authorization: Bearer …
 SUPABASE_SERVICE_ROLE_KEY=…                          # cron reads businesses/calls + writes call_digests
-RESEND_API_KEY=re_…                                  # email + CSV (see docs/call-delivery-setup.md)
+RESEND_API_KEY=re_…                                  # email + CSV (verify your sending domain in Resend)
 NOTIFY_EMAIL_FROM=FrontDesk <alerts@yourdomain.com>
 # Optional SMS alert (Twilio Programmable Messaging):
 TWILIO_ACCOUNT_SID=AC…
@@ -89,11 +92,10 @@ env is missing, that channel is logged as `skipped` and nothing breaks.
 
 **Plan note:** Vercel **Hobby supports one daily cron only** — an hourly schedule (`0 * * * *`)
 makes the deployment **fail to build** on Hobby, which is why we use `0 13 * * *` (13:00 UTC ≈
-early-morning Pacific). The MVP does **not** need hourly cron: the route checks `digest_send_hour`
-and dedupes per business/day, so one daily tick is enough — set each pilot business's
-`digest_send_hour` at/before that tick. **Manual `curl` triggering works on any plan** for testing
-(see §4). Hourly / true per-timezone morning delivery needs **Vercel Pro** (or an external scheduler
-hitting the route) — defer until needed.
+early-morning Pacific). The MVP does **not** need hourly cron: the route delivers every business's
+digest on that daily tick and dedupes per business/local day, so one tick is enough. **Manual `curl`
+triggering works on any plan** for testing (see §4). Honoring each business's exact `digest_send_hour`
+(true per-timezone morning delivery) needs **Vercel Pro** + an hourly schedule — defer until needed.
 
 ### 4. Manual test (before relying on the cron)
 
@@ -102,13 +104,13 @@ curl -X POST https://<your-domain>/api/cron/digest \
   -H "Authorization: Bearer $CRON_SECRET"
 ```
 
-Returns `{ ok, processed, sent }`. With a business whose local time is past its send hour, that has
-captured calls today and the email toggle on, you should receive the report + CSV. Server logs show
+Returns `{ ok, processed, sent }`. With a business that has captured calls today and the email toggle
+on, you should receive the report + CSV. Server logs show
 `[FD] digest email (… ) → sent`.
 
 ## Honest limitations
 
-- One report per business per local day; the cron only acts at/after the send hour.
+- One report per business per local day, delivered on the daily 13:00 UTC tick (`digest_send_hour` is best-effort under Hobby's daily cron — see the plan note).
 - Vercel Hobby = **one daily cron only** (`0 13 * * *`); hourly would fail the build (see plan note).
 - Failed-send retry: a **failed** send does NOT advance the coverage high-water mark and does not
   write the day's `call_digests` row (`shouldAdvanceCoverage`), so the same calls are **retried on the

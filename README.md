@@ -1,8 +1,10 @@
 # FrontDesk
 
-A virtual front desk for local service businesses. FrontDesk answers customer calls, uses the
-business's own knowledge, logs appointment and service requests, and gives staff a single
-dashboard to review and confirm them.
+An **after-hours / missed-call capture** service for local service businesses. The merchant **keeps
+their existing public number**; their carrier conditionally forwards after-hours calls to a hidden
+FrontDesk number, FrontDesk answers using the business's own knowledge, captures the caller's request,
+and sends the owner **one daily report**. See `docs/product-scope.md` for the model and
+`docs/call-forwarding-setup.md` for how forwarding works.
 
 **Supported business types:** Restaurants, Auto Repair, Salons & Spas, Clinics, Tutoring Centers, Home Services, and more.
 
@@ -119,8 +121,8 @@ TWILIO_AUTH_TOKEN=...          # reused from the inbound-webhook config
 TWILIO_PHONE_NUMBER=+1...      # SMS-capable "from" number
 ```
 
-Run `supabase/migrations/20260616000000_call_digests.sql` first. The hourly cron is declared in
-`vercel.json` (Vercel Hobby runs crons daily; hourly needs Pro — see the doc).
+Run `supabase/migrations/20260616000000_call_digests.sql` first. A **daily** cron (`0 13 * * *`) is
+declared in `vercel.json` (Vercel Hobby allows daily only; the digest delivers on that tick — see the doc).
 
 For password reset emails, the deployed URL must also be added to the Supabase Auth
 **redirect URL allowlist**, and the recovery email template should link to
@@ -167,5 +169,5 @@ Managed in Supabase. RLS is enforced on all tables — never bypass it or use th
 - **OpenAI API key stays server-side only.** The browser receives only an ephemeral token from `/api/voice-session`.
 - **Voice session minting requires sign-in or the landing-demo flag** — anonymous non-demo requests are rejected.
 - **Realtime model:** configured in `src/app/api/voice-session/route.ts` — do not change without explicit approval.
-- **No Twilio, Retell, Vapi, or external phone platforms** — voice is browser-only for MVP.
+- **Twilio is the approved inbound phone path** — real forwarded calls need the deployed bridge (`docs/twilio-setup.md` + `docs/call-forwarding-setup.md`). No other phone platforms (Retell / Vapi / etc.) without approval. The browser voice line is the default **test** surface.
 - Customer-facing brand is **FrontDesk** (see `docs/product-scope.md` for language rules); site identity constants live in `src/lib/site.ts`.

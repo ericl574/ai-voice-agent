@@ -2,14 +2,14 @@
 
 How Eric takes one real business live on FrontDesk, start to finish. This is a **concierge** pilot:
 Eric does the setup; the owner just provides info and starts getting captured calls. Companion docs:
-`docs/deployment-checklist.md`, `docs/pilot-go-live.md`, `docs/proof-asset-capture-guide.md`,
+`docs/deployment-checklist.md`, `docs/call-forwarding-setup.md`, `docs/proof-asset-capture-guide.md`,
 `docs/supabase-rls-verification.md`.
 
 ## 0. Before the pilot (Eric, once)
 - App deployed + bridge running + **RLS verified** (see deployment checklist — the hard gate).
 - A Twilio Voice number available to dedicate to this business.
 - `OPS_ALERT_SMS_TO` set so failures page you.
-- Do one browser test call + one real phone acceptance call yourself first (don't debug live on a customer).
+- Do one browser test call + one real **forwarded-call** acceptance test yourself first (`docs/call-forwarding-setup.md`; don't debug live on a customer).
 
 ## 1. What the business owner provides
 Collect these up front (a 15-minute call or a short form):
@@ -19,7 +19,7 @@ Collect these up front (a 15-minute call or a short form):
 - **5–10 FAQs** with answers (pricing guidance, "do you take walk-ins?", parking, insurance, etc.).
 - Greeting preference + agent name (optional).
 - How they want the **daily report** delivered (email address; SMS number optional).
-- Which calls they'll **forward** to FrontDesk: after-hours only, or also busy/no-answer.
+- Which calls they'll **forward** to FrontDesk: **pilot #1 is after-hours only** (busy/no-answer are future).
 
 ## 2. Configure the business profile (dashboard)
 1. Create/onboard the business (`/onboarding`) — name, business type, timezone. Timezone matters for
@@ -36,7 +36,7 @@ Collect these up front (a 15-minute call or a short form):
 ## 4. Connect the phone number
 1. Twilio → the dedicated number → "A call comes in" → `https://<app>/api/twilio/voice` (POST).
 2. Set `businesses.twilio_number` for this business to that number (E.164, e.g. `+16045550142`) so the
-   inbound call resolves to the right business. (`docs/pilot-go-live.md` has the exact steps.)
+   inbound call resolves to the right business. (`docs/twilio-setup.md` has the exact Twilio/bridge steps.)
 3. Tell the owner how to **forward** their after-hours/busy/no-answer calls to it (their carrier's
    conditional call forwarding — this is the owner's phone setting, not something in the app). The
    owner **keeps their existing public number**; this Twilio number is a hidden forwarding

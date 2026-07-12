@@ -6,19 +6,35 @@ build yet. Root rules live in `CLAUDE.md`; this is the detailed product referenc
 ## What FrontDesk is
 
 A SaaS **after-hours / missed-call capture** service for local service businesses — a lightweight
-answering service, **not** a full daytime workflow or staff replacement. The business forwards the
-calls it was already missing (after hours, no-answer, busy) to FrontDesk; it answers naturally, uses
-the business's own knowledge, captures the caller's request and contact details, and saves the call.
-The owner's value arrives as **one clean daily report**, not as another system to babysit.
+answering service, **not** a full daytime workflow or staff replacement. **The merchant keeps their
+existing public number**; their carrier/PBX conditionally forwards the calls they were already
+missing to FrontDesk, which answers naturally, uses the business's own knowledge, captures the
+caller's request and contact details, and saves the call. The owner's value arrives as **one clean
+daily report**, not as another system to babysit.
 
 Customer-facing promise: **FrontDesk answers calls the business was already missing, captures the
 caller's request, and sends one clean daily report.**
 
-Sell a **better way to stop missing calls**, not an "AI bot."
+Sell a **better way to stop missing calls**, not an “AI bot.”
+
+## How a call reaches FrontDesk
+
+FrontDesk does **not** replace or advertise a new number. It's ordinary conditional call forwarding:
+
+1. A customer dials the **merchant's existing public number** (`businesses.phone`) — unchanged.
+2. The merchant's carrier/PBX applies its forwarding rule: in hours, staff answer; **after hours**,
+   the call is forwarded to a **hidden, per-business FrontDesk Twilio number** (`businesses.twilio_number`).
+3. Twilio calls `/api/twilio/voice`; FrontDesk resolves the business from the **dialed `To`** (one
+   dedicated number per business → reliable and carrier-independent, **no reliance on `ForwardedFrom`**),
+   streams to the bridge, and the agent answers with that business's info.
+
+**Pilot #1 is after-hours only**, set up **concierge** (Eric assists the merchant, configures the
+FrontDesk/Twilio side, and runs a real forwarded-call acceptance test, verifying caller-ID
+preservation per carrier). Full setup / testing / rollback: `docs/call-forwarding-setup.md`.
 
 ## Current MVP (the value loop)
 
-1. Business forwards no-answer / busy / after-hours calls to FrontDesk.
+1. The merchant forwards the calls they miss to FrontDesk (**pilot #1: after-hours only**; no-answer / busy are future).
 2. FrontDesk answers, captures the caller's request, and the call is **saved**.
 3. The owner receives **one daily report**.
 
@@ -113,6 +129,9 @@ out of current scope.
 
 Do not add (without explicit Eric approval):
 
+- **Self-serve number purchasing, SIP / BYOC, number porting, or daytime-overflow / no-answer / busy
+  forwarding** — all future. Pilot #1 is concierge-assigned hidden Twilio numbers + **after-hours
+  forwarding only**. FrontDesk never ports, replaces, or advertises the merchant's public number.
 - New phone/voice **platforms** (Retell / Vapi / etc.) or new production phone-number flows beyond
   the existing single-number Twilio path
 - New messaging or reporting **channels** beyond the existing email/SMS report

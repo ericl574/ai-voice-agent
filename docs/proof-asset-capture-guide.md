@@ -18,7 +18,7 @@ the current app — nothing staged.
 | Level | What it proves | Setup needed | Time |
 |-------|----------------|--------------|------|
 | **A — Browser test call (recommended first)** | The full capture loop: a real spoken call → saved two-sided transcript → summary → captured appointment/service request, all in the dashboard. | Signed-in account with a business profile + `OPENAI_API_KEY` on the app. Chrome/Edge + mic. **No Twilio, no bridge.** | ~5–10 min |
-| **B — Real inbound phone call** | The same loop, but triggered by dialing an actual phone number (most convincing for an owner). | Full `docs/pilot-go-live.md` setup (Twilio number, bridge on ngrok/Railway, env on both). | ~60–90 min first time |
+| **B — Real inbound phone call** | The same loop, but triggered by dialing an actual phone number (most convincing for an owner). | Full `docs/twilio-setup.md` setup (Twilio number, bridge on ngrok/Railway, env on both). | ~60–90 min first time |
 
 Do **Level A first** — it is the fastest fully-real proof and exercises the identical save + extraction
 code as the phone path (`runPostCallExtraction` in `src/lib/call-pipeline/postCallCore.ts` is shared by
@@ -37,7 +37,7 @@ both). Add Level B once the phone line is live.
    matters — **2–3 Knowledge Base entries** (`/dashboard/knowledge`), e.g. hours and a couple of FAQs.
    Without KB entries the "answers a question from your info" moment falls flat.
 2. Confirm the app has `OPENAI_API_KEY` set (if the summary later says *"analysis pending"* with no caller
-   name, the app is missing the key — see `docs/pilot-go-live.md` blocker #5).
+   name, the app is missing the key — see `docs/twilio-setup.md` blocker #5).
 3. Use **Chrome or Edge**, allow the **microphone**, quiet room, headphones (avoids echo).
 4. Open the URL **without** `?demo=1`. Sanity check: the page shows a live **"Start call"** button, not a
    "sign in to place a test call" prompt (that prompt means you're in demo mode).
@@ -90,7 +90,7 @@ What to listen for (proves quality live): it greets in your business name, answe
 
 ## LEVEL B — Real inbound phone call (optional, most convincing)
 
-Only after `docs/pilot-go-live.md` is done (Twilio number mapped via `businesses.twilio_number`, bridge
+Only after `docs/twilio-setup.md` is done (Twilio number mapped via `businesses.twilio_number`, bridge
 running, env on both app + bridge). Then:
 
 1. **Dial the pilot's Twilio number** from a phone and run the **same A2 script**.
@@ -188,5 +188,5 @@ Copy this and tick as you go — note anything that didn't work rather than skip
 ---
 
 *Grounded in the current app as of this pass. If any screen differs from what's described here, trust the
-app and note the difference — do not stage it. Deeper setup: `docs/pilot-go-live.md`; known gaps:
-`docs/full-codebase-audit.md`.*
+app and note the difference — do not stage it. Deeper setup: `docs/twilio-setup.md`; known gaps:
+`docs/launch-readiness.md`.*

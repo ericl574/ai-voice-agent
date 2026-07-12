@@ -7,7 +7,7 @@ doc is the intent.
 
 ## MVP framing — what a good call achieves
 
-FrontDesk answers the calls a business was already missing (after hours / no-answer / busy). The
+FrontDesk answers the calls a business was already missing (after hours / no-answer / busy; **pilot #1 is after-hours only**). The
 assistant's job is to **capture**, not to staff a front desk. So:
 
 - Answer **naturally and briefly**, using business knowledge; don't over-promise.

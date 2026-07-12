@@ -1,7 +1,8 @@
 # FrontDesk Deployment Checklist (first pilot)
 
-Canonical, ordered deployment path. Deep references: **`docs/pilot-go-live.md`** (Twilio + bridge,
-step-by-step), `docs/twilio-setup.md`, `docs/after-hours-report.md`, `docs/supabase-rls-verification.md`.
+Canonical, ordered deployment path. Deep references: **`docs/twilio-setup.md`** (Twilio + bridge,
+step-by-step), `docs/call-forwarding-setup.md` (merchant forwarding + the real acceptance test),
+`docs/after-hours-report.md`, `docs/supabase-rls-verification.md`.
 This page is the index + the env matrix; it does not replace those.
 
 > Nothing here is auto-applied — every item needs Eric's own account/dashboard action. Where setup is
@@ -30,8 +31,10 @@ This page is the index + the env matrix; it does not replace those.
 2. **OpenAI** — one API key; set on **both** the app and the bridge (see matrix). Realtime model `gpt-realtime`.
 3. **Vercel** — deploy the app; set env (matrix); `NEXT_PUBLIC_SITE_URL` must equal the Twilio webhook origin.
 4. **Bridge host** — deploy the bridge; set env; note its `wss://<host>/twilio-stream` URL.
-5. **Twilio** — buy a Voice number; point "A call comes in" → `https://<app>/api/twilio/voice` (POST);
-   map the number to the business by setting `businesses.twilio_number` (E.164).
+5. **Twilio** — provision a Voice number as the business's **hidden forwarding destination** (never the
+   merchant's public number); point "A call comes in" → `https://<app>/api/twilio/voice` (POST); map it by
+   setting `businesses.twilio_number` (E.164). The merchant then forwards their **after-hours** calls to it
+   (`docs/call-forwarding-setup.md`).
 6. **Email report (optional for go-live)** — Resend API key + a **verified sender domain**
    (`NOTIFY_EMAIL_FROM`). Until the domain is verified, email **skips safely** and Settings shows the
    domain notice — SMS + dashboard still work. Do not claim email is live before the domain is verified.
@@ -39,8 +42,9 @@ This page is the index + the env matrix; it does not replace those.
    at `0 13 * * *`; set each pilot's `digest_send_hour` at/before that tick, or upgrade to Pro for hourly.
 8. **Monitoring** — set `OPS_ALERT_SMS_TO` (+ `TWILIO_ACCOUNT_SID`/`TWILIO_PHONE_NUMBER`) so failed
    saves/extractions/digests and low-quality calls page you by SMS. Watch bridge logs during the pilot.
-9. **Acceptance** — do one **real phone acceptance call** (`docs/pilot-go-live.md` Step 5) and one browser
-   test call before pointing a customer at it.
+9. **Acceptance** — do one **real forwarded-call acceptance test** (`docs/call-forwarding-setup.md`: a
+   forwarded after-hours call answers as the right business + caller-ID survives) and one browser test call
+   before pointing a customer at it.
 
 ## Environment variable matrix
 | Var | App (Vercel) | Bridge | Purpose |

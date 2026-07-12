@@ -1,5 +1,10 @@
 # Supabase RLS Verification — the one hard gate before a real pilot
 
+> ✅ **VERIFIED 2026-07-12.** A live-DB audit confirmed all 11 business-data tables have RLS enabled with
+> correct `business_id`/`user_id`-scoped policies (reads + writes) — **no cross-tenant leak** — and the
+> migration history was reconciled (all 7 repo migrations now match production). This doc is retained as
+> the re-verification runbook. Remaining (optional, DR only): capture a core-schema baseline via `supabase db pull`.
+
 **Why this exists (audit finding C1):** the base tables (`businesses`, `calls`, `call_messages`,
 `appointments`, `service_requests`, `customers`, `business_knowledge`, `business_members`,
 `profiles`) were created **directly in Supabase and are NOT in `supabase/migrations/`.** So their

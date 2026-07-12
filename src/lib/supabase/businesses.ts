@@ -82,7 +82,7 @@ export async function getActiveBusiness(supabase: any): Promise<Business | null>
     // Resolve the signed-in user and scope memberships by user_id EXPLICITLY. This does not rely on
     // RLS alone for tenant isolation: even if the business_members RLS policy were missing or wrong,
     // a user can only ever resolve to a business they belong to. Defense-in-depth for the unversioned
-    // /unverifiable RLS risk — see docs/supabase-rls-verification.md and docs/full-codebase-audit.md C1.
+    // /unverifiable RLS risk — see docs/supabase-rls-verification.md (verified 2026-07-12).
     const { data: userData } = await supabase.auth.getUser();
     const userId = userData?.user?.id;
     if (!userId) return null;

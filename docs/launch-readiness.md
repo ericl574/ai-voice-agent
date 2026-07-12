@@ -19,11 +19,13 @@ old scattered status files (`STATUS.md`, `PRODUCTION_GOAL/TASKS.md`, `report.md`
 
 ### 🔴 Hard blockers — can't safely onboard a paying stranger
 
-1. **No self-serve phone provisioning — the core mechanic is manual-only.** [verified]
-   `businesses.twilio_number` is only ever written by `scripts/map-business-number.ts` (`npm run pilot:map`)
-   or raw SQL. `onboarding/page.tsx` never provisions or shows a number. Every new customer needs Eric to
-   buy a Twilio number, point its webhook at `/api/twilio/voice`, and run the map script. → concierge, not
-   self-serve.
+1. ✅ **Phone onboarding is concierge — by design, not a blocker.** [verified]
+   The intended pilot model: the merchant **keeps their existing public number** and forwards after-hours
+   calls to a hidden per-business Twilio number Eric assigns (`businesses.twilio_number` via
+   `npm run pilot:map`; webhook → `/api/twilio/voice`; routed by the dialed `To`). Manual assignment is the
+   **plan** for pilots, not a deficiency. **Self-serve number purchasing / auto-provisioning is future** (and
+   gated on billing) — see `docs/call-forwarding-setup.md`. The real open item is not "self-serve"; it's
+   completing a **real forwarded-call acceptance test** (below).
 
 2. ✅ **Tenant isolation (RLS) — RESOLVED & VERIFIED (2026-07-10).**
    Live-DB audit confirmed all 11 business-data tables have RLS enabled with correct `business_id`/`user_id`-scoped
@@ -43,11 +45,12 @@ old scattered status files (`STATUS.md`, `PRODUCTION_GOAL/TASKS.md`, `report.md`
 
 ### 🟠 Functional blockers — the core deliverable can silently fail
 
-4. **Once-a-day cron fights the per-business send-hour logic.** [verified]
-   `vercel.json` = `0 13 * * *` (one tick/day, Hobby) but `cron/digest` only sends when local hour ≥
-   `digest_send_hour` (default 8am). A business whose local time at 13:00 UTC is before its send hour is
-   skipped, and the next tick is 24h later → it may **never** get the report. Fix = Vercel Pro (hourly cron)
-   or rethink the schedule.
+4. ✅ **Digest cron cadence — FIXED (2026-07-12).** [verified]
+   The old `hour ≥ digest_send_hour` gate meant Pacific/Mountain/Alaska/Hawaii businesses (incl. the
+   `America/Vancouver` default) were skipped every day and never got a report under Vercel Hobby's single
+   13:00 UTC tick. Now the daily tick delivers every business's digest, deduped once per local day;
+   `digest_send_hour` is best-effort (honored exactly only under an hourly Pro cron). Regression-tested.
+   **Remaining (external):** confirm on the deployed cron with a Pacific business.
 
 5. **The phone path (what real callers hit) is thinner than the browser path.** [verified code; NOT VERIFIED on a live call]
    The bridge uses OpenAI's server auto-response with none of the browser's Layer-2 turn-taking
@@ -77,14 +80,14 @@ old scattered status files (`STATUS.md`, `PRODUCTION_GOAL/TASKS.md`, `report.md`
 - [x] **Supabase RLS verified secure** (2026-07-10) — all 11 tables RLS-enabled + correctly scoped (reads + writes); no cross-tenant leak.
 - [x] **Migration drift reconciled** (2026-07-10) — 3 already-applied migrations repaired as `applied`; 4 silently-missing ones applied via `supabase db push` (fixed: durable lead storage, twilio routing, calls.analysis, reservation fns).
 - [ ] (Optional, DR) Capture the **core-schema baseline** via `supabase db pull` so a fresh/branch env is reproducible.
-- [ ] [EXTERNAL] **One real phone acceptance call** end-to-end (`docs/pilot-go-live.md` §5) — the phone path is code-complete but unproven live.
-- [ ] [EXTERNAL] **Deploy**: Vercel app + durable bridge host + full env matrix + Twilio number → `businesses.twilio_number` (`docs/deployment-checklist.md`).
+- [ ] [EXTERNAL] **One real FORWARDED-call acceptance test** end-to-end (`docs/call-forwarding-setup.md`) — a forwarded after-hours call answers as the right business, and caller-ID survives the forward. The phone path is code-complete but unproven live.
+- [ ] [EXTERNAL] **Deploy**: Vercel app + durable bridge host + full env matrix + Twilio number → `businesses.twilio_number` (`docs/deployment-checklist.md`, `docs/twilio-setup.md`).
 - [ ] [EXTERNAL] **`OPENAI_API_KEY` on BOTH app and bridge**, plus `OPS_ALERT_SMS_TO` and an OpenAI budget alert.
-- [ ] **Fix the digest cron cadence** (Vercel Pro hourly, or align the single tick to each pilot's send hour).
+- [x] **Digest cron cadence fixed** (2026-07-12) — delivers on the daily tick regardless of send hour; regression-tested. (External: confirm on the deployed cron.)
 - [ ] (Recommended) **Commit a baseline schema migration** so schema + RLS are reproducible (`docs/supabase-rls-verification.md` Step 3).
 
 ### P1 — for a self-serve public launch
-- [ ] **Self-serve phone provisioning** (Twilio subaccount/number purchase + auto-map to the business) — removes the concierge step.
+- [ ] (Future, post-pilot) **Self-serve phone provisioning** (Twilio number purchase + auto-map) — replaces the concierge assign step. Gated on billing; **not** a pilot requirement.
 - [ ] **Wire + enforce billing** (checkout in the funnel, gate features on `billing_subscriptions.status`) or a deliberate decision to stay concierge.
 - [ ] **Move rate-limiting to a shared store** (Upstash/Redis) — the in-memory limiter is per-instance.
 - [ ] **In-app data-deletion flow** (replaces the manual SOP in `docs/first-customer-onboarding.md`).
@@ -100,5 +103,5 @@ old scattered status files (`STATUS.md`, `PRODUCTION_GOAL/TASKS.md`, `report.md`
 
 ---
 
-_Deep references: `docs/full-codebase-audit.md` (severity-ranked audit), `docs/deployment-checklist.md`
-(env matrix), `docs/pilot-go-live.md` (turn the phone on), `docs/supabase-rls-verification.md` (the RLS gate)._
+_Deep references: `docs/deployment-checklist.md` + `docs/twilio-setup.md` (deploy the phone path),
+`docs/call-forwarding-setup.md` (forwarding + the real acceptance test), `docs/supabase-rls-verification.md` (the RLS gate)._
