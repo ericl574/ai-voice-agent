@@ -286,7 +286,7 @@ export default async function LandingPage() {
               After-hours call capture for service businesses
             </span>
             <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold text-white leading-tight mb-6">
-              Never miss<br />an after-hours call
+              Never miss<br />a customer
             </h1>
             <p className="text-lg sm:text-xl text-white/70 max-w-2xl mx-auto mb-12 leading-relaxed">
               When you&apos;re closed or already on the line, FrontDesk answers the calls you&apos;d

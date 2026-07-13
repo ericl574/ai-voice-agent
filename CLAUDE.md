@@ -38,14 +38,18 @@ the call. The owner's main deliverable is **one daily report**:
 set up carrier/PBX forwarding, configures the FrontDesk/Twilio side, and runs a real forwarded-call
 acceptance test (verifying **caller-ID preservation per carrier**). **Future, not current
 architecture:** no-answer / busy / daytime-overflow forwarding, self-serve number purchasing,
-SIP / BYOC / number porting, and customer-facing SMS / A2P — do not build or document these as current.
+automatic Twilio-number purchasing + webhook auto-config, website import / crawling, carrier / PBX
+integrations, SIP / BYOC / number porting, and customer-facing SMS / A2P — do not build or document
+these as current. The **target** "five-minute activation" + website-to-agent experience these build
+toward is a documented **direction** (still concierge for pilot #1): `docs/activation-flow.md`.
 
-Deeper detail: `docs/product-scope.md`, `docs/after-hours-report.md`, `docs/call-forwarding-setup.md`.
+Deeper detail: `docs/product-scope.md`, `docs/activation-flow.md`, `docs/after-hours-report.md`, `docs/call-forwarding-setup.md`.
 
 ## Documentation index
 
 - **Launch readiness (what blocks a full publish + P0/P1/P2) → `docs/launch-readiness.md`**
 - Product scope & positioning → `docs/product-scope.md`
+- Five-minute activation + website-to-agent (product **direction**, mostly future; pilot-vs-scale phasing) → `docs/activation-flow.md`
 - Voice / call pipeline (and voice-bug diagnosis) → `docs/call-pipeline.md`
 - Agent conversation behavior → `docs/agent-behavior.md`
 - Specialist voice-agent architecture (router + specialists + analyst) → `docs/agent-specialists.md`

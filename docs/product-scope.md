@@ -32,6 +32,18 @@ FrontDesk does **not** replace or advertise a new number. It's ordinary conditio
 FrontDesk/Twilio side, and runs a real forwarded-call acceptance test, verifying caller-ID
 preservation per carrier). Full setup / testing / rollback: `docs/call-forwarding-setup.md`.
 
+## Activation goal (target direction — mostly future)
+
+The **direction** is a **five-minute activation**: enter the merchant's website + existing public
+number → FrontDesk imports business info into a **reviewable draft** agent + knowledge base → the user
+corrects gaps → FrontDesk prepares a hidden Twilio number, configures its webhook, and maps it → the
+merchant enables forwarding on their line (a **guided** step FrontDesk can't do for them) → a real
+test call confirms it's live. This is a **product direction, not a shipped flow** — pilot #1 stays
+concierge. A vertical template is the **foundation**, not full personalization: the merchant-specific
+agent = vertical foundation + website-derived facts + merchant-confirmed info + FrontDesk global rules.
+Full stages, the website-to-agent model, the carrier boundary, and pilot-vs-scale phasing:
+`docs/activation-flow.md`.
+
 ## Current MVP (the value loop)
 
 1. The merchant forwards the calls they miss to FrontDesk (**pilot #1: after-hours only**; no-answer / busy are future).
@@ -129,9 +141,11 @@ out of current scope.
 
 Do not add (without explicit Eric approval):
 
-- **Self-serve number purchasing, SIP / BYOC, number porting, or daytime-overflow / no-answer / busy
-  forwarding** — all future. Pilot #1 is concierge-assigned hidden Twilio numbers + **after-hours
-  forwarding only**. FrontDesk never ports, replaces, or advertises the merchant's public number.
+- **Self-serve number purchasing, automatic Twilio-number purchasing + webhook auto-config, website
+  import / crawling, carrier / PBX integrations, SIP / BYOC, number porting, or daytime-overflow /
+  no-answer / busy forwarding** — all future (the target activation flow, `docs/activation-flow.md`).
+  Pilot #1 is concierge-assigned hidden Twilio numbers + **after-hours forwarding only**. FrontDesk
+  never ports, replaces, or advertises the merchant's public number.
 - New phone/voice **platforms** (Retell / Vapi / etc.) or new production phone-number flows beyond
   the existing single-number Twilio path
 - New messaging or reporting **channels** beyond the existing email/SMS report

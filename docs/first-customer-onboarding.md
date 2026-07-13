@@ -5,6 +5,11 @@ Eric does the setup; the owner just provides info and starts getting captured ca
 `docs/deployment-checklist.md`, `docs/call-forwarding-setup.md`, `docs/proof-asset-capture-guide.md`,
 `docs/supabase-rls-verification.md`.
 
+> This is the **current** (concierge) path. The **target** is the ~5-minute activation flow — website
+> import → reviewable draft agent → assisted number provisioning → guided forwarding → live test —
+> documented as direction in `docs/activation-flow.md`. Until those pieces ship, the manual steps below
+> are the plan (and they are **not** a launch blocker — see `docs/launch-readiness.md`).
+
 ## 0. Before the pilot (Eric, once)
 - App deployed + bridge running + **RLS verified** (see deployment checklist — the hard gate).
 - A Twilio Voice number available to dedicate to this business.

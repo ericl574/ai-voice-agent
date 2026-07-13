@@ -87,7 +87,7 @@ old scattered status files (`STATUS.md`, `PRODUCTION_GOAL/TASKS.md`, `report.md`
 - [ ] (Recommended) **Commit a baseline schema migration** so schema + RLS are reproducible (`docs/supabase-rls-verification.md` Step 3).
 
 ### P1 — for a self-serve public launch
-- [ ] (Future, post-pilot) **Self-serve phone provisioning** (Twilio number purchase + auto-map) — replaces the concierge assign step. Gated on billing; **not** a pilot requirement.
+- [ ] (Future, post-pilot) **Five-minute activation flow** (`docs/activation-flow.md`) — website import → reviewable draft agent, operator-run number provisioning (purchase + webhook auto-config + auto-map, **gated on approval + billing**), guided forwarding UI, and an in-UI live acceptance-test detector. Replaces the concierge assign step; **not** a pilot requirement. Phase B is operator-driven; full customer self-serve is Phase C.
 - [ ] **Wire + enforce billing** (checkout in the funnel, gate features on `billing_subscriptions.status`) or a deliberate decision to stay concierge.
 - [ ] **Move rate-limiting to a shared store** (Upstash/Redis) — the in-memory limiter is per-instance.
 - [ ] **In-app data-deletion flow** (replaces the manual SOP in `docs/first-customer-onboarding.md`).
