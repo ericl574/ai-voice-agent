@@ -2,7 +2,8 @@ import { NextRequest } from 'next/server';
 import { isValidTwilioSignature } from '@/lib/twilio/signature';
 import { SITE_URL } from '@/lib/site';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { matchBusinessIdByNumber } from '@/lib/twilio/numberRouting';
+import { resolveInboundRouting, pinForEnv, type InboundRouting } from '@/lib/twilio/numberRouting';
+import { notifyOps } from '@/lib/notify/ops';
 
 // Twilio inbound voice webhook. Point the Twilio phone number's "A call comes in" webhook at
 // {NEXT_PUBLIC_SITE_URL}/api/twilio/voice (HTTP POST). Responds with TwiML that:
@@ -13,9 +14,13 @@ import { matchBusinessIdByNumber } from '@/lib/twilio/numberRouting';
 // run on Vercel (serverless has no durable WebSockets), so TWILIO_STREAM_URL points at wherever
 // the bridge runs (local + ngrok for testing, or a small Node host). See docs/twilio-setup.md.
 //
+// The business is resolved from the number the call was FORWARDED TO (params.To →
+// businesses.twilio_number). An unresolved number FAILS CLOSED: neutral message + hangup, no bridge,
+// no save — it never falls back to the demo business or another tenant (see resolveInboundRouting).
+//
 // Env: TWILIO_AUTH_TOKEN (signature validation), TWILIO_STREAM_URL (wss://…/twilio-stream),
-//      TWILIO_BUSINESS_ID (optional single-tenant/dev fallback — production resolves the business from
-//      the forwarded-to number via businesses.twilio_number; the demo business answers if neither matches).
+//      TWILIO_BUSINESS_ID (EXPLICIT single-tenant/dev pin ONLY — leave UNSET in multi-number/pilot
+//      deployments so unmapped numbers fail closed instead of answering as the pinned business).
 
 export const runtime = 'nodejs';
 
@@ -37,34 +42,37 @@ function twiml(body: string): Response {
 const DISCLOSURE =
   "Hi! You've reached the automated front desk. This call may be processed and summarized for the business. One moment while I connect you.";
 
+// Played when the dialed number resolves to no business (fail-closed). Neutral and non-revealing —
+// it must not expose that the number is unmapped or hint at internal routing.
+const UNAVAILABLE_MESSAGE =
+  "We're sorry, this answering service is temporarily unavailable. Please contact the business again later.";
+
 // Resolve which business this inbound call is for, from the number it was dialed on (params.To).
 // This is what makes the phone path multi-tenant: many Twilio numbers → many businesses via
 // businesses.twilio_number, resolved by our own server (never trusting caller-supplied input).
-// Fallback order: mapped number → legacy single-tenant TWILIO_BUSINESS_ID (local/dev) → '' (the
-// demo business in session-config), so the line always answers even before a mapping exists.
-async function resolveBusinessId(dialedTo: string): Promise<string> {
-  const envFallback = process.env.TWILIO_BUSINESS_ID ?? '';
+// Returns a FAIL-CLOSED decision (see resolveInboundRouting): a matched business, an explicit
+// single-tenant pin, or 'reject'. An unmapped number is REJECTED — never the demo/default tenant.
+// A lookup error is also treated as no match (fail closed) rather than guessing a business.
+async function resolveInboundBusiness(dialedTo: string): Promise<InboundRouting> {
+  let rows: { id: string; twilio_number: string | null }[] = [];
   const admin = createAdminClient();
-  if (admin && dialedTo) {
+  if (admin) {
     try {
       const { data, error } = await admin
         .from('businesses')
         .select('id, twilio_number')
         .not('twilio_number', 'is', null);
-      // A query error (e.g. the twilio_number column not migrated yet) → keep legacy behavior.
-      if (!error) {
-        const matched = matchBusinessIdByNumber(
-          (data ?? []) as { id: string; twilio_number: string | null }[],
-          dialedTo,
-        );
-        if (matched) return matched;
-        console.warn('[FD] twilio/voice: dialed number not mapped to a business — using TWILIO_BUSINESS_ID fallback');
-      }
+      if (!error) rows = (data ?? []) as { id: string; twilio_number: string | null }[];
+      else console.warn('[FD] twilio/voice: business-number lookup error — treating as no match:', error.message);
     } catch (err) {
-      console.warn('[FD] twilio/voice: business-number lookup failed — using fallback:', (err as Error).message);
+      console.warn('[FD] twilio/voice: business-number lookup failed — treating as no match:', (err as Error).message);
     }
   }
-  return envFallback;
+  // Single-tenant/dev pin is IGNORED in production (pinForEnv → null): production inbound routing is
+  // always To → businesses.twilio_number, so an accidentally-set TWILIO_BUSINESS_ID can never make an
+  // unresolved production call answer as a real tenant. Outside production it's an explicit dev/test aid.
+  const singleTenantPin = pinForEnv(process.env.NODE_ENV, process.env.TWILIO_BUSINESS_ID);
+  return resolveInboundRouting(rows, dialedTo, singleTenantPin);
 }
 
 export async function POST(req: NextRequest) {
@@ -107,8 +115,28 @@ export async function POST(req: NextRequest) {
 
   const from = params.From ?? '';
   const to = params.To ?? '';
-  const businessId = await resolveBusinessId(to);
-  console.log(`[FD] twilio/voice inbound call ${params.CallSid ?? ''} from ${from} to ${to} → business ${businessId || '(demo fallback)'}`);
+  const routing = await resolveInboundBusiness(to);
+
+  // Fail closed: the dialed number resolves to no business. Do NOT connect the bridge, do NOT load a
+  // demo/default business, do NOT save the call. Alert the operator (an unmapped inbound number means
+  // mis-configured forwarding or an unmapped pilot number) and play a brief neutral message.
+  if (routing.kind === 'reject') {
+    console.warn(
+      `[FD] twilio/voice REJECTED unresolved inbound call ${params.CallSid ?? ''} to ${to} — no business mapped to this number; failing closed`,
+    );
+    // Best-effort operator alert (cooldown-throttled; never throws). `to` is our own Twilio number,
+    // not caller PII; the caller's `from` is intentionally omitted (the ops sanitizer redacts phones).
+    await notifyOps({
+      component: 'twilio/voice',
+      event: 'unresolved_inbound_number',
+      error: 'inbound To not mapped to any business',
+      context: { to, callSid: params.CallSid ?? '' },
+    });
+    return twiml(`<Say>${xmlEscape(UNAVAILABLE_MESSAGE)}</Say><Hangup/>`);
+  }
+
+  const businessId = routing.businessId;
+  console.log(`[FD] twilio/voice inbound call ${params.CallSid ?? ''} from ${from} to ${to} → business ${businessId}`);
 
   // <Connect><Stream> = bidirectional media stream; custom parameters reach the bridge in the
   // stream's "start" message so it can resolve the business and report the caller id.

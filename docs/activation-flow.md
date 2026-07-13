@@ -1,5 +1,9 @@
 # Five-Minute Activation & Website-to-Agent — product direction
 
+> **This doc is the FrontDesk "Level 2" definition** (operator-assisted ~5-minute activation, not
+> self-serve). Readiness levels + current priority: `docs/launch-readiness.md`. Current target is
+> **Level 1** (one real customer), so everything here remains **future direction**.
+
 > **Status: product direction (mostly future), not current capability.** This doc records the
 > **target** activation experience so the team builds toward one coherent goal. **Pilot #1 is
 > concierge** (Eric runs the steps by hand — see `docs/first-customer-onboarding.md`). Nothing here

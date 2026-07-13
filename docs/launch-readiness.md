@@ -5,8 +5,37 @@ old scattered status files (`STATUS.md`, `PRODUCTION_GOAL/TASKS.md`, `report.md`
 `reports/production-readiness-report.md`). **Honest by rule:** every claim is either **[verified]**
 (read in code / passing tests) or **[EXTERNAL]** (needs Eric's Supabase/Twilio/Vercel/phone — not code).
 
+## Readiness levels (the current framing — read this first)
+
+FrontDesk readiness is defined in three explicit levels. **Current execution target: Level 1.**
+Next: **Level 2.** Long-term: **Full Level.**
+
+- **Level 1 — one real customer can use FrontDesk.** Eric manually creates/configures the business,
+  prepares the merchant-specific Agent + knowledge, buys/selects + maps the hidden Twilio number,
+  helps the merchant enable forwarding, collects payment, and handles support/deletion by hand.
+  **Level 1 is complete ONLY when a REAL forwarded call succeeds end-to-end:** merchant's existing
+  public number → real carrier/PBX forwarding → dedicated hidden Twilio number → production
+  `/api/twilio/voice` → inbound `To` matched to `businesses.twilio_number` → correct merchant-specific
+  Agent → real conversation → saved call + two-sided transcript + extracted result. **Automated tests
+  alone do NOT complete Level 1** — it requires real forwarded-call evidence (acceptance test in
+  `docs/call-forwarding-setup.md`).
+
+- **Level 2 — operator-assisted ~5-minute activation.** Eric still participates, but FrontDesk provides
+  a fast, repeatable workflow: website URL + public number → source-grounded import → reviewable
+  merchant Agent/KB draft (found/inferred/missing/merchant-confirmed) → approve → internal number
+  provisioning → auto webhook + mapping → precise carrier forwarding guidance → live-test detection →
+  "live" confirmation. **Level 2 is NOT self-serve — it is operator-assisted.** Full stages:
+  `docs/activation-flow.md`.
+
+- **Full Level — fully self-serve public SaaS.** A merchant registers, pays, configures, activates,
+  tests, manages, and cancels **without** Eric. The ranked "Blockers" backlog below (billing
+  enforcement, legal review, in-app deletion, durable cross-instance rate limiting, customer number
+  provisioning, scale, integration/e2e tests, …) is the **Full-Level scope. Those findings remain
+  valid but are NOT the current execution scope** — do not implement them during Level 1/2 work unless
+  a concrete Level 1/2 failure needs a narrowly related fix.
+
 ## Current state — [verified]
-- `npm run build` ✓, `npm run qa:units` **141 ✓**, `npm run qa:call-pipeline` **46 ✓**.
+- `npm run build` ✓, `npm run qa:units` **149 ✓**, `npm run qa:call-pipeline` **46 ✓**.
 - The code is at a **supervised concierge-pilot** bar: a browser or phone call answers, captures the
   request, saves it, and the daily digest can be sent. Security fundamentals are careful (server-only
   OpenAI key + 300s ephemeral browser secret; Twilio signature verify; timing-safe cron/bridge secrets;
@@ -16,6 +45,10 @@ old scattered status files (`STATUS.md`, `PRODUCTION_GOAL/TASKS.md`, `report.md`
 ---
 
 ## Blockers to a full self-serve public launch (ranked)
+
+> **Scope note:** this ranked list is the **Full-Level** backlog (see Readiness levels above). It stays
+> valid, but is **not** the current execution scope — the active target is **Level 1** (one real
+> forwarded call). Don't start these during Level 1/2 work unless a concrete failure requires it.
 
 ### 🔴 Hard blockers — can't safely onboard a paying stranger
 

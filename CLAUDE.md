@@ -12,6 +12,15 @@ Claude Code is the implementation agent. Eric / ChatGPT are PM, QA, and final ap
 workflow, and pointers. Deep detail lives in `docs/` (linked below). Do not use this file as a
 changelog. When architecture changes, update the relevant doc **in the same task**.
 
+## Readiness levels (execution priority)
+
+Readiness is defined in three levels (authoritative definitions: `docs/launch-readiness.md`):
+**Level 1** = one real merchant served end-to-end (Eric configures everything by hand; complete **only**
+with real forwarded-call evidence). **Level 2** = operator-assisted ~5-minute activation
+(`docs/activation-flow.md`), not self-serve. **Full Level** = fully self-serve public SaaS (the ranked
+launch-readiness backlog). **Current target: Level 1.** The Full-Level findings are valid backlog, not
+current scope — don't build them during Level 1/2 unless a concrete Level 1/2 failure requires it.
+
 ## Current MVP direction
 
 FrontDesk is an **after-hours / missed-call capture** system. **The merchant keeps their existing

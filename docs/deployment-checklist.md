@@ -57,7 +57,7 @@ This page is the index + the env matrix; it does not replace those.
 | `TWILIO_STREAM_URL` | ✅ | — | `wss://<bridge-host>/twilio-stream` |
 | `TWILIO_BRIDGE_SECRET` | ✅ | ✅ | shared secret for session-config + post-call |
 | `FD_APP_URL` | — | ✅ | the Vercel origin the bridge calls back to |
-| `TWILIO_BUSINESS_ID` | ✅ (optional) | — | single-tenant/dev fallback only; prod uses `businesses.twilio_number` mapping |
+| `TWILIO_BUSINESS_ID` | (dev only) | — | **Local/dev/test pin — IGNORED in production** (`pinForEnv`). Production inbound routing is **always** `To → businesses.twilio_number`; an unmapped number **fails closed** (neutral hangup, no demo, no save). Setting it in prod has no effect. |
 | `CRON_SECRET` | ✅ | — | guards `/api/cron/digest` |
 | `RESEND_API_KEY` + `NOTIFY_EMAIL_FROM` | ✅ | — | morning report email + CSV (domain-gated) |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_PHONE_NUMBER` | ✅ | — | optional SMS alert + ops alerts |

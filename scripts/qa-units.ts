@@ -47,7 +47,7 @@ import {
   type DigestChannelStatus,
 } from '../src/lib/notify/digest.ts';
 import { toE164 } from '../src/lib/notify/sms.ts';
-import { canonicalPhone, matchBusinessIdByNumber } from '../src/lib/twilio/numberRouting.ts';
+import { canonicalPhone, matchBusinessIdByNumber, resolveInboundRouting, pinForEnv } from '../src/lib/twilio/numberRouting.ts';
 import { buildPilotLead } from '../src/lib/leads/pilotLead.ts';
 import {
   buildOpsAlert,
@@ -714,13 +714,95 @@ test('matchBusinessIdByNumber — unknown / blank number resolves to null (no ac
   eq(matchBusinessIdByNumber([{ id: 'biz_c', twilio_number: null }], ''), null, 'blank never matches null row');
 });
 
-test('twilio/voice resolves the business from the dialed number, with an env fallback', () => {
+// ── Fail-closed inbound routing — an unmapped number must NOT answer as demo/default/another tenant.
+// A real inbound call resolves to a business by the dialed number, an EXPLICIT single-tenant pin, or
+// is rejected (neutral message + hangup, no bridge, no save).
+
+test('resolveInboundRouting — a mapped dialed number resolves that business', () => {
+  const r = resolveInboundRouting(numberRows, '+16045550100');
+  eq(r.kind, 'business', 'mapped number → business');
+  eq(r.kind === 'business' ? r.businessId : '', 'biz_a', 'resolves the owning business');
+  // A matched number ALWAYS wins, even if an explicit pin is also set.
+  const r2 = resolveInboundRouting(numberRows, '+17785550200', 'pinned_biz');
+  eq(r2.kind === 'business' ? r2.businessId : '', 'biz_b', 'matched number beats the pin');
+});
+
+test('resolveInboundRouting — an unknown number with no pin FAILS CLOSED (never demo/default tenant)', () => {
+  eq(resolveInboundRouting(numberRows, '+15559999999').kind, 'reject', 'unmapped number → reject');
+  eq(resolveInboundRouting(numberRows, '').kind, 'reject', 'blank dialed number → reject');
+  eq(resolveInboundRouting(numberRows, null).kind, 'reject', 'null dialed number → reject');
+  eq(resolveInboundRouting([], '+16045550100').kind, 'reject', 'no mapped businesses at all → reject');
+  // An empty/whitespace pin is not an explicit pin — still fail closed.
+  eq(resolveInboundRouting(numberRows, '+15559999999', '').kind, 'reject', 'empty pin → still reject');
+  eq(resolveInboundRouting(numberRows, '+15559999999', '   ').kind, 'reject', 'whitespace pin → still reject');
+});
+
+test('resolveInboundRouting — an EXPLICIT single-tenant pin answers only when no number matched', () => {
+  const r = resolveInboundRouting(numberRows, '+15559999999', 'pinned_biz');
+  eq(r.kind, 'business', 'explicit pin answers an unmapped number (single-tenant/dev mode)');
+  eq(r.kind === 'business' ? r.businessId : '', 'pinned_biz', 'answers as the pinned business, not demo');
+});
+
+// pinForEnv gates the TWILIO_BUSINESS_ID pin by environment: production ALWAYS ignores it, so an
+// accidentally-set pin can never route an unresolved production call to a real tenant.
+test('pinForEnv — production always ignores the pin (the production foot-gun fix)', () => {
+  eq(pinForEnv('production', 'pinned_biz'), null, 'prod + configured pin → ignored');
+  eq(pinForEnv('production', ''), null, 'prod + empty pin → null');
+  eq(pinForEnv('production', undefined), null, 'prod + no pin → null');
+});
+
+test('pinForEnv — non-production honors an explicitly configured pin (dev/test only)', () => {
+  eq(pinForEnv('development', 'pinned_biz'), 'pinned_biz', 'dev + pin → honored');
+  eq(pinForEnv('test', ' pinned_biz '), 'pinned_biz', 'test + pin → honored (trimmed)');
+  eq(pinForEnv(undefined, 'pinned_biz'), 'pinned_biz', 'unset NODE_ENV + pin → honored');
+  eq(pinForEnv('development', '   '), null, 'dev + whitespace-only pin → null (not a real pin)');
+});
+
+// The route feeds `pinForEnv(NODE_ENV, TWILIO_BUSINESS_ID)` into resolveInboundRouting; assert the
+// end-to-end routing behavior the route produces, per environment.
+test('inbound routing — PRODUCTION: To → businesses.twilio_number only, pin cannot rescue unknowns', () => {
+  const prodPin = pinForEnv('production', 'pinned_biz'); // = null
+  // 1) mapped To resolves the correct business in production
+  eq(resolveInboundRouting(numberRows, '+16045550100', prodPin).kind, 'business', 'mapped To → business in prod');
+  eq(
+    (resolveInboundRouting(numberRows, '+16045550100', prodPin) as { businessId?: string }).businessId,
+    'biz_a',
+    'correct business resolved in prod',
+  );
+  // 2) unknown To rejects in prod when no pin exists
+  eq(resolveInboundRouting(numberRows, '+15559999999', pinForEnv('production', undefined)).kind, 'reject', 'unknown To → reject (no pin)');
+  // 3) unknown To STILL rejects in prod even when TWILIO_BUSINESS_ID is configured (the foot-gun)
+  eq(resolveInboundRouting(numberRows, '+15559999999', prodPin).kind, 'reject', 'configured pin ignored in prod → reject');
+  // 4) blank/malformed To also rejects in prod even with a configured pin
+  eq(resolveInboundRouting(numberRows, '', prodPin).kind, 'reject', 'blank To → reject in prod');
+  eq(resolveInboundRouting(numberRows, 'not-a-number', prodPin).kind, 'reject', 'malformed To → reject in prod');
+});
+
+test('inbound routing — NON-PRODUCTION: an explicit pin may still answer an unknown To (dev/test)', () => {
+  const devPin = pinForEnv('development', 'pinned_biz'); // = 'pinned_biz'
+  const r = resolveInboundRouting(numberRows, '+15559999999', devPin);
+  eq(r.kind, 'business', 'dev pin answers unknown To');
+  eq(r.kind === 'business' ? r.businessId : '', 'pinned_biz', 'answers as the dev-pinned business');
+  // Mapped numbers still win in dev too (unchanged product behavior).
+  eq((resolveInboundRouting(numberRows, '+16045550100', devPin) as { businessId?: string }).businessId, 'biz_a', 'mapped To wins in dev');
+});
+
+test('twilio/voice fails closed on an unresolved dialed number', () => {
   const route = readFileSync('src/app/api/twilio/voice/route.ts', 'utf8');
-  assert(route.includes('matchBusinessIdByNumber'), 'route resolves business by dialed number');
-  assert(route.includes('resolveBusinessId'), 'route uses the number → business resolver');
-  assert(route.includes('TWILIO_BUSINESS_ID'), 'legacy single-tenant env kept as dev/back-compat fallback');
-  // The businessId must come from the resolver, not straight from the env var anymore.
-  assert(route.includes('await resolveBusinessId(to)'), 'businessId is resolved from params.To');
+  // Resolution goes through the fail-closed resolver, not a demo/env guess.
+  assert(route.includes('resolveInboundRouting'), 'route uses the fail-closed router');
+  assert(route.includes('await resolveInboundBusiness(to)'), 'businessId is resolved from params.To');
+  // On reject: neutral unavailable message + hangup, an ops alert, and NO Stream/bridge connection.
+  assert(route.includes("routing.kind === 'reject'"), 'route branches on the reject decision');
+  assert(route.includes('UNAVAILABLE_MESSAGE') && route.includes('<Hangup/>'), 'reject → neutral message + hangup');
+  assert(route.includes('unresolved_inbound_number'), 'reject emits an operator alert');
+  // The Stream is only emitted on the resolved path (after the reject early-return). Anchor on the
+  // emitted markup `<Connect><Stream url=` (the header comment also mentions `<Connect><Stream>`).
+  const rejectIdx = route.indexOf("routing.kind === 'reject'");
+  const streamIdx = route.indexOf('<Connect><Stream url=');
+  assert(rejectIdx > -1 && streamIdx > rejectIdx, 'reject returns BEFORE any <Stream> is emitted');
+  // Invalid signatures still return the secure 403 (unchanged).
+  assert(route.includes('Invalid signature') && route.includes('403'), 'invalid signature still 403');
 });
 
 // ── buildPilotLead — normalize + validate a pilot request into a durable lead row ─────────────

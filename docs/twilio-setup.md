@@ -53,7 +53,8 @@ transcoding, low latency.
 TWILIO_AUTH_TOKEN=…            (Console → Account Info; used to verify webhook signatures)
 TWILIO_STREAM_URL=wss://<bridge-host>/twilio-stream
 TWILIO_BRIDGE_SECRET=<generate one: openssl rand -hex 24>
-TWILIO_BUSINESS_ID=<businesses.id to answer as>   (optional — demo restaurant answers if unset)
+TWILIO_BUSINESS_ID=<businesses.id to answer as>   (LOCAL/DEV/TEST pin ONLY — IGNORED in production;
+                                                   prod always routes To → businesses.twilio_number)
 SUPABASE_SERVICE_ROLE_KEY=…    (needed to save phone calls + load the business prompt)
 NEXT_PUBLIC_SITE_URL=https://<your-domain>
 ```
@@ -162,12 +163,16 @@ without it.)
 > (`docs/call-forwarding-setup.md`).
 
 1. Bridge running, ngrok up, Vercel env vars set.
-2. Call the Twilio number directly from your phone.
-3. Expect: the short automated-front-desk disclosure, then the FrontDesk greeting; have a normal
+2. **Map the number first** (`npm run pilot:map -- <business_id> <number>`) — otherwise the dialed
+   number resolves to no business and the line **fails closed** (plays "temporarily unavailable" and
+   hangs up; no bridge, no save). *(On a local/non-production dev server only, `TWILIO_BUSINESS_ID`
+   can pin one business; it is **ignored in production**, where mapping is always required.)*
+3. Call the Twilio number directly from your phone.
+4. Expect: the short automated-front-desk disclosure, then the FrontDesk greeting; have a normal
    booking conversation; hang up.
-4. Check: bridge terminal shows `stream started` → `session ready` → `post-call → 200`; the call
+5. Check: bridge terminal shows `stream started` → `session ready` → `post-call → 200`; the call
    (with transcript + summary) appears in **Call History**, and any appointment/service request
-   shows in the dashboard (when `TWILIO_BUSINESS_ID` is set — demo-fallback calls are not saved).
+   shows in the dashboard.
 
 ### Call-quality QA (run after a real call — regression checks)
 
@@ -220,9 +225,12 @@ that is unhealthy but not restarted by Railway will not be noticed by the app it
   barge-in clear, transcript capture, save + extraction reuse.
 - **Not yet exercised:** a real Twilio call end-to-end (needs the account/number/ngrok above) —
   expect possible small fixes on first real call (e.g. trial-account notices, regional codecs).
-- **Multi-business routing (implemented):** each Twilio number maps to a business via
+- **Multi-business routing (implemented, fail-closed):** each Twilio number maps to a business via
   `businesses.twilio_number`, resolved from the dialed number by `/api/twilio/voice`
-  (`matchBusinessIdByNumber`). `TWILIO_BUSINESS_ID` is now only a single-tenant/dev fallback, so one
-  deployment can serve several pilot numbers.
+  (`resolveInboundRouting`). An **unmapped number fails closed** — a neutral "temporarily unavailable"
+  message + hangup, an operator alert (`unresolved_inbound_number`), no bridge connection, and no
+  saved call. It never falls back to the demo/default business. `TWILIO_BUSINESS_ID` is a
+  **local/dev/test pin only and is IGNORED in production** (`pinForEnv`) — production inbound routing
+  is always `To → businesses.twilio_number`. One deployment serves several pilot numbers.
 - **Disclosure:** every call opens with "automated front desk … may be processed and summarized"
   before connecting — keep this; it's the recording/processing disclosure baseline for BC.
