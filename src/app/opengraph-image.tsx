@@ -46,7 +46,7 @@ export default function OpengraphImage() {
           {SITE_TAGLINE}
         </div>
         <div style={{ fontSize: 26, color: '#f97316', marginTop: 18, fontWeight: 600 }}>
-          Never miss a customer call
+          Never miss a customer 
         </div>
       </div>
     ),
