@@ -19,4 +19,4 @@ export const OPERATOR_JURISDICTION = 'British Columbia, Canada';
 // Absolute origin for metadata (OG/sitemap). Set NEXT_PUBLIC_SITE_URL on Vercel.
 export const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
-export const LEGAL_LAST_UPDATED = 'June 10, 2026';
+export const LEGAL_LAST_UPDATED = 'July 14, 2026';

@@ -12,6 +12,7 @@
     "qa:agent-evals": "tsx scripts/qa-agent-evals.ts",
     "voice:samples": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/generate-voice-samples.ts",
     "pilot:map": "node --env-file-if-exists=.env.local --experimental-strip-types --no-warnings=ExperimentalWarning scripts/map-business-number.ts",
+    "pilot:approve": "node --env-file-if-exists=.env.local --experimental-strip-types --no-warnings=ExperimentalWarning scripts/approve-pilot.ts",
     "twilio:bridge": "node --env-file-if-exists=.env.local --experimental-strip-types --no-warnings=ExperimentalWarning server/twilio-bridge.ts"
   },
   "dependencies": {

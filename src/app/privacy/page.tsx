@@ -13,9 +13,9 @@ export const metadata: Metadata = {
   description: `How ${SITE_NAME} collects, uses, and protects business and caller information.`,
 };
 
-// DRAFT legal content — reviewed wording, not legal advice. Must be reviewed by a lawyer
-// (BC PIPA / PIPEDA) before serving paying customers. Operator identity and support email
-// are placeholders from src/lib/site.ts.
+// Legal content — expanded with a full sub-processor list, international-transfer disclosure, and the
+// in-app self-serve deletion path. Still NOT legal advice: have a lawyer review against BC PIPA /
+// PIPEDA before a broad public (self-serve) launch. Operator identity + support email: src/lib/site.ts.
 export default function PrivacyPage() {
   return (
     <LegalShell title="Privacy Policy" updated={LEGAL_LAST_UPDATED}>
@@ -54,14 +54,46 @@ export default function PrivacyPage() {
         </p>
       </LegalSection>
 
-      <LegalSection title="Service providers">
-        <p>We rely on a small number of processors to run the service:</p>
+      <LegalSection title="Sub-processors">
         <p>
-          <strong>Supabase</strong> hosts our database and authentication.{' '}
-          <strong>OpenAI</strong> provides the speech and language processing that powers live
-          calls, transcription, and call summaries. <strong>Vercel</strong> hosts the application.
-          These providers process data on our behalf and may do so on servers located outside
-          Canada (including the United States).
+          We rely on a small number of service providers (sub-processors) to run the service. Each
+          processes data only to provide its part of the service, under our instructions:
+        </p>
+        <ul className="list-disc pl-5 space-y-1">
+          <li>
+            <strong>OpenAI</strong> — real-time speech and language processing that runs live calls,
+            transcription, and call summaries.
+          </li>
+          <li>
+            <strong>Supabase</strong> — database and account authentication; your business profile,
+            call transcripts, summaries, and requests are stored here.
+          </li>
+          <li>
+            <strong>Twilio</strong> — telephony that connects inbound phone calls to the service, and
+            the optional SMS report alert.
+          </li>
+          <li>
+            <strong>Resend</strong> — delivery of your daily email report.
+          </li>
+          <li>
+            <strong>Vercel</strong> — hosting for the web application.
+          </li>
+          <li>
+            <strong>Railway</strong> — hosting for the real-time call bridge that carries call audio
+            between the phone network and OpenAI.
+          </li>
+        </ul>
+      </LegalSection>
+
+      <LegalSection title="Where your data is processed (international transfer)">
+        <p>
+          These sub-processors process and store data on servers located{' '}
+          <strong>outside Canada, including in the United States</strong>. Call transcripts and the
+          details a caller shares are personal information; by using {SITE_NAME} you consent to this
+          cross-border processing. Personal information handled outside Canada may be subject to the
+          laws of the country where it is processed, including lawful access requests by courts and
+          government authorities. We do not sell personal information and do not use it for
+          advertising.
         </p>
       </LegalSection>
 
@@ -77,10 +109,16 @@ export default function PrivacyPage() {
       <LegalSection title="Data retention and deletion">
         <p>
           Call transcripts, summaries, and requests are retained while the business account is
-          active so staff can review them. A business can request deletion of specific call records
-          or its entire account and data at any time by contacting{' '}
-          <a className="text-orange-600 hover:underline" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.
-          We aim to complete deletion requests within 30 days.
+          active so staff can review them.
+        </p>
+        <p>
+          A business owner can <strong>delete their entire account and all associated data at any
+          time</strong> from <strong>Settings &rarr; Delete account &amp; all data</strong> — this
+          permanently removes the business, its calls, transcripts, appointments, service requests,
+          knowledge base, and login. You can also request deletion of specific call records, or of
+          your whole account, by contacting{' '}
+          <a className="text-orange-600 hover:underline" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>;
+          we aim to complete emailed requests within 30 days.
         </p>
         <p>
           Callers who want their information removed can contact either the business they called or

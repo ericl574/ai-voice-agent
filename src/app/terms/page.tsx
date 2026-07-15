@@ -13,9 +13,8 @@ export const metadata: Metadata = {
   description: `The terms that govern use of ${SITE_NAME}.`,
 };
 
-// DRAFT legal content — reviewed wording, not legal advice. Must be reviewed by a lawyer
-// before serving paying customers. Operator identity and support email are placeholders
-// from src/lib/site.ts.
+// Legal content — not legal advice. Have a lawyer review before a broad public (self-serve) launch.
+// Operator identity + support email: src/lib/site.ts. Data handling: see /privacy.
 export default function TermsPage() {
   return (
     <LegalShell title="Terms of Service" updated={LEGAL_LAST_UPDATED}>
@@ -69,18 +68,24 @@ export default function TermsPage() {
 
       <LegalSection title="Call transcripts">
         <p>
-          Calls handled by the service are transcribed so your staff can review them. You are
-          responsible for ensuring your use of transcription is permitted for your business and
-          region. Our handling of this data is described in the{' '}
+          Calls handled by the service are transcribed and summarized so your staff can review them.
+          You are responsible for ensuring your use of call transcription is permitted for your
+          business and region, and for providing any caller notice or consent required in your
+          jurisdiction (see &ldquo;Your responsibilities&rdquo; above). Where your jurisdiction
+          requires it, {SITE_NAME} can provide a short disclosure at the start of calls. The
+          sub-processors we use and where data is processed are described in the{' '}
           <a className="text-orange-600 hover:underline" href="/privacy">Privacy Policy</a>.
         </p>
       </LegalSection>
 
-      <LegalSection title="Fees">
+      <LegalSection title="Activation, billing &amp; access">
         <p>
-          The service is currently offered as a pilot. If and when paid plans are introduced,
-          pricing will be communicated in advance and these terms will be updated. We will never
-          charge you without your explicit agreement to a paid plan.
+          {SITE_NAME} is currently activated and billed manually: we set up and approve each business
+          directly, and there is no self-serve checkout. Access to paid features — the phone answering
+          service and in-dashboard test calls — requires an active, approved subscription. If your
+          subscription is inactive, canceled, or unpaid, paid features (including answering forwarded
+          calls) may be suspended until it is reactivated. We will never charge you without your
+          explicit agreement to a plan, and any pricing is communicated in advance.
         </p>
       </LegalSection>
 
@@ -104,9 +109,10 @@ export default function TermsPage() {
 
       <LegalSection title="Termination">
         <p>
-          You can stop using the service and request deletion of your account and data at any time
-          by contacting{' '}
+          You can delete your account and all associated data at any time from{' '}
+          <strong>Settings &rarr; Delete account &amp; all data</strong>, or by contacting{' '}
           <a className="text-orange-600 hover:underline" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.
+          You can also stop using the service at any time.
         </p>
       </LegalSection>
 

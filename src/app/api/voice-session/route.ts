@@ -9,6 +9,7 @@ import { getDemoBusiness } from '@/lib/agents/demoBusinesses';
 import { getVertical } from '@/lib/agents/verticals/registry';
 import type { KnowledgeRow } from '@/lib/agents/core/types';
 import { rateLimit, clientKey } from '@/lib/rate-limit';
+import { readBusinessEntitlement } from '@/lib/billing/entitlement';
 
 const MODEL = 'gpt-realtime';
 
@@ -89,6 +90,16 @@ export async function POST(req: Request) {
     try {
       const business = await getActiveBusiness(supabase);
       if (business) {
+        // Paid-feature gate: no test calls until the business is operator-approved
+        // (billing_subscriptions.status ∈ active/trialing/pilot). Fail OPEN on a read error so a
+        // billing-table blip never blocks a legit signed-in user. The landing demo path is unaffected.
+        const ent = await readBusinessEntitlement(supabase, business.id);
+        if (!ent.entitled && !ent.readError) {
+          return NextResponse.json(
+            { error: 'Your account is pending activation. Contact us to start your pilot and unlock test calls.' },
+            { status: 402 },
+          );
+        }
         const { data: knowledgeRows } = await supabase
           .from('business_knowledge')
           .select('id, category, question, answer')

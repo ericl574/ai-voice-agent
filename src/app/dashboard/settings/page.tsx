@@ -726,6 +726,178 @@ export default function SettingsPage() {
           </button>
         )}
       </div>
+
+      {/* ── Danger zone — self-serve account + data deletion (real mode only) ── */}
+      {!isDemo && businessId && <DangerZone businessName={business.name} />}
+    </div>
+  );
+}
+
+function DangerZone({ businessName }: { businessName: string }) {
+  const [open, setOpen] = useState(false);
+  const [confirmName, setConfirmName] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState('');
+  const [showModal, setShowModal] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [partial, setPartial] = useState(false);
+
+  const expectedName = businessName?.trim() || 'DELETE';
+  const bothMatch = confirmName === expectedName && confirmDelete.toUpperCase() === 'DELETE';
+
+  async function handleDelete() {
+    if (busy) return; // prevent double submission
+    setError('');
+    setBusy(true);
+    try {
+      const res = await fetch('/api/account/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmName, confirmDelete }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        setError(data.error || 'Deletion failed. Please try again or contact support.');
+        setBusy(false);
+        setShowModal(false);
+        return;
+      }
+      // Server already signed out sole-membership users; clear any local session before leaving.
+      try {
+        await createClient().auth.signOut();
+      } catch {
+        /* already invalidated */
+      }
+      if (data.partial) {
+        // Data deleted but login cleanup failed — be honest, don't silently claim full success.
+        setPartial(true);
+        setShowModal(false);
+        setBusy(false);
+        return;
+      }
+      window.location.href = data.redirect === 'dashboard' ? '/dashboard' : '/';
+    } catch {
+      setError('Network error. Please try again.');
+      setBusy(false);
+    }
+  }
+
+  if (partial) {
+    return (
+      <div className="mt-10 pt-6 border-t fd-hairline">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 space-y-3">
+          <h3 className="text-sm font-semibold text-amber-800">Your data was deleted</h3>
+          <p className="text-xs text-amber-700 leading-relaxed">
+            All of your business data has been permanently removed. We hit a snag removing your login itself —
+            our team has been alerted and will finish clearing it. You can safely close this page.
+          </p>
+          <a href="/" className="inline-block bg-gray-800 hover:bg-gray-900 text-white text-sm font-semibold px-4 py-2 rounded-lg">
+            Return home
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-10 pt-6 border-t fd-hairline">
+      {!open ? (
+        <button type="button" onClick={() => setOpen(true)} className="text-xs text-gray-400 hover:text-red-600 transition-colors">
+          ▸ Delete account &amp; all data
+        </button>
+      ) : (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-5 space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold text-red-800">Delete account &amp; all data</h3>
+            <p className="text-xs text-red-700 mt-1 leading-relaxed">
+              This permanently deletes this business and <strong>everything</strong> in it — every saved call and
+              transcript, appointments, service requests, customers, your knowledge base, and (if this is your only
+              business) your login. It cannot be undone.
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-red-800 mb-1">
+              1. Type your business name <span className="font-mono font-semibold">{expectedName}</span>
+            </label>
+            <input
+              type="text"
+              value={confirmName}
+              onChange={(e) => setConfirmName(e.target.value)}
+              placeholder={expectedName}
+              className="w-full border border-red-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-400"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-red-800 mb-1">
+              2. Type <span className="font-mono font-semibold">DELETE</span> to confirm
+            </label>
+            <input
+              type="text"
+              value={confirmDelete}
+              onChange={(e) => setConfirmDelete(e.target.value)}
+              placeholder="DELETE"
+              className="w-full border border-red-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-red-400"
+            />
+          </div>
+          {error && <p className="text-xs text-red-700">{error}</p>}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              disabled={!bothMatch}
+              onClick={() => {
+                setError('');
+                setShowModal(true);
+              }}
+              className="bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+            >
+              Permanently delete
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setConfirmName('');
+                setConfirmDelete('');
+                setError('');
+              }}
+              className="text-sm text-gray-500 hover:text-gray-800 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 space-y-4">
+            <h3 className="text-base font-semibold text-gray-900">Are you absolutely sure?</h3>
+            <p className="text-sm text-gray-600 leading-relaxed">
+              This permanently deletes <strong>{expectedName}</strong> and all of its data. This action cannot be
+              undone.
+            </p>
+            {error && <p className="text-xs text-red-700">{error}</p>}
+            <div className="flex items-center justify-end gap-3 pt-1">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setShowModal(false)}
+                className="text-sm text-gray-500 hover:text-gray-800 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={handleDelete}
+                className="bg-red-600 hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-semibold px-4 py-2 rounded-lg"
+              >
+                {busy ? 'Deleting…' : 'Delete forever'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

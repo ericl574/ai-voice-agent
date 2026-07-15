@@ -70,11 +70,14 @@ Next: **Level 2.** Long-term: **Full Level.**
    tables + RLS + helper functions still aren't captured as a baseline migration — run `supabase db pull` when
    convenient so a fresh/branch environment is reproducible.
 
-3. **Billing is disconnected — there's no automated way to get paid.** [verified]
-   `stripe.ts` + `/api/billing/*` are wired, but nothing enforces subscription status anywhere, and both
-   pricing CTAs are "Start a pilot" → `/contact`, bypassing checkout (`pricing/page.tsx`). Product is
-   free-by-default. To publish: wire checkout into the funnel + gate on `billing_subscriptions.status`, or
-   deliberately stay concierge.
+3. ✅ **Paid features are now gated on an operator-approved subscription (concierge model).** [verified]
+   Access to paid features requires `billing_subscriptions.status ∈ active/trialing/pilot`
+   (`src/lib/billing/entitlement.ts`): the **phone answering path fails closed** for a non-entitled
+   business (`/api/twilio/voice`, fail-open only on a billing-read error) and **browser test calls 402**
+   (`/api/voice-session`). Eric approves + bills **by hand** — `npm run pilot:approve -- <business_id> [pilot|active|revoke]`
+   (or Supabase Studio). **No longer free-by-default.** **Deferred to Full Level (backlog):** self-serve
+   Stripe **checkout** in the funnel + automated subscription lifecycle — `pricing/page.tsx` CTAs still go
+   to `/contact` by design. ⚠️ Approve the pilot business **before deploying** the gate, or its calls fail closed.
 
 ### 🟠 Functional blockers — the core deliverable can silently fail
 
@@ -102,8 +105,9 @@ Next: **Level 2.** Long-term: **Full Level.**
    scans all businesses. [verified]
 10. **No end-to-end tests on the highest-risk code** — the 187 passing tests cover pure helpers only;
     `voice/page.tsx`, the bridge, save/extraction routes, and the digest cron have no integration coverage. [verified]
-11. **Legal skim of `/privacy` + `/terms`** — call transcripts are personal info (PIPEDA / BC PIPA) processed on
-    US servers; the pages exist but haven't had the legal review the deployment checklist flags. [EXTERNAL]
+11. **Legal `/privacy` + `/terms`** — now expanded with a full sub-processor list + international-transfer
+    disclosure + the in-app deletion path; call transcripts are personal info (PIPEDA / BC PIPA) processed on
+    US servers. Content is solid but **still needs a lawyer's review** before a broad public launch. [EXTERNAL — review]
 
 ---
 
@@ -121,10 +125,10 @@ Next: **Level 2.** Long-term: **Full Level.**
 
 ### P1 — for a self-serve public launch
 - [ ] (Future, post-pilot) **Five-minute activation flow** (`docs/activation-flow.md`) — website import → reviewable draft agent, operator-run number provisioning (purchase + webhook auto-config + auto-map, **gated on approval + billing**), guided forwarding UI, and an in-UI live acceptance-test detector. Replaces the concierge assign step; **not** a pilot requirement. Phase B is operator-driven; full customer self-serve is Phase C.
-- [ ] **Wire + enforce billing** (checkout in the funnel, gate features on `billing_subscriptions.status`) or a deliberate decision to stay concierge.
+- [x] **Enforce billing (concierge)** — paid features gated on operator-approved `billing_subscriptions.status`; approve via `npm run pilot:approve`. (Full-Level backlog: self-serve **checkout** + automated lifecycle.)
 - [ ] **Move rate-limiting to a shared store** (Upstash/Redis) — the in-memory limiter is per-instance.
-- [ ] **In-app data-deletion flow** (replaces the manual SOP in `docs/first-customer-onboarding.md`).
-- [ ] Legal skim of `/privacy` + `/terms`; mobile-device QA pass.
+- [x] **In-app data-deletion flow** — Settings → "Delete account & all data" (`/api/account/delete`): owner-gated + dual typed-confirmation (business name **and** `DELETE`) + rate-limited + POST-only. Deletion is **atomic** — a single Postgres transaction (`delete_business_data` RPC, migration `20260714000000`) that rolls back on any failure. **Multi-business-safe**: the auth user is removed only when it was the caller's last membership; otherwise the login + other businesses are preserved. Partial (auth-delete) failures are reported honestly + ops-alerted, never claimed as full success. Replaces the manual SOP. **Requires the migration to be applied on deploy.**
+- [~] **Legal** — `/privacy` expanded with a full sub-processor list (OpenAI/Supabase/Twilio/Resend/Vercel/Railway) + international-transfer disclosure; `/terms` ties to the automated call notice. **Still needs a lawyer review** (BC PIPA/PIPEDA) before a broad public launch. Mobile-device QA pass still open.
 - [ ] Wire the live conversational eval (`npm run qa:agent-evals`) into CI once a CI key exists.
 
 ### P2 — scale / polish

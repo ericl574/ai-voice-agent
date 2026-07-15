@@ -3,6 +3,7 @@ import { isValidTwilioSignature } from '@/lib/twilio/signature';
 import { SITE_URL } from '@/lib/site';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { resolveInboundRouting, pinForEnv, type InboundRouting } from '@/lib/twilio/numberRouting';
+import { readBusinessEntitlement } from '@/lib/billing/entitlement';
 import { notifyOps } from '@/lib/notify/ops';
 
 // Twilio inbound voice webhook. Point the Twilio phone number's "A call comes in" webhook at
@@ -138,6 +139,25 @@ export async function POST(req: NextRequest) {
   }
 
   const businessId = routing.businessId;
+
+  // Paid-feature gate: only answer for an operator-approved business (billing_subscriptions.status ∈
+  // active/trialing/pilot). Fail CLOSED on a confirmed non-entitled status; fail OPEN on a read error
+  // (don't drop a caller of an already-provisioned, likely-legit business over a transient blip).
+  const gateAdmin = createAdminClient();
+  if (gateAdmin) {
+    const ent = await readBusinessEntitlement(gateAdmin, businessId);
+    if (!ent.entitled && !ent.readError) {
+      console.warn(`[FD] twilio/voice: business ${businessId} not entitled (status=${ent.status ?? 'none'}) — failing closed`);
+      await notifyOps({
+        component: 'twilio/voice',
+        event: 'business_not_entitled',
+        error: `no active subscription`,
+        context: { businessId, to, status: ent.status ?? 'none' },
+      });
+      return twiml(`<Say>${xmlEscape(UNAVAILABLE_MESSAGE)}</Say><Hangup/>`);
+    }
+  }
+
   console.log(`[FD] twilio/voice inbound call ${params.CallSid ?? ''} from ${from} to ${to} → business ${businessId}`);
 
   // <Connect><Stream> = bidirectional media stream; custom parameters reach the bridge in the

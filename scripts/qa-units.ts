@@ -49,6 +49,8 @@ import {
 import { toE164 } from '../src/lib/notify/sms.ts';
 import { canonicalPhone, matchBusinessIdByNumber, resolveInboundRouting, pinForEnv } from '../src/lib/twilio/numberRouting.ts';
 import { buildPilotLead } from '../src/lib/leads/pilotLead.ts';
+import { BUSINESS_OWNED_TABLES, NON_BUSINESS_TABLES, isSoleMembership, postDeletionOutcome } from '../src/lib/account/deleteAccount.ts';
+import { hasActiveEntitlement, readBusinessEntitlement, ENTITLED_STATUSES, normalizeApprovalStatus } from '../src/lib/billing/entitlement.ts';
 import {
   buildOpsAlert,
   dueForAlert,
@@ -1564,6 +1566,130 @@ test('ops/calls route — secret-guarded, service-role, read-only, uses classify
 });
 
 // ── Results ──────────────────────────────────────────────────────────────────
+
+// ── Account deletion — ATOMIC (Postgres RPC) delete of one business + its data ───────────────────
+// The in-app "Delete account & all data" flow (POST /api/account/delete). Deletion runs in a single
+// Postgres transaction (public.delete_business_data) so a mid-delete failure rolls back everything.
+
+const DELETE_MIGRATION = 'supabase/migrations/20260714000000_delete_business_function.sql';
+
+test('deletion coverage — every business-owned table is deleted; profiles/pilot_requests are NOT', () => {
+  const sql = readFileSync(DELETE_MIGRATION, 'utf8');
+  for (const table of BUSINESS_OWNED_TABLES) {
+    assert(new RegExp(`delete from\\s+${table}\\b`, 'i').test(sql), `migration deletes ${table}`);
+  }
+  for (const table of NON_BUSINESS_TABLES) {
+    assert(!new RegExp(`delete from\\s+${table}\\b`, 'i').test(sql), `migration must NOT delete ${table} (user-scoped/global)`);
+  }
+  assert(/call_messages where call_id in \(select id from calls/i.test(sql), 'call_messages scoped via its calls');
+  const lastDelete = [...sql.matchAll(/delete from\s+(\w+)/gi)].map((m) => m[1]).pop();
+  eq(lastDelete, 'businesses', 'businesses (parent) deleted LAST');
+});
+
+test('deletion migration is atomic + service-role only', () => {
+  const sql = readFileSync(DELETE_MIGRATION, 'utf8').toLowerCase();
+  assert(sql.includes('language plpgsql'), 'plpgsql function → single transaction (atomic, rolls back on error)');
+  assert(sql.includes('security definer'), 'runs as definer to delete across RLS tables');
+  assert(sql.includes('revoke all on function') && sql.includes('from authenticated'), 'not callable by end users');
+  assert(sql.includes('grant execute on function') && sql.includes('to service_role'), 'only the service role may execute');
+});
+
+test('isSoleMembership — true only when the deleted business is the user’s only one', () => {
+  assert(isSoleMembership([{ business_id: 'b1' }], 'b1'), 'single membership → sole');
+  assert(isSoleMembership([], 'b1'), 'no memberships → sole (nothing else to keep)');
+  assert(isSoleMembership([{ business_id: 'b1' }, { business_id: 'b1' }], 'b1'), 'dup rows of same biz → sole');
+  assert(!isSoleMembership([{ business_id: 'b1' }, { business_id: 'b2' }], 'b1'), 'another business → NOT sole (keep login)');
+});
+
+test('postDeletionOutcome — sole removes auth (home); auth-fail is partial; multi-business keeps login', () => {
+  eq(JSON.stringify(postDeletionOutcome(true, true)), JSON.stringify({ authUserRemoved: true, redirect: 'home', partial: false }), 'sole + auth ok');
+  eq(JSON.stringify(postDeletionOutcome(true, false)), JSON.stringify({ authUserRemoved: false, redirect: 'home', partial: true }), 'sole + auth fail → partial');
+  eq(JSON.stringify(postDeletionOutcome(false, true)), JSON.stringify({ authUserRemoved: false, redirect: 'dashboard', partial: false }), 'multi-business keeps login');
+});
+
+test('account/delete route — auth, owner, dual-confirm, atomic RPC, multi-business, partial-safe', () => {
+  const route = readFileSync('src/app/api/account/delete/route.ts', 'utf8');
+  assert(route.includes('export async function POST'), 'POST only');
+  assert(route.includes('auth.getUser'), 'requires a signed-in user');
+  assert(route.includes('rateLimit'), 'rate-limited');
+  assert(route.includes("membership.role !== 'owner'"), 'owner-gated');
+  assert(route.includes('getActiveBusiness'), 'resolves the caller’s OWN business (never a client-supplied id)');
+  assert(route.includes('confirmName !== expectedName'), 'requires exact business-name confirmation');
+  assert(route.includes("confirmDelete.toUpperCase() !== 'DELETE'"), 'requires the literal DELETE confirmation');
+  assert(route.includes("rpc('delete_business_data'"), 'uses the atomic deletion RPC (not client-side sequential)');
+  assert(route.includes('isSoleMembership'), 'checks multi-business membership before removing the auth user');
+  assert(route.includes('rolled back'), 'reports rollback on RPC failure');
+  assert(route.includes('auth_user_delete_failed'), 'ops-alerts a partial (auth-delete) failure');
+});
+
+test('settings Danger Zone — real mode only, dual confirm, final modal, no partial success claim', () => {
+  const page = readFileSync('src/app/dashboard/settings/page.tsx', 'utf8');
+  assert(page.includes('!isDemo && businessId && <DangerZone'), 'hidden in demo mode');
+  assert(page.includes('confirmName') && page.includes('confirmDelete'), 'dual typed confirmation');
+  assert(page.includes('bothMatch') && page.includes('disabled={!bothMatch}'), 'final button disabled until both match');
+  assert(page.includes('showModal') && page.includes('Are you absolutely sure'), 'second final-confirmation modal');
+  assert(page.includes('if (busy) return'), 'prevents double submission');
+  assert(page.includes('if (data.partial)') && page.includes('Your data was deleted'), 'honest partial-failure state');
+});
+
+// ── Billing entitlement — paid features require an operator-approved subscription ────────────────
+// Concierge model: Eric approves (status active/trialing/pilot) + bills by hand; no self-serve checkout.
+
+test('hasActiveEntitlement — only active/trialing/pilot grant access', () => {
+  for (const s of ['active', 'trialing', 'pilot', 'Active', ' PILOT ']) {
+    assert(hasActiveEntitlement(s), `"${s}" should be entitled`);
+  }
+  for (const s of ['canceled', 'past_due', 'incomplete', 'unpaid', 'paused', 'unknown', '', null, undefined]) {
+    assert(!hasActiveEntitlement(s as string | null | undefined), `"${s}" should NOT be entitled`);
+  }
+  // The allow-list is exactly the three approved statuses.
+  eq([...ENTITLED_STATUSES].sort().join(','), 'active,pilot,trialing', 'entitled status allow-list');
+});
+
+test('readBusinessEntitlement — row status → entitlement; no row → not entitled; error → readError', async () => {
+  const fake = (resp: { data?: { status: string } | null; error?: { message: string } | null }) => ({
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: resp.data ?? null, error: resp.error ?? null }) }) }) }),
+  });
+  const active = await readBusinessEntitlement(fake({ data: { status: 'pilot' } }), 'b1');
+  assert(active.entitled && !active.readError, 'pilot row → entitled');
+  const canceled = await readBusinessEntitlement(fake({ data: { status: 'canceled' } }), 'b1');
+  assert(!canceled.entitled && !canceled.readError, 'canceled → not entitled, no read error');
+  const none = await readBusinessEntitlement(fake({ data: null }), 'b1');
+  assert(!none.entitled && !none.readError, 'no row → not entitled, no read error');
+  const err = await readBusinessEntitlement(fake({ error: { message: 'boom' } }), 'b1');
+  assert(!err.entitled && err.readError, 'DB error → readError=true (caller fails OPEN)');
+});
+
+test('twilio/voice gates answering on entitlement (fail closed on non-entitled, open on read error)', () => {
+  const route = readFileSync('src/app/api/twilio/voice/route.ts', 'utf8');
+  assert(route.includes('readBusinessEntitlement'), 'phone webhook reads entitlement');
+  assert(route.includes('!ent.entitled && !ent.readError'), 'fails closed only on a CONFIRMED non-entitled status');
+  assert(route.includes('business_not_entitled'), 'emits an ops alert when blocking');
+});
+
+test('voice-session gates authed test calls on entitlement (402 pending activation)', () => {
+  const route = readFileSync('src/app/api/voice-session/route.ts', 'utf8');
+  assert(route.includes('readBusinessEntitlement'), 'test-call minting reads entitlement');
+  assert(route.includes('402'), 'unapproved business → 402');
+  assert(route.includes('pending activation'), 'clear pending-activation message');
+});
+
+test('voice-session — public landing demo stays OPEN (gate is authed-only)', () => {
+  const route = readFileSync('src/app/api/voice-session/route.ts', 'utf8');
+  const demoIdx = route.indexOf('getDemoBusiness');
+  const gateIdx = route.indexOf('readBusinessEntitlement');
+  assert(demoIdx > -1 && gateIdx > -1 && demoIdx < gateIdx, 'demo path precedes (and never reaches) the entitlement gate');
+});
+
+test('normalizeApprovalStatus — default pilot, revoke→canceled, validates input', () => {
+  eq(JSON.stringify(normalizeApprovalStatus(undefined)), JSON.stringify({ ok: true, status: 'pilot', entitled: true }), 'no arg → pilot (default)');
+  eq(JSON.stringify(normalizeApprovalStatus('pilot')), JSON.stringify({ ok: true, status: 'pilot', entitled: true }), 'pilot');
+  eq(JSON.stringify(normalizeApprovalStatus('REVOKE')), JSON.stringify({ ok: true, status: 'canceled', entitled: false }), 'revoke → canceled (history preserved, not deleted)');
+  eq(JSON.stringify(normalizeApprovalStatus(' active ')), JSON.stringify({ ok: true, status: 'active', entitled: true }), 'active (trimmed/cased)');
+  eq(JSON.stringify(normalizeApprovalStatus('trialing')), JSON.stringify({ ok: true, status: 'trialing', entitled: true }), 'trialing');
+  assert(!normalizeApprovalStatus('deleted').ok, 'unknown/invalid status rejected');
+  assert(!normalizeApprovalStatus('past_due').ok, 'a non-approval status is not a valid approval arg');
+});
 
 await runTests();
 
