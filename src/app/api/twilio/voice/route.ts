@@ -39,8 +39,10 @@ function twiml(body: string): Response {
   });
 }
 
-const DISCLOSURE =
-  "Hi! You've reached the automated front desk. This call may be processed and summarized for the business. One moment while I connect you.";
+// Shortest necessary transcription notice, played by Twilio before the media stream connects. No
+// AI/service self-introduction and no filler — the merchant greeting is the first app-controlled
+// response (the bridge triggers it via response.create using buildSystemPrompt's GREETING).
+const DISCLOSURE = 'This call may be transcribed and summarized.';
 
 // Played when the dialed number resolves to no business (fail-closed). Neutral and non-revealing —
 // it must not expose that the number is unmapped or hint at internal routing.

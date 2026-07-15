@@ -1531,7 +1531,7 @@
       "category": "language_switching",
       "scenario": "After switching to Chinese, the caller throws in Korean and Japanese fragments in quick succession.",
       "customer_utterance": "한국어로 말합시다. わたしは日本人です。",
-      "expected_behavior": "AI does not chase each language change. It asks ONCE, in English, which language the caller prefers (English, Chinese, Korean, or Japanese), then stays in the chosen one. It never produces a reply that starts in one language and ends in another.",
+      "expected_behavior": "AI does not chase each language change. It stays in the language it is currently using (or English) and keeps helping — it never reads a language menu or asks the caller to choose a language. It never produces a reply that starts in one language and ends in another.",
       "must_include": [],
       "must_not_include": [],
       "expected_intent": "inquiry",

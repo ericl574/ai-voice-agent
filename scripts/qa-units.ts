@@ -446,6 +446,29 @@ test('GLOBAL_RULES — stays vertical-neutral (industry words live only in verti
   }
 });
 
+test('GLOBAL_RULES — no language MENU (never read a list of languages / ask the caller to choose)', () => {
+  const rules = GLOBAL_RULES.toLowerCase();
+  // The old "I can help in English, Chinese, Korean, or Japanese — which would you prefer?" menu is gone.
+  assert(!rules.includes('which would you prefer'), 'no "which would you prefer" language menu');
+  assert(!rules.includes('english, chinese, korean, or japanese'), 'no hard-coded language list to read aloud');
+  // The replacement directive is present: keep helping in the current language, offer no menu.
+  assert(rules.includes('do not offer a list of languages') || rules.includes('language menu'), 'no-menu directive present');
+  // Default-English + hysteresis (safety-critical) must still hold.
+  assert(rules.includes('stay in english'), 'default-English stability retained');
+});
+
+test('twilio/voice disclosure is the shortest transcription notice — no AI/service intro or filler', () => {
+  const route = readFileSync('src/app/api/twilio/voice/route.ts', 'utf8');
+  const m = route.match(/const DISCLOSURE = ['"]([^'"]+)['"]/);
+  assert(!!m, 'DISCLOSURE string is present');
+  const disclosure = (m ? m[1] : '').toLowerCase();
+  assert(!disclosure.includes('automated front desk'), 'no AI/service self-introduction');
+  assert(!disclosure.includes('one moment while'), 'no "one moment while I connect you" filler');
+  assert(disclosure.includes('transcribed') || disclosure.includes('recorded') || disclosure.includes('summarized'),
+    'still carries a transcription/summary notice');
+  assert((m ? m[1].length : 999) <= 80, 'disclosure stays short (shortest necessary notice)');
+});
+
 // ── nowInTimeZone — current business-local time for the prompt ─────────────────
 
 test('nowInTimeZone — America/Vancouver returns a readable stamp', () => {
