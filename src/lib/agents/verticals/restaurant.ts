@@ -14,7 +14,7 @@ export const restaurantProfile: VerticalProfile = {
     '"I want to eat", "dinner", "lunch", "a table", "book a table", "come in to eat" = a dining/table reservation',
     'A party size ("for four", "two people") = number of guests for the reservation',
   ],
-  collectionPriorities: 'For a reservation, collect: date, time, party size, name, and phone. Treat the reservation reason as dining unless the caller says otherwise.',
+  collectionPriorities: 'Collect only what fits the request. For a RESERVATION: date, time, party size, name, and phone. For a TAKEOUT order: the items and quantities, a pickup time, name, and phone — do NOT ask party size for takeout. For a menu/hours/general question: answer it; do not collect booking details unless the caller wants to book. Party size applies to a reservation only. Treat the reservation reason as dining unless the caller says otherwise.',
   requiredFields: ['name', 'date', 'time'],
   optionalFields: ['phone', 'service'],
   forbiddenAssumptions: [

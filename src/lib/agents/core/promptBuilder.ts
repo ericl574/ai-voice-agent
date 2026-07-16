@@ -70,12 +70,12 @@ function renderProfileConfigSection(
 Business type: ${profile.label}
 Request types this front desk should handle:
 ${requestTypes.map((r) => `- ${r}`).join('\n')}
-Details to collect when action is needed:
+Details this front desk may collect (a MENU of what it cares about — NOT a checklist to run on every call):
 ${detailFields.map((d) => `- ${d}`).join('\n')}
 Tone: ${toneLine}
 
-- Use the owner-selected request types and details above as the source of truth for what this front desk handles and asks for.
-- If the caller asks for something outside these request types and not covered by the knowledge base, do not invent it — offer to note it for the team, or ask one short clarifying question.`;
+- First identify the caller's request type (from the list above). Then collect ONLY the details that apply to THAT specific request — follow "When collecting details" in the vertical profile above, and skip anything the caller already gave. Which details matter depends on the request type: a detail needed for one kind of request is often irrelevant to another, so never ask for a detail that does not apply to what the caller actually asked for.
+- The request types and details above are the source of truth for what this front desk handles. If the caller asks for something outside them and not in the knowledge base, do not invent it — offer to note it for the team, or ask one short clarifying question.`;
 }
 
 // Builds the full system prompt for a live Realtime session:

@@ -1,0 +1,19 @@
+# Railway builds ONLY the standalone Twilio bridge (server/twilio-bridge.ts + its src/lib imports).
+# Nixpacks installs deps (npm ci) on the build server, so exclude deps, build artifacts, web-only
+# assets, and NEVER ship local secrets.
+node_modules
+.next
+.git
+.vercel
+public
+videos-original
+design-references
+.claude
+audio-source
+scratchpad
+docs
+tests
+.env
+.env.*
+*.log
+.DS_Store

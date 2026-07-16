@@ -46,6 +46,16 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# 4K hero masters kept locally for re-encoding — 200 MB, do NOT commit (the exact
+# blobs already exist in git history from their former public/videos/ location).
+/videos-original/
+
+# Hashed hero video is regenerated from src/assets/hero-video.mp4 on prebuild/predev
+# (8 MB binary — keep out of git; the committed src/assets copy is the source of truth).
+# The tiny generated manifest (src/generated/hero-asset.ts) IS committed so the import
+# in page.tsx resolves on a fresh clone before the first build runs.
+/public/media/
+
 # local scratch / session notes (not project files)
 .Rhistory
 catch_up.md

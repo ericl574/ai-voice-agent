@@ -405,7 +405,20 @@ function ProfileTab({
             <>
               <select
                 value={localType}
-                onChange={(e) => { setLocalType(e.target.value); setIsDirty(true); }}
+                onChange={(e) => {
+                  setLocalType(e.target.value);
+                  // Business type drives the vertical-specific suggestions. Clear the vertical-derived
+                  // chips so they RE-SEED from the NEW vertical instead of persisting the previous
+                  // industry's fields (the bug that left a restaurant showing auto-repair details like
+                  // "Vehicle make/model/year"). Only agent_config suggestion overrides are cleared here
+                  // — calls, appointments, customers, and knowledge base entries are untouched.
+                  patchConfig({
+                    main_request_types: undefined,
+                    details_to_collect: undefined,
+                    hidden_request_types: [],
+                    hidden_details_to_collect: [],
+                  });
+                }}
                 className={INPUT_CLASS}
               >
                 {BUSINESS_TYPE_OPTIONS.map((o) => (

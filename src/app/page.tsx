@@ -1,7 +1,7 @@
-import fs from 'fs';
-import path from 'path';
 import Link from 'next/link';
-import HeroVideoPlaylist from '@/components/HeroVideoPlaylist';
+import HeroVideo from '@/components/HeroVideo';
+import { HERO_VIDEO } from '@/generated/hero-asset';
+import heroPoster from '@/assets/hero-poster.jpg';
 import CallSimulatorDemo from '@/components/CallSimulatorDemo';
 import { createClient } from '@/lib/supabase/server';
 
@@ -203,18 +203,6 @@ const BENEFITS = [
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default async function LandingPage() {
-  let videoSrcs: string[] = [];
-  try {
-    const videosDir = path.join(process.cwd(), 'public', 'videos');
-    videoSrcs = fs
-      .readdirSync(videosDir)
-      .filter((f) => !f.startsWith('.') && f.toLowerCase().endsWith('.mp4'))
-      .sort()
-      .map((f) => `/videos/${f}`);
-  } catch {
-    // public/videos missing or unreadable — hero shows dark fallback
-  }
-
   // Sign in → go directly to dashboard if session is still valid, otherwise login page
   let signInHref = '/login';
   const isConfigured = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
@@ -232,9 +220,9 @@ export default async function LandingPage() {
       {/* ── Cinematic hero — full viewport, video background ───────────────── */}
       <section className="relative min-h-screen flex flex-col bg-gray-950">
 
-        {/* Video playlist — reads public/videos/*.mp4, sorted alphabetically */}
-        {/* Dark bg-gray-950 on the section is the fallback if no videos load */}
-        <HeroVideoPlaylist videos={videoSrcs} />
+        {/* Single content-hashed hero loop (native loop = downloaded once).       */}
+        {/* Dark bg-gray-950 on the section is the fallback if the video is skipped. */}
+        <HeroVideo src={HERO_VIDEO} poster={heroPoster.src} />
 
         {/* Dark gradient overlay — ensures text is readable over any video content */}
         <div

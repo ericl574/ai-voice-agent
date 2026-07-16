@@ -416,6 +416,38 @@ test('caution #1 — vertical-specific details remain in prompt guidance (not lo
   }
 });
 
+// ── Request-type-aware collection — fields depend on vertical + request type + already-collected ──
+// Fix: no single flat details list asked on every call; party size only for a reservation, etc.
+
+test('restaurant collection is request-type-aware — takeout covered; party size = reservation only', () => {
+  const cp = restaurantProfile.collectionPriorities.toLowerCase();
+  assert(cp.includes('reservation') && cp.includes('party size'), 'a reservation collects party size');
+  assert(cp.includes('takeout'), 'takeout is a covered request type');
+  assert(cp.includes('do not ask party size for takeout') || cp.includes('party size applies to a reservation only'),
+    'party size is scoped to reservations, not takeout');
+  assert(cp.includes('pickup time') || cp.includes('items'), 'takeout collects order items / pickup time');
+});
+
+test('prompt frames details as a request-scoped MENU, not a per-call checklist', () => {
+  const src = readFileSync('src/lib/agents/core/promptBuilder.ts', 'utf8');
+  assert(!src.includes('Details to collect when action is needed'), 'old flat-checklist framing removed');
+  assert(src.includes('a MENU of what it cares about') && src.includes('NOT a checklist'), 'details framed as a menu, not a checklist');
+  assert(src.includes('collect ONLY the details that apply to THAT specific request'), 'request-type-driven selection instruction present');
+  assert(src.includes('never ask for a detail that does not apply'), 'never ask irrelevant details');
+  // The vertical-neutral collection principle is reinforced in the shared global rules.
+  const rules = GLOBAL_RULES.toLowerCase();
+  assert(rules.includes("caller's request type") && rules.includes('does not apply to that request'), 'GLOBAL_RULES ties detail selection to request type');
+});
+
+test('business-type switch RESETS vertical chips (fixes restaurant-holds-auto-repair contamination)', () => {
+  const page = readFileSync('src/app/dashboard/knowledge/page.tsx', 'utf8');
+  assert(/setLocalType\(e\.target\.value\)/.test(page), 'type change updates localType');
+  assert(page.includes('main_request_types: undefined') && page.includes('details_to_collect: undefined'),
+    'clears request-type + detail overrides so they re-seed from the new vertical');
+  assert(page.includes('hidden_request_types: []') && page.includes('hidden_details_to_collect: []'),
+    'clears hidden overrides too (no stale industry chips)');
+});
+
 // ── GLOBAL_RULES — load-bearing safety lines (cheap guard) ────────────────────
 // Coarse substring checks only: the prompt wording may evolve freely, but these safety-critical
 // concepts must never silently disappear from the core rules.

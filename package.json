@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "prepare:hero": "node scripts/prepare-hero-video.mjs",
+    "predev": "node scripts/prepare-hero-video.mjs",
     "dev": "next dev",
+    "prebuild": "node scripts/prepare-hero-video.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

@@ -18,6 +18,18 @@ const nextConfig: NextConfig = {
         source: "/(.*)",
         headers: securityHeaders,
       },
+      {
+        // /public/media holds the CONTENT-HASHED hero video (built by
+        // scripts/prepare-hero-video.mjs — the hash is in the filename). Because
+        // the URL changes whenever the bytes change, it is safe to cache
+        // immutably: the browser downloads the clip once and reuses it across
+        // visits, and a new encode busts the cache automatically. We only apply
+        // `immutable` here (hashed names) — never to stable /public/videos/* names.
+        source: "/media/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+        ],
+      },
     ];
   },
 };
