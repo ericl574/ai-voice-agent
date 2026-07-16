@@ -40,6 +40,9 @@ export async function POST(req: NextRequest) {
   let body: {
     businessId?: string | null;
     fromNumber?: string | null;
+    // Twilio Call SID (optional — older bridges omit it). Logged for cross-system correlation
+    // (Twilio console ↔ Railway bridge ↔ this route ↔ saved call row). Not stored as a column.
+    callSid?: string | null;
     startedAt?: string;
     endedAt?: string;
     turns?: PhoneTurn[];
@@ -150,7 +153,10 @@ export async function POST(req: NextRequest) {
     durationSec: durationSeconds,
     extraction: process.env.OPENAI_API_KEY ? 'ran' : 'skipped',
   });
-  console.log(`[FD] twilio/post-call call-quality (${callId}):`, JSON.stringify(metric));
+  console.log(
+    `[FD] twilio/post-call saved call ${callId} (callSid: ${body.callSid || '(none)'}) call-quality:`,
+    JSON.stringify(metric),
+  );
   if (metric.shouldAlert) {
     await notifyOps({
       component: 'twilio/post-call',

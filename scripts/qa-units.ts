@@ -72,7 +72,12 @@ import {
   IDLE_TIMEOUT_MS,
   END_CUE_DRAIN_MS,
   OPENAI_RECONNECT_MAX_MS,
+  UNAVAILABLE_DRAIN_MS,
+  UNAVAILABLE_MAX_MS,
   decideOpenAIDropAction,
+  sessionConfigDisposition,
+  FALLBACK_INSTRUCTIONS,
+  UNAVAILABLE_INSTRUCTIONS,
 } from '../server/twilio-bridge.ts';
 
 // Vertical profiles imported DIRECTLY (each file's only import is `import type`, stripped at
@@ -1299,6 +1304,195 @@ test('bridge tags every call with a trace id and loudly warns when business iden
   assert(bridge.includes('traceId'), 'per-call trace id for correlatable logs');
   // A session-config failure drops business identity/KB (generic fallback prompt) — must be loud.
   assert(/FALLBACK INSTRUCTIONS/i.test(bridge), 'loud warning when the call falls back to generic instructions');
+});
+
+// ── Fallback prompt language safety (2026-07-16 Vietnamese-greeting regression) ────────────────
+// A TWILIO_BRIDGE_SECRET mismatch 401'd session-config, so the call ran on FALLBACK_INSTRUCTIONS.
+// The phone greeting is a bare response.create driven ENTIRELY by the session instructions, so a
+// fallback prompt with no language rule let the model open the call in a random language (Vietnamese
+// to a real caller). The fallback MUST pin English so a config failure degrades to a generic ENGLISH
+// front desk, never a random-language one.
+test('bridge FALLBACK_INSTRUCTIONS pin the language to English (no random-language greeting on config failure)', () => {
+  assert(/open and reply in english/i.test(FALLBACK_INSTRUCTIONS), 'fallback prompt opens/replies in English by default');
+  assert(/switch to another language/i.test(FALLBACK_INSTRUCTIONS), 'fallback prompt only switches on a clear caller request');
+  assert(/never claim to be human/i.test(FALLBACK_INSTRUCTIONS), 'fallback prompt keeps the never-human safety rule');
+});
+
+// ── CallSid-correlated logging (2026-07-16 incident forensics) ─────────────────────────────────
+// The bridge previously logged only a traceId + streamSid, so a CallSid from the Twilio console
+// could not be tied to the bridge's Railway logs. /api/twilio/voice now passes the CallSid as a
+// <Parameter>; the bridge reads it, puts it in its log prefix + start line, and forwards it to
+// post-call, which logs it next to the saved callId — one CallSid links all four systems.
+test('twilio/voice passes the CallSid into the media stream as a <Parameter>', () => {
+  const voice = readFileSync('src/app/api/twilio/voice/route.ts', 'utf8');
+  assert(/<Parameter name="callSid" value="\$\{xmlEscape\(params\.CallSid/.test(voice), 'voice route emits a callSid stream parameter');
+});
+test('bridge reads the CallSid from the stream start and threads it into logs + post-call', () => {
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  assert(/callSid = start\.customParameters\?\.callSid/.test(bridge), 'bridge reads callSid from the start customParameters');
+  assert(/callSid \? ' ' \+ callSid/.test(bridge), 'bridge includes the CallSid in its per-line log prefix');
+  assert(/callSid: callSid \|\| null/.test(bridge), 'bridge forwards the CallSid to the post-call save');
+});
+test('twilio/post-call accepts + logs the CallSid for cross-system correlation', () => {
+  const postCall = readFileSync('src/app/api/twilio/post-call/route.ts', 'utf8');
+  assert(/callSid\?: string \| null/.test(postCall), 'post-call body accepts an optional callSid');
+  assert(/callSid: \$\{body\.callSid/.test(postCall), 'post-call logs the CallSid alongside the saved callId');
+});
+
+// ── Session-config 401/403 FAILS CLOSED (does not run a normal front desk) ─────────────────────
+// A rejected TWILIO_BRIDGE_SECRET 401s session-config AND is guaranteed to 401 post-call too, so a
+// normal greeting/collection flow would gather caller details and imply follow-up that can never be
+// saved. On explicit auth rejection the bridge must instead play one short English unavailable line
+// and hang up — collecting nothing, promising nothing, saving nothing. Transient (5xx/network)
+// failures may still retain the safe English fallback.
+
+test('sessionConfigDisposition — 401/403 + 422 fail closed; 2xx ok; every other status is a transient fallback', () => {
+  eq(sessionConfigDisposition(200), 'ok', '200 → use the loaded config');
+  eq(sessionConfigDisposition(204), 'ok', '2xx → ok');
+  eq(sessionConfigDisposition(401), 'auth-rejected', '401 → FAIL CLOSED (auth)');
+  eq(sessionConfigDisposition(403), 'auth-rejected', '403 → FAIL CLOSED (auth)');
+  eq(sessionConfigDisposition(422), 'unresolved', '422 → FAIL CLOSED (real business could not be loaded)');
+  eq(sessionConfigDisposition(500), 'transient-fallback', '5xx → safe English fallback');
+  eq(sessionConfigDisposition(503), 'transient-fallback', '503 → safe English fallback');
+  eq(sessionConfigDisposition(404), 'transient-fallback', 'other non-auth/non-422 status → safe English fallback');
+});
+
+test('bridge routes BOTH fail-closed reasons (auth + unresolved) to the unavailable path before the normal flow', () => {
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  // fetchSessionConfig surfaces each fail-closed cause with its reason (not a fallback config).
+  assert(/kind: 'fail-closed', reason: 'auth-rejected'/.test(bridge), 'returns fail-closed with the auth-rejected reason');
+  assert(/kind: 'fail-closed', reason: 'unresolved'/.test(bridge), 'returns fail-closed with the unresolved reason');
+  assert(/sessionConfigDisposition\(res\.status\)/.test(bridge), 'uses the pure disposition to classify the status');
+  assert(/disposition === 'unresolved'/.test(bridge), 'handles the unresolved (422) disposition explicitly');
+  // The start handler must fail closed BEFORE it ever configures a normal OpenAI session.
+  const branch = bridge.indexOf("outcome.kind === 'fail-closed'");
+  const failClosedCall = bridge.indexOf('playUnavailableThenClose()', branch);
+  const connect = bridge.indexOf('connectOpenAI(cfg)', branch);
+  assert(branch > 0 && failClosedCall > branch, 'fail-closed branch calls playUnavailableThenClose');
+  assert(failClosedCall < connect, 'fail-closed path runs (and returns) before the normal connectOpenAI');
+  // Auth diagnostics stay loud AND stay scoped to auth (the unresolved path must NOT claim a mismatch).
+  assert(/TWILIO_BRIDGE_SECRET mismatch/i.test(bridge), 'bridge still names the secret mismatch loudly (auth path)');
+  const unresolvedLog = bridge.indexOf('session-config UNRESOLVED');
+  const nextMismatch = bridge.indexOf('TWILIO_BRIDGE_SECRET mismatch', unresolvedLog);
+  const unresolvedReturn = bridge.indexOf("reason: 'unresolved'", unresolvedLog);
+  assert(unresolvedLog > 0 && unresolvedReturn > unresolvedLog && (nextMismatch < 0 || nextMismatch > unresolvedReturn),
+    'the unresolved branch does NOT emit the secret-mismatch diagnostic');
+});
+
+test('UNAVAILABLE_INSTRUCTIONS: one English line, collect nothing, promise no follow-up, never human', () => {
+  assert(/temporarily unavailable/i.test(UNAVAILABLE_INSTRUCTIONS), 'says the front desk is temporarily unavailable');
+  assert(/call again shortly/i.test(UNAVAILABLE_INSTRUCTIONS), 'asks the caller to call back');
+  assert(/do not collect any information/i.test(UNAVAILABLE_INSTRUCTIONS), 'explicitly collects no caller information');
+  assert(/do not mention staff, messages, callbacks, or follow-up/i.test(UNAVAILABLE_INSTRUCTIONS), 'promises no staff follow-up');
+  assert(/never claim to be human/i.test(UNAVAILABLE_INSTRUCTIONS), 'keeps the never-human rule');
+  // Must NOT run the normal collection prompt: it never asks for name/appointment/preferred time.
+  assert(!/preferred time|book|appointment|your name/i.test(UNAVAILABLE_INSTRUCTIONS), 'no normal front-desk collection language');
+});
+
+test('playUnavailableThenClose is STRUCTURALLY fail-closed: no caller audio to OpenAI, no turns, no save', () => {
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  const fn = bridge.slice(bridge.indexOf('function playUnavailableThenClose'), bridge.indexOf('async function finish'));
+  assert(fn.length > 0, 'playUnavailableThenClose is defined before finish');
+  assert(fn.includes('UNAVAILABLE_INSTRUCTIONS'), 'the throwaway session runs the locked unavailable prompt');
+  assert(!fn.includes('input_audio_buffer.append'), 'never forwards caller audio to OpenAI (nothing is collected)');
+  assert(!fn.includes('turns.push'), 'never captures transcript turns (nothing is saved)');
+  assert(!fn.includes('connectOpenAI'), 'does not start the normal call flow');
+  assert(fn.includes("finish('service-unavailable')"), 'ends the call cleanly with the service-unavailable reason');
+});
+
+test('unavailable-path timers are bounded (message drains, then a hard cap ends the call)', () => {
+  assert(UNAVAILABLE_DRAIN_MS >= 2_000 && UNAVAILABLE_DRAIN_MS <= 8_000, `drain lets the line play out (2–8s), got ${UNAVAILABLE_DRAIN_MS}`);
+  assert(UNAVAILABLE_MAX_MS > UNAVAILABLE_DRAIN_MS, 'hard cap exceeds the drain');
+  assert(UNAVAILABLE_MAX_MS <= IDLE_TIMEOUT_MS, 'unavailable path resolves no later than the idle watchdog');
+});
+
+test('transient (non-auth) session-config failure still uses the safe English FALLBACK, not fail-closed', () => {
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  // The non-auth branch falls through to the loaded fallback outcome (usedFallback: true).
+  assert(/usedFallback: true/.test(bridge), 'transient failure returns a loaded fallback config');
+  assert(/using safe English fallback/i.test(bridge), 'transient failure logged as a safe fallback, not an auth failure');
+});
+
+// ── Scope B: a real businessId that can't be loaded FAILS CLOSED (never the demo restaurant) ─────
+// /api/twilio/session-config must never silently answer a real inbound call as the demo business. Any
+// failure to load a provided businessId returns 422 (which the bridge routes to the unavailable
+// message); the demo prompt is reachable ONLY when no businessId is supplied. Grepped because the
+// route imports the `@/` alias + Next server runtime and can't be loaded into this bare-node runner.
+
+test('session-config: the real-business branch NEVER reaches the demo prompt (fails closed instead)', () => {
+  const route = readFileSync('src/app/api/twilio/session-config/route.ts', 'utf8');
+  const bizStart = route.indexOf('if (body.businessId)');
+  const demoTail = route.indexOf('no businessId provided');
+  assert(bizStart > 0 && demoTail > bizStart, 'real-business branch precedes the no-businessId demo tail');
+  const bizBlock = route.slice(bizStart, demoTail);
+  assert(!bizBlock.includes('getDemoBusiness('), 'the demo business is never constructed inside the real-business branch');
+  assert(bizBlock.includes('return unresolvedResponse()'), 'the real-business branch fails closed on a load failure');
+});
+
+test('session-config: DB error, not-found, no-admin, malformed data, and unexpected error each fail closed', () => {
+  const route = readFileSync('src/app/api/twilio/session-config/route.ts', 'utf8');
+  const bizBlock = route.slice(route.indexOf('if (body.businessId)'), route.indexOf('no businessId provided'));
+  assert(/if \(!admin\)[\s\S]*?return unresolvedResponse\(\)/.test(bizBlock), 'admin/server config unavailable → unresolvedResponse');
+  assert(/if \(bizErr\)[\s\S]*?return unresolvedResponse\(\)/.test(bizBlock), 'Supabase query error → unresolvedResponse');
+  assert(/if \(!business\)[\s\S]*?return unresolvedResponse\(\)/.test(bizBlock), 'business not found → unresolvedResponse');
+  assert(/instructions\.trim\(\)\.length === 0[\s\S]*?return unresolvedResponse\(\)/.test(bizBlock), 'malformed/empty prompt → unresolvedResponse');
+  assert(/catch \(err\)[\s\S]*?return unresolvedResponse\(\)/.test(bizBlock), 'any unexpected exception → unresolvedResponse');
+});
+
+test('session-config: unresolvedResponse is a 422 with a generic body (no secrets / no internal detail / no PII)', () => {
+  const route = readFileSync('src/app/api/twilio/session-config/route.ts', 'utf8');
+  assert(/function unresolvedResponse\(\): NextResponse \{[\s\S]*?status: 422/.test(route), 'unresolvedResponse returns HTTP 422');
+  assert(/error: 'business_unavailable'/.test(route), 'generic marker body, not an internal error message');
+  const fn = route.slice(route.indexOf('function unresolvedResponse'), route.indexOf('function withPhoneNote'));
+  assert(!/bizErr|\.message|body\.from/.test(fn), 'the caller-facing body carries no internal error detail or caller PII');
+});
+
+test('session-config: no businessId still serves the intended DEMO path, explicitly logged as demo', () => {
+  const route = readFileSync('src/app/api/twilio/session-config/route.ts', 'utf8');
+  assert(/no businessId provided — serving DEMO/i.test(route), 'demo path is explicit + logged as demo mode');
+  const demoStart = route.indexOf('no businessId provided');
+  assert(route.indexOf('getDemoBusiness(', demoStart) > demoStart, 'demo path constructs the demo business');
+  assert(/businessId: null/.test(route.slice(demoStart)), 'demo response carries businessId: null');
+});
+
+test('session-config: a successful real-business load returns the real config (unchanged shape)', () => {
+  const route = readFileSync('src/app/api/twilio/session-config/route.ts', 'utf8');
+  const bizBlock = route.slice(route.indexOf('if (body.businessId)'), route.indexOf('no businessId provided'));
+  assert(/buildSystemPrompt\(business, agentConfig/.test(bizBlock), 'builds the prompt from the real business + KB');
+  assert(/businessId: business\.id as string/.test(bizBlock), 'returns the real businessId');
+  assert(/businessName: \(business\.name as string\)/.test(bizBlock), 'returns the real business name');
+  assert(/withPhoneNote\(instructions, body\.from\)/.test(bizBlock), 'keeps the phone-note addendum on the real prompt');
+});
+
+test('session-config: accepts + logs the CallSid for correlation; the bridge forwards it', () => {
+  const route = readFileSync('src/app/api/twilio/session-config/route.ts', 'utf8');
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  assert(/body\.callSid/.test(route), 'route reads callSid from the request body');
+  assert(/callSid=\$\{callSid/.test(route), 'route includes callSid in its failure logs');
+  assert(/fetchSessionConfig\(businessId, fromNumber, callSid\)/.test(bridge), 'bridge passes callSid to session-config');
+  assert(/callSid: callSid \|\| undefined/.test(bridge), 'bridge sends callSid in the session-config request body');
+});
+
+test('session-config: a malformed/unparseable request body fails closed (422), never Demo', () => {
+  const route = readFileSync('src/app/api/twilio/session-config/route.ts', 'utf8');
+  const parseAt = route.indexOf('body = await req.json()');
+  const bizAt = route.indexOf('if (body.businessId)');
+  assert(parseAt > 0 && bizAt > parseAt, 'JSON parse precedes the real-business branch');
+  const parseRegion = route.slice(parseAt, bizAt);
+  assert(/catch\s*\{[\s\S]*?return unresolvedResponse\(\)/.test(parseRegion), 'malformed body → unresolvedResponse() (422), not Demo');
+  assert(!parseRegion.includes('getDemoBusiness('), 'malformed body never reaches the demo path');
+});
+
+test('session-config: a knowledge-base read failure keeps the REAL business path (warn + continue, no Demo, no fail-closed)', () => {
+  const route = readFileSync('src/app/api/twilio/session-config/route.ts', 'utf8');
+  const kbErrAt = route.indexOf('if (kbErr)');
+  const afterKb = route.indexOf('const agentConfig', kbErrAt);
+  assert(kbErrAt > 0 && afterKb > kbErrAt, 'KB-error handling precedes real-business prompt assembly');
+  const kbErrBlock = route.slice(kbErrAt, afterKb);
+  assert(/console\.warn/.test(kbErrBlock), 'KB read failure is logged (warn), not silently swallowed');
+  assert(!kbErrBlock.includes('return unresolvedResponse()'), 'KB read failure does NOT fail the call closed');
+  assert(!kbErrBlock.includes('getDemoBusiness('), 'KB read failure does NOT fall back to Demo');
+  assert(/buildSystemPrompt\(business, agentConfig/.test(route), 'still builds the REAL business prompt after a KB miss');
 });
 
 test('bridge safety caps are sane and correctly ordered (max > idle > end-cue drain)', () => {

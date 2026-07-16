@@ -168,6 +168,9 @@ export async function POST(req: NextRequest) {
       `<Parameter name="businessId" value="${xmlEscape(businessId)}"/>` +
       `<Parameter name="from" value="${xmlEscape(from)}"/>` +
       `<Parameter name="to" value="${xmlEscape(to)}"/>` +
+      // Carry the Twilio Call SID into the bridge so Railway logs are CallSid-correlated with the
+      // Twilio console (and with this route's own inbound log line above).
+      `<Parameter name="callSid" value="${xmlEscape(params.CallSid ?? '')}"/>` +
       `</Stream></Connect>`,
   );
 }

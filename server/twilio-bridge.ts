@@ -60,6 +60,12 @@ export const IDLE_TIMEOUT_MS = 30_000;
 // non-cue caller turn cancels it (the caller kept talking), so it never ends a live conversation.
 export const END_CUE_DRAIN_MS = 4_000;
 
+// Fail-closed unavailable path (session-config returned 401/403). Once the one-line unavailable
+// message finishes generating, let its audio flush to the caller for this long, then hang up. The
+// hard cap bounds the whole path so a session that never signals 'done' can't hold the caller.
+export const UNAVAILABLE_DRAIN_MS = 4_000;
+export const UNAVAILABLE_MAX_MS = 12_000;
+
 // Bounded single reconnect: if the OpenAI socket drops mid-call, try ONE re-open within this window;
 // if it isn't ready again by then, end the call rather than leave the caller in dead air. Well under
 // IDLE_TIMEOUT_MS so it resolves long before the idle watchdog would otherwise fire.
@@ -128,29 +134,117 @@ interface SessionConfig {
   businessName: string;
 }
 
-const FALLBACK_INSTRUCTIONS =
-  'You are FrontDesk, the automated phone front desk for a local service business. Greet the caller, ' +
-  'answer briefly and warmly, capture what they need (name, request, preferred time), and make clear ' +
-  'staff will confirm any appointment. Never claim to be human.';
+// Generic prompt used ONLY when the app's /api/twilio/session-config fails for a TRANSIENT reason (a
+// network blip or a 5xx) — NOT for an auth rejection (see fetchSessionConfig: 401/403 fails closed).
+// The business identity/KB are absent, but the caller still gets a coherent, HONEST front desk that
+// MUST pin the language to English: the phone greeting is a bare response.create driven entirely by
+// the session instructions (see the greeting comment below), so a fallback prompt with no language
+// rule let the model freelance the first turn in a random language (it greeted a caller in
+// Vietnamese). Mirror globalRules.ts's LANGUAGE rule here so a transient failure degrades to a
+// generic ENGLISH front desk, never a random-language one. It never invents business specifics, and
+// "staff will confirm any appointment" frames every appointment as NOT-yet-confirmed (never claims a
+// confirmed booking) — the honesty framing used product-wide.
+export const FALLBACK_INSTRUCTIONS =
+  'You are FrontDesk, the automated phone front desk for a local service business. ' +
+  'Always open and reply in English. Only switch to another language if the caller clearly asks for ' +
+  'it or speaks several full sentences in that language; a single foreign word or greeting is never ' +
+  'enough to switch. ' +
+  'Greet the caller, answer briefly and warmly, capture what they need (name, request, preferred ' +
+  'time), and make clear staff will confirm any appointment. Never claim to be human.';
 
-async function fetchSessionConfig(businessId: string, from: string): Promise<SessionConfig> {
+// Locked prompt for the FAIL-CLOSED path (session-config returned 401/403 → the bridge secret is
+// rejected → post-call persistence is GUARANTEED to fail). We must NOT run a normal front desk:
+// anything the caller says would be lost. The model only speaks this one English line; caller audio
+// is never forwarded to it and the call ends right after (see playUnavailableThenClose), so the
+// "collect nothing / promise nothing / save nothing" guarantee is STRUCTURAL, not prompt-dependent.
+export const UNAVAILABLE_INSTRUCTIONS =
+  'You are an automated phone line that is temporarily unavailable. Say EXACTLY this one sentence, ' +
+  'in English, and nothing else: "I\'m sorry, our front desk is temporarily unavailable. Please ' +
+  'call again shortly." Do not greet, do not ask anything, do not collect any information, do not ' +
+  'offer to help, and do not mention staff, messages, callbacks, or follow-up. After that one ' +
+  'sentence, stop talking. Never claim to be human.';
+
+export type SessionConfigDisposition = 'ok' | 'auth-rejected' | 'unresolved' | 'transient-fallback';
+
+// Pure: map a session-config HTTP status to what the bridge does with it.
+//   2xx     → use the returned config.
+//   401/403 → FAIL CLOSED as an auth rejection (the shared secret is rejected, so post-call
+//             persistence is guaranteed to fail too — never run a front desk it can't save).
+//   422     → FAIL CLOSED as an unresolved business (the app has a REAL businessId but could not load
+//             its config; it must never answer as the demo business for a real call — Scope B).
+//   other   → safe English fallback (a transient server error may recover).
+// Kept pure so the fail-closed decisions are unit-tested without a socket/HTTP harness.
+export function sessionConfigDisposition(status: number): SessionConfigDisposition {
+  if (status >= 200 && status < 300) return 'ok';
+  if (status === 401 || status === 403) return 'auth-rejected';
+  if (status === 422) return 'unresolved';
+  return 'transient-fallback';
+}
+
+// Outcome of loading the phone session config. A 'fail-closed' outcome (an auth rejection OR an
+// unresolved real business) routes to the unavailable message; every other case (real business OR a
+// transient-failure fallback) is 'loaded'.
+type SessionConfigOutcome =
+  | { kind: 'loaded'; config: SessionConfig; usedFallback: boolean }
+  | { kind: 'fail-closed'; reason: 'auth-rejected' | 'unresolved' };
+
+async function fetchSessionConfig(businessId: string, from: string, callSid: string): Promise<SessionConfigOutcome> {
   try {
     const res = await fetch(`${APP_URL}/api/twilio/session-config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-bridge-secret': BRIDGE_SECRET },
-      body: JSON.stringify({ businessId: businessId || undefined, from: from || undefined }),
+      body: JSON.stringify({
+        businessId: businessId || undefined,
+        from: from || undefined,
+        callSid: callSid || undefined,
+      }),
     });
-    if (res.ok) return (await res.json()) as SessionConfig;
-    console.warn(`[bridge] session-config failed (${res.status}) — using fallback instructions`);
+    if (res.ok) {
+      return { kind: 'loaded', config: (await res.json()) as SessionConfig, usedFallback: false };
+    }
+    const disposition = sessionConfigDisposition(res.status);
+    if (disposition === 'auth-rejected') {
+      // Auth rejected → the bridge's x-bridge-secret does not match the app's TWILIO_BRIDGE_SECRET.
+      // This exact mismatch caused the 2026-07-16 incident. Because the SAME secret guards post-call,
+      // persistence is guaranteed to fail too — so we FAIL CLOSED (unavailable message, no normal
+      // front desk) rather than collect caller details that can never be saved. Keep this loud, named
+      // log so the next occurrence is diagnosable at a glance instead of by log forensics.
+      console.error(
+        `[bridge] session-config AUTH REJECTED (${res.status}) — TWILIO_BRIDGE_SECRET mismatch ` +
+          `between the bridge and the app (${APP_URL}). Reconcile the secret on BOTH deployments. ` +
+          `Failing this call CLOSED (unavailable message, nothing collected or saved).`,
+      );
+      return { kind: 'fail-closed', reason: 'auth-rejected' };
+    }
+    if (disposition === 'unresolved') {
+      // The app has a REAL businessId but could not load its config (business not found, DB error,
+      // server misconfig, or malformed data). Answering as the demo business would give a real caller
+      // the wrong business, so FAIL CLOSED with the unavailable message instead (Scope B). No secret
+      // mismatch here — do NOT emit the auth diagnostic.
+      console.error(
+        `[bridge] session-config UNRESOLVED (${res.status}) — the app could not load config for ` +
+          `businessId=${businessId || '(none)'} callSid=${callSid || '(none)'}. Failing this call ` +
+          `CLOSED (unavailable message, nothing collected or saved).`,
+      );
+      return { kind: 'fail-closed', reason: 'unresolved' };
+    }
+    // Transient server error (5xx or other non-auth status) — safe to run the generic English fallback.
+    console.warn(`[bridge] session-config failed (${res.status}) — using safe English fallback (transient)`);
   } catch (err) {
-    console.warn('[bridge] session-config unreachable — using fallback instructions:', (err as Error).message);
+    // Network/unreachable — also transient; the safe English fallback keeps the line answering.
+    console.warn('[bridge] session-config unreachable — using safe English fallback:', (err as Error).message);
   }
-  return { instructions: FALLBACK_INSTRUCTIONS, voice: null, speed: 1.0, businessId: null, businessName: 'the business' };
+  return {
+    kind: 'loaded',
+    config: { instructions: FALLBACK_INSTRUCTIONS, voice: null, speed: 1.0, businessId: null, businessName: 'the business' },
+    usedFallback: true,
+  };
 }
 
 async function postCall(payload: {
   businessId: string | null;
   fromNumber: string | null;
+  callSid: string | null;
   startedAt: string;
   endedAt: string;
   turns: Turn[];
@@ -178,6 +272,10 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
   let streamSid = '';
   let businessId = '';
   let fromNumber = '';
+  // Twilio Call SID (from the <Parameter> our /api/twilio/voice emits). Lets an operator holding a
+  // CallSid from the Twilio console jump straight to this call's bridge logs, and vice-versa. Not
+  // caller PII — it is Twilio's opaque call identifier.
+  let callSid = '';
   let started = new Date();
   let openaiWs: WebSocket | null = null;
   let openaiReady = false;
@@ -206,7 +304,9 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
   let endCueTimer: ReturnType<typeof setTimeout> | null = null;
 
   const log = (msg: string) =>
-    console.log(`[bridge ${traceId}${streamSid ? '/' + streamSid.slice(-6) : ''}] ${msg}`);
+    console.log(
+      `[bridge ${traceId}${streamSid ? '/' + streamSid.slice(-6) : ''}${callSid ? ' ' + callSid : ''}] ${msg}`,
+    );
 
   function clearAllTimers(): void {
     if (maxDurationTimer) { clearTimeout(maxDurationTimer); maxDurationTimer = null; }
@@ -487,6 +587,84 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
     void finish('openai-closed');
   }
 
+  // FAIL-CLOSED unavailable path (session-config returned 401/403). Speak ONE short English line and
+  // hang up — never a normal front desk. Safety is STRUCTURAL: this uses a throwaway OpenAI session
+  // whose only job is to read UNAVAILABLE_INSTRUCTIONS; caller audio is NEVER forwarded to it
+  // (openaiReady stays false, so the Twilio 'media' handler only buffers), NO transcript turns are
+  // captured, and finish() runs with turns=[] so post-call is skipped (nothing collected, nothing
+  // saved, no follow-up implied) — regardless of what the model actually says.
+  function playUnavailableThenClose(): void {
+    let drainArmed = false;
+    const ws = new WebSocket(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(MODEL)}`, {
+      headers: { Authorization: `Bearer ${OPENAI_KEY}` },
+    });
+    openaiWs = ws;
+
+    // Hard cap: end the call even if the session never opens or never signals 'done'.
+    const capTimer = setTimeout(() => {
+      if (!closed) { log('unavailable message cap reached — closing'); void finish('service-unavailable'); }
+    }, UNAVAILABLE_MAX_MS);
+
+    // Let the closing audio flush to the caller, then hang up. finish() clears every call timer; this
+    // local drain/cap pair is cleared here so a late socket event can't re-close a finished call.
+    const endAfterDrain = () => {
+      if (drainArmed || closed) return;
+      drainArmed = true;
+      setTimeout(() => { clearTimeout(capTimer); void finish('service-unavailable'); }, UNAVAILABLE_DRAIN_MS);
+    };
+
+    ws.on('open', () => {
+      if (ws !== openaiWs) return;
+      log('unavailable session — configuring locked one-line prompt');
+      // Reuse the SAME μ-law session shape as a normal call, but with the locked unavailable prompt.
+      sessionUpdate(
+        { instructions: UNAVAILABLE_INSTRUCTIONS, voice: null, speed: 1.0, businessId: null, businessName: 'the business' },
+        false,
+      );
+    });
+
+    ws.on('message', (raw: RawData) => {
+      if (ws !== openaiWs) return;
+      let event: Record<string, unknown>;
+      try { event = JSON.parse(raw.toString()); } catch { return; }
+      switch (event.type as string) {
+        case 'session.updated':
+          // Bare response.create → the single line is driven entirely by UNAVAILABLE_INSTRUCTIONS.
+          sendToOpenAI({ type: 'response.create' });
+          break;
+        case 'response.output_audio.delta':
+        case 'response.audio.delta': {
+          const payload = (event.delta as string) ?? '';
+          if (payload && streamSid) sendToTwilio({ event: 'media', streamSid, media: { payload } });
+          break;
+        }
+        // The one response finished generating — drain its audio, then close.
+        case 'response.output_audio.done':
+        case 'response.audio.done':
+        case 'response.done':
+          endAfterDrain();
+          break;
+        case 'error':
+          log(`unavailable session openai error: ${(event.error as { message?: string })?.message ?? 'unknown'} — closing`);
+          clearTimeout(capTimer);
+          void finish('service-unavailable');
+          break;
+        default:
+          break;
+      }
+    });
+
+    ws.on('close', () => {
+      if (ws !== openaiWs) return;
+      clearTimeout(capTimer);
+      if (!closed) { log('unavailable session closed — ending call'); void finish('service-unavailable'); }
+    });
+    ws.on('error', (err: Error) => {
+      if (ws !== openaiWs) return;
+      log(`unavailable session ws error: ${err.message}`);
+    });
+  }
+
   async function finish(reason: string): Promise<void> {
     // Idempotent: a call can end from Twilio stop, OpenAI close, max-duration, idle-timeout,
     // end-cue, or a socket error — but only the FIRST caller gets past here, so exactly one
@@ -517,6 +695,7 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
       await postCall({
         businessId: businessId || null,
         fromNumber: fromNumber || null,
+        callSid: callSid || null,
         startedAt: started.toISOString(),
         endedAt: new Date().toISOString(),
         turns,
@@ -550,23 +729,35 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
         streamSid = start.streamSid ?? (msg.streamSid as string) ?? '';
         businessId = start.customParameters?.businessId ?? '';
         fromNumber = start.customParameters?.from ?? '';
+        callSid = start.customParameters?.callSid ?? '';
         started = new Date();
         if (!countedCall) {
           countedCall = true;
           bridgeMetrics.callsHandled += 1;
         }
-        log(`stream started (business: ${businessId || 'demo fallback'})`);
+        log(`stream started (business: ${businessId || 'demo fallback'}, callSid: ${callSid || '(none)'})`);
         armMaxDuration(); // cost backstop from the moment the call is live
-        void fetchSessionConfig(businessId, fromNumber).then((cfg) => {
+        void fetchSessionConfig(businessId, fromNumber, callSid).then((outcome) => {
           if (closed) return;
-          // A session-config failure means the call runs on generic FALLBACK_INSTRUCTIONS — the
-          // business identity / knowledge base did NOT load. That is a silent quality failure, so
-          // make it LOUD here (fetchSessionConfig also warns on the underlying fetch error).
-          if (cfg.instructions === FALLBACK_INSTRUCTIONS) {
+          // FAIL CLOSED without starting the normal greeting/collection flow when either: the bridge
+          // secret is rejected (auth-rejected → post-call also 401s, nothing could be saved), OR the
+          // app has a real businessId it could not load (unresolved → must never answer as the demo
+          // business for a real call). Speak one short English unavailable line and end cleanly;
+          // nothing is collected or saved.
+          if (outcome.kind === 'fail-closed') {
+            log(`failing closed (${outcome.reason}) — unavailable message only, no greeting/collection/save`);
+            playUnavailableThenClose();
+            return;
+          }
+          const cfg = outcome.config;
+          // A transient session-config failure runs on generic FALLBACK_INSTRUCTIONS — the business
+          // identity / knowledge base did NOT load. That is a silent quality failure, so make it LOUD
+          // (fetchSessionConfig also warns on the underlying fetch error).
+          if (outcome.usedFallback) {
             usedFallback = true;
             log(
               `⚠️  USING FALLBACK INSTRUCTIONS — business identity/KB NOT loaded (session-config ` +
-                `fetch failed). Caller hears a GENERIC front desk. businessId=${businessId || '(none)'}`,
+                `fetch failed, transient). Caller hears a GENERIC English front desk. businessId=${businessId || '(none)'}`,
             );
           } else {
             log(`session-config loaded (business: ${cfg.businessName})`);
