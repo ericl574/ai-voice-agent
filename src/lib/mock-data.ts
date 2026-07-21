@@ -15,8 +15,10 @@ export type RequestStatus =
   | 'pending'
   | 'confirmed'
   | 'declined'
-  | 'awaiting_customer' // auto mode: caller must confirm via SMS card link
-  | 'expired';          // auto mode: caller never completed the card step in time
+  | 'awaiting_customer'          // auto mode: caller must verify via SMS card link
+  | 'awaiting_staff_confirmation' // customer verified via card link; staff must still confirm (no availability source proves the slot)
+  | 'incomplete'                  // post-call recovery: caller hung up before submitting; needs staff follow-up, NOT a customer submission
+  | 'expired';                    // auto mode: caller never completed the card step in time
 
 export interface Call {
   id: string;

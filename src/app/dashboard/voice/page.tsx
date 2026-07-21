@@ -11,6 +11,17 @@ import { classifyCallerIntent } from '@/lib/call-pipeline/intent';
 import { looksLikeEndCall } from '@/lib/call-pipeline/endCall';
 import { buildTranscript, countCallerTurns, FRONT_DESK_LABEL } from '@/lib/call-pipeline/transcript';
 import { classifyConnectionState } from '@/lib/realtime/connectionState';
+import {
+  emptyDraft,
+  applyDraftUpdate,
+  setCallerConfirmed,
+  canSubmit,
+  stillNeeded,
+  needsClarification,
+  type ReservationDraft,
+  type ReservationField,
+} from '@/lib/call-pipeline/reservationDraft';
+import { UPDATE_DRAFT_TOOL, SUBMIT_REQUEST_TOOL } from '@/lib/realtime/reservationTools';
 
 type CallStatus =
   | 'idle'
@@ -320,6 +331,21 @@ export default function VoicePage() {
   const itemBusyAtSpeechRef = useRef<Map<string, boolean>>(new Map());
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const postCallGenRef = useRef(0);
+
+  // ── Reservation tool flow (browser CP3) ──────────────────────────────────
+  // The stateful draft the model builds via update_reservation_draft; validated + gated by
+  // reservationDraft.ts (the model interprets the audio, the app validates the values). requestRef is
+  // this call's idempotency key — also threaded to /api/post-call so the row submitted DURING the call
+  // is enriched, not duplicated. requiredFields is the canonical per-business set the server computed
+  // (party_size for restaurants only) — the SAME set the submit route re-checks server-side.
+  const reservationDraftRef = useRef<ReservationDraft>(emptyDraft());
+  const requiredFieldsRef = useRef<ReservationField[]>([]);
+  const requestRefRef = useRef<string | null>(null);
+  // A tool result was returned; the model's NEXT turn (to speak the outcome) must be created through
+  // the Layer 2 gate once the in-flight tool-call response finishes — see sendToolContinuation.
+  const pendingToolContinuationRef = useRef(false);
+  // call_ids already dispatched, so a repeated output_item.done can never double-apply/double-submit.
+  const handledToolCallsRef = useRef<Set<string>>(new Set());
   // Caller mic recording — MediaRecorder is the source of truth for post-call transcription.
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -382,6 +408,13 @@ export default function VoicePage() {
     endAfterReplyRef.current = false;
     substantiveCallerTurnSeenRef.current = false;
     pendingCallerTranscriptRef.current.clear();
+    // Reservation tool flow — fresh draft each call. requestRef + requiredFields are (re)established
+    // at call start (startCall / token fetch), so clear them here for a clean slate.
+    reservationDraftRef.current = emptyDraft();
+    requestRefRef.current = null;
+    requiredFieldsRef.current = [];
+    pendingToolContinuationRef.current = false;
+    handledToolCallsRef.current.clear();
     clearTurnTimers();
     clearEndTimers();
   }
@@ -433,6 +466,111 @@ export default function VoicePage() {
     }, PENDING_BACKSTOP_MS);
   }
 
+  // ── Reservation function tools (browser CP3) ──────────────────────────────
+  // The model drives these; the app validates + persists. Truthful contract (enforced by the prompt
+  // rules + the server re-validation): the model may only tell the caller a request is submitted after
+  // submit_reservation_request returns persisted:true, and never says "confirmed". These handlers run
+  // ONLY on the authenticated dashboard call — voice-session registers the tools for that session
+  // alone (never the demo widget / phone), so a tool call always has a working handler here.
+
+  // Return a tool result to the model as a function_call_output conversation item.
+  function sendFunctionCallOutput(callId: string, output: Record<string, unknown>) {
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== 'open') return;
+    dc.send(JSON.stringify({
+      type: 'conversation.item.create',
+      item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(output) },
+    }));
+    recordVoiceEvent('app:function_call_output sent', { note: shortId(callId) });
+  }
+
+  // Create the model's continuation turn AFTER a tool result, THROUGH the Layer 2 gate. If the
+  // tool-call response is still in progress (or audio is still playing), defer and let
+  // onAssistantSettled fire exactly one continuation; otherwise send now. Never creates a response
+  // while the call is draining (endRequested) — post-call recovery is the backstop in that case.
+  function sendToolContinuation(reason: string) {
+    if (endRequestedRef.current) {
+      recordVoiceEvent('app:tool continuation blocked/ending', { note: reason });
+      return;
+    }
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== 'open' || statusRef.current !== 'connected') return;
+    if (responseInProgressRef.current || assistantAudioPlayingRef.current) {
+      pendingToolContinuationRef.current = true; // fired from onAssistantSettled once idle
+      recordVoiceEvent('app:tool continuation deferred', { note: reason });
+      return;
+    }
+    dc.send(JSON.stringify({ type: 'response.create' }));
+    recordVoiceEvent('app:tool continuation response.create sent', { note: reason });
+  }
+
+  // POST the validated draft to the shared browser submit route (RLS session → persistReservationRequest).
+  // The server re-validates the draft (draftFromClient) and is the source of truth for persisted:true —
+  // a client cannot force a submit with unvalidated values or a faked confirmation.
+  async function submitReservation(draft: ReservationDraft): Promise<Record<string, unknown>> {
+    try {
+      const res = await fetch('/api/reservation/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestRef: requestRefRef.current, draft }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { persisted: false, error: (data as { error?: string }).error ?? 'submit_failed' };
+      return data as Record<string, unknown>;
+    } catch {
+      return { persisted: false, error: 'network_error' };
+    }
+  }
+
+  // Dispatch a completed function call from the model. update_reservation_draft mutates the local draft
+  // (resetting a stale confirmation on any value change) and reports what is still needed/unclear;
+  // submit_reservation_request re-checks canSubmit then persists via the server. ALWAYS returns a tool
+  // output and continues the model's turn so it can speak the result to the caller.
+  async function handleReservationToolCall(name: string, callId: string, argsRaw: string | undefined) {
+    let output: Record<string, unknown>;
+    try {
+      if (name === UPDATE_DRAFT_TOOL) {
+        let args: Record<string, unknown> = {};
+        try { args = argsRaw ? JSON.parse(argsRaw) : {}; } catch { args = {}; }
+        let draft = applyDraftUpdate(reservationDraftRef.current, {
+          date: args.date, time: args.time, party_size: args.party_size, name: args.name, phone: args.phone,
+        });
+        if (args.caller_confirmed === true) draft = setCallerConfirmed(draft, requiredFieldsRef.current);
+        reservationDraftRef.current = draft;
+        const needed = stillNeeded(draft, requiredFieldsRef.current);
+        const unclear = needsClarification(draft);
+        output = {
+          still_needed: needed,
+          needs_clarification: unclear,
+          ready: needed.length === 0,
+          caller_confirmed: draft.caller_confirmed,
+        };
+        recordVoiceEvent('app:reservation draft updated', {
+          note: `need:${needed.join(',') || '-'} unclear:${unclear.join(',') || '-'}`,
+        });
+      } else if (name === SUBMIT_REQUEST_TOOL) {
+        const draft = reservationDraftRef.current;
+        if (!requestRefRef.current || !businessId) {
+          // No idempotency key or no saveable business (demo / no active business) — cannot persist.
+          output = { persisted: false, error: 'not_saveable_here' };
+        } else if (!canSubmit(draft, requiredFieldsRef.current)) {
+          // Deterministic gate: not ready or not caller-confirmed. Tell the model what's still needed.
+          output = { persisted: false, still_needed: stillNeeded(draft, requiredFieldsRef.current) };
+        } else {
+          output = await submitReservation(draft);
+        }
+        recordVoiceEvent('app:reservation submit', { note: output.persisted ? 'persisted' : 'not-persisted' });
+      } else {
+        output = { error: 'unknown_tool' };
+      }
+    } catch (err) {
+      console.warn('[FD debug] reservation tool handler error:', err);
+      output = { persisted: false, error: 'tool_error' };
+    }
+    sendFunctionCallOutput(callId, output);
+    sendToolContinuation(name);
+  }
+
   // Called after any event that could end the assistant's turn (response terminal, playback
   // stopped/cleared). Debounced so response.done and output_audio_buffer.stopped coalesce. Once the
   // assistant is fully idle it, in order: (1) flushes a held caller turn, (2) ends the call if a
@@ -442,6 +580,17 @@ export default function VoicePage() {
     flushPendingTimerRef.current = setTimeout(() => {
       flushPendingTimerRef.current = null;
       if (responseInProgressRef.current || assistantAudioPlayingRef.current) return; // not idle yet
+      // 0) Tool continuation takes priority: the model called a reservation tool and we returned its
+      // result — create exactly ONE next turn so it can speak the outcome, then return.
+      if (pendingToolContinuationRef.current && !endRequestedRef.current) {
+        pendingToolContinuationRef.current = false;
+        const dc = dcRef.current;
+        if (dc && dc.readyState === 'open' && statusRef.current === 'connected') {
+          dc.send(JSON.stringify({ type: 'response.create' }));
+          recordVoiceEvent('app:tool continuation response.create (settled)');
+          return; // response in progress now
+        }
+      }
       // 1) Answer a held caller turn first (creates a new response → no longer idle).
       if (pendingCallerResponseRef.current && !endRequestedRef.current) {
         recordVoiceEvent('app:response.create flushed (deferred caller turn)');
@@ -821,6 +970,20 @@ export default function VoicePage() {
     // accept both so this backup works on preview AND GA models (e.g. gpt-realtime-mini).
     if (type === 'response.output_item.done') {
       const item = event.item as Record<string, unknown> | undefined;
+      // Reservation function-tool call (browser CP3): dispatch to the handler, then STOP — a
+      // function_call item carries `arguments`, not a spoken transcript, so it must not fall through to
+      // the assistant-text backup below. Deduped by call_id in case the event repeats.
+      if (item?.type === 'function_call') {
+        const callId = typeof item.call_id === 'string' ? item.call_id : undefined;
+        const fnName = typeof item.name === 'string' ? item.name : undefined;
+        const argsRaw = typeof item.arguments === 'string' ? item.arguments : undefined;
+        if (callId && fnName && !handledToolCallsRef.current.has(callId)) {
+          handledToolCallsRef.current.add(callId);
+          recordVoiceEvent('app:function_call received', { note: fnName });
+          void handleReservationToolCall(fnName, callId, argsRaw);
+        }
+        return;
+      }
       const itemId = item?.id as string | undefined;
       const content = item?.content as Array<Record<string, unknown>> | undefined;
       if (itemId && content) {
@@ -1033,6 +1196,9 @@ export default function VoicePage() {
     endAfterReplyRef.current = false;
     substantiveCallerTurnSeenRef.current = false;
     pendingCallerTranscriptRef.current.clear();
+    reservationDraftRef.current = emptyDraft();
+    pendingToolContinuationRef.current = false;
+    handledToolCallsRef.current.clear();
     clearTurnTimers();
     clearEndTimers();
     clearConnectTimeout();
@@ -1075,6 +1241,12 @@ export default function VoicePage() {
     resetVoiceTimeline();
     endReasonRef.current = 'unknown';
     resetResponseState();
+    // New per-call idempotency key for the reservation tool flow (browser session UUID). Also sent to
+    // /api/post-call so a row submitted DURING the call is enriched — not duplicated — post-call.
+    requestRefRef.current =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     setStatus('requesting');
 
     // 1. Request microphone access
@@ -1125,7 +1297,10 @@ export default function VoicePage() {
         const body = await tokenRes.json().catch(() => ({ error: 'Server error' }));
         throw new Error(body.error ?? `Session request failed (${tokenRes.status})`);
       }
-      const { clientSecret } = await tokenRes.json();
+      const { clientSecret, requiredFields } = await tokenRes.json();
+      // Canonical reservation required-field set the server computed (party_size for restaurants only).
+      // The submit route re-checks the SAME set server-side, so the gate can't drift client→server.
+      requiredFieldsRef.current = Array.isArray(requiredFields) ? (requiredFields as ReservationField[]) : [];
       if (!clientSecret) throw new Error('Server returned an empty session token. Check OPENAI_API_KEY.');
       setErrorMsg(''); // session token received — clear any prior error
 
@@ -1480,7 +1655,7 @@ export default function VoicePage() {
         res = await fetch('/api/post-call', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ call_id: callId, business_id: businessId, transcript }),
+          body: JSON.stringify({ call_id: callId, business_id: businessId, transcript, request_ref: requestRefRef.current }),
           signal: ctrl.signal,
         });
       } finally {

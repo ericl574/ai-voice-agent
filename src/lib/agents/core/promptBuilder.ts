@@ -1,6 +1,6 @@
 import type { AgentConfig, Business } from '@/lib/supabase/businesses';
 import type { KnowledgeRow, VerticalProfile, CollectableField } from './types';
-import { GLOBAL_RULES } from './globalRules';
+import { GLOBAL_RULES, RESERVATION_TOOL_RULES } from './globalRules';
 import { renderSpecialistPlaybooks } from '../specialists';
 import { getVertical } from '../verticals/registry';
 import { todayInTimeZone, nowInTimeZone } from '@/lib/call-pipeline/time';
@@ -90,15 +90,21 @@ export function buildSystemPrompt(
   // visitor picks a service type). Lets a signed-out session adopt a vertical-specific prompt
   // instead of always falling back to generic. Ignored when `business` is provided.
   verticalOverride?: string | null,
+  // Per-transport gate for the reservation function-tool instructions. DEFAULT OFF: the tool wording
+  // is rendered ONLY for a transport that also registers RESERVATION_TOOLS and handles the calls
+  // (currently the authenticated browser session via /api/voice-session). The phone bridge leaves this
+  // off until its handler lands, so the model is never told to call a tool it cannot emit.
+  reservationToolsEnabled: boolean = false,
 ): string {
   const profile = getVertical(business?.business_type ?? verticalOverride);
   const verticalSection = renderVerticalSection(profile);
   const profileConfigSection = renderProfileConfigSection(profile, agentConfig);
+  const toolRulesBlock = reservationToolsEnabled ? `\n\n${RESERVATION_TOOL_RULES}` : '';
 
   if (!business) {
     return `You are the front desk voice assistant for a service business.
 
-${GLOBAL_RULES}
+${GLOBAL_RULES}${toolRulesBlock}
 
 ${verticalSection}
 
@@ -138,7 +144,7 @@ ${renderSpecialistPlaybooks()}`.trim();
 GREETING — open the call with exactly this line, spoken as ONE complete sentence, then stop and wait for the caller. Do not start before it and do not cut it short:
 "${greeting}"
 
-${GLOBAL_RULES}
+${GLOBAL_RULES}${toolRulesBlock}
 
 ${verticalSection}
 

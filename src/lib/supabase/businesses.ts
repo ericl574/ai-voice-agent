@@ -17,8 +17,10 @@ export interface AgentConfig {
   appointments_require_confirmation?: boolean;
   // Reservation confirmation mode (Settings page):
   //  'staff' (default) — current behavior: reservations land pending; staff confirm manually.
-  //  'auto'  — reservation is auto-taken but the caller must confirm via an SMS link by adding a
-  //            card on file; status is 'awaiting_customer' until they complete it, then 'confirmed'.
+  //  'auto'  — reservation is auto-taken but the caller must verify via an SMS link by adding a card
+  //            on file; status is 'awaiting_customer' until they complete it, then
+  //            'awaiting_staff_confirmation' (verified, NOT confirmed — no availability source proves
+  //            the slot, so staff still confirm). 'confirmed' is staff/availability-only.
   reservation_confirmation_mode?: 'staff' | 'auto';
   confirmation_window_hours?: number; // hours the caller has to complete the card step (default 24)
   // Call Delivery / after-hours report preferences. Toggles gate delivery; the *_to fields are

@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'OPENAI_API_KEY not configured' }, { status: 503 });
   }
 
-  let body: { call_id?: string; business_id?: string; transcript?: string };
+  let body: { call_id?: string; business_id?: string; transcript?: string; request_ref?: string };
   try {
     body = await req.json();
   } catch {
@@ -22,6 +22,10 @@ export async function POST(req: NextRequest) {
   }
 
   const { call_id, business_id, transcript } = body;
+  // Idempotency key for a reservation submitted DURING the call (browser reservation tool flow). When
+  // present, the post-call core ENRICHES that already-persisted row (matched by request_ref) instead
+  // of creating a duplicate; absent → the legacy create-from-transcript path is unchanged.
+  const requestRef = typeof body.request_ref === 'string' && body.request_ref ? body.request_ref : null;
   if (!call_id || !business_id || typeof transcript !== 'string') {
     return NextResponse.json(
       { error: 'Missing required fields: call_id, business_id, transcript' },
@@ -74,6 +78,7 @@ export async function POST(req: NextRequest) {
     transcript,
     bizRow: bizRow ?? null,
     origin: new URL(req.url).origin,
+    requestRef,
   });
 
   return NextResponse.json({

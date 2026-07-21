@@ -4,8 +4,10 @@
 // The caller reviews their reservation and adds a card on file to confirm it.
 //
 // PLACEHOLDER payment: no real card processor is wired up. The card fields are visual only and are
-// NEVER transmitted or stored — confirming simply flips the reservation to 'confirmed' via the
-// scoped `confirm_reservation` RPC. Real Stripe (SetupIntent) drops in here later.
+// NEVER transmitted or stored — verifying flips the reservation to 'awaiting_staff_confirmation' via
+// the scoped `confirm_reservation` RPC. This is a REQUEST, not a confirmed booking: without an
+// availability source we cannot prove the slot is free, so the restaurant still confirms. Real Stripe
+// (SetupIntent) drops in here later.
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
@@ -22,7 +24,7 @@ interface Reservation {
   business_name: string | null;
 }
 
-type Phase = 'loading' | 'awaiting' | 'confirmed' | 'expired' | 'invalid' | 'error';
+type Phase = 'loading' | 'awaiting' | 'verified' | 'expired' | 'invalid' | 'error';
 
 const DEMO_RESERVATION: Reservation = {
   customer_name: 'Guest',
@@ -69,7 +71,9 @@ export default function ConfirmReservationPage() {
         const row = data.reservation as Reservation | null;
         if (!row) { setPhase('invalid'); return; }
         setReservation(row);
-        if (row.status === 'confirmed') setPhase('confirmed');
+        // A row the customer already verified (awaiting_staff_confirmation) — or one staff already
+        // confirmed — is done from the customer's side; show the verified state.
+        if (row.status === 'awaiting_staff_confirmation' || row.status === 'confirmed') setPhase('verified');
         else if (isExpired(row)) setPhase('expired');
         else if (row.status === 'awaiting_customer') setPhase('awaiting');
         else setPhase('invalid');
@@ -88,7 +92,7 @@ export default function ConfirmReservationPage() {
     try {
       if (!isSupabaseConfigured) {
         // Demo: simulate success without touching a DB.
-        setPhase('confirmed');
+        setPhase('verified');
         return;
       }
       const res = await fetch('/api/reservations/confirm', {
@@ -99,7 +103,7 @@ export default function ConfirmReservationPage() {
       const data = await res.json();
       if (!res.ok) { setErrorMsg(data.error ?? 'Could not confirm'); setPhase('error'); return; }
       const result = String(data.result);
-      if (result === 'confirmed' || result === 'already_confirmed') setPhase('confirmed');
+      if (result === 'verified' || result === 'already_verified') setPhase('verified');
       else if (result === 'expired') setPhase('expired');
       else setPhase('invalid');
     } catch (err) {
@@ -120,7 +124,7 @@ export default function ConfirmReservationPage() {
           <p className="fd-eyebrow" style={{ color: 'var(--ink-muted)' }}>
             {reservation?.business_name ?? 'Reservation'}
           </p>
-          <h1 className="fd-display text-2xl" style={{ color: 'var(--ink)' }}>Confirm your reservation</h1>
+          <h1 className="fd-display text-2xl" style={{ color: 'var(--ink)' }}>Your reservation request</h1>
         </div>
 
         <div className="px-6 py-6">
@@ -135,21 +139,23 @@ export default function ConfirmReservationPage() {
                   simply confirms; honest copy below. Card-on-file capture lands with Stripe later. */}
               <form onSubmit={handleConfirm} className="mt-5 space-y-3">
                 <p className="text-[13px]" style={{ color: 'var(--ink-soft)' }}>
-                  Please review the details above and confirm your reservation. No card is needed for now.
+                  Please review the details above and submit your reservation request. No card is needed
+                  for now. This sends your request to the restaurant — they&apos;ll confirm availability
+                  and follow up.
                 </p>
                 {errorMsg && <p className="text-[13px]" style={{ color: 'var(--danger)' }}>{errorMsg}</p>}
                 <button type="submit" disabled={submitting} className="fd-btn fd-btn-accent w-full">
-                  {submitting ? 'Confirming…' : 'Confirm reservation'}
+                  {submitting ? 'Submitting…' : 'Submit request'}
                 </button>
               </form>
             </>
           )}
 
-          {phase === 'confirmed' && (
+          {phase === 'verified' && (
             <Result
-              title="Reservation confirmed"
+              title="Request received"
               tone="ok"
-              message="Thanks! Your reservation is confirmed. We look forward to seeing you — the team will follow up if anything's needed."
+              message="Thanks! We've received your reservation request and your details. This is a request, not a confirmed booking yet — the restaurant will confirm availability and follow up with you."
             >
               {reservation && <ReservationSummary r={reservation} className="mt-4" />}
             </Result>

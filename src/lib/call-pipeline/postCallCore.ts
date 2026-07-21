@@ -20,6 +20,7 @@ import { getVertical } from '@/lib/agents/verticals/registry';
 import { deriveCallStatus } from './callStatus';
 import { deriveNeedsStaffFollowup } from './followup';
 import { isPastAppointment } from './pastTime';
+import { buildReservationEnrichment } from './reservationPersist';
 import { buildAnalystResult, type AnalystResult } from './analyst';
 import { todayInTimeZone, DEFAULT_BUSINESS_TIMEZONE } from './time';
 import type { AgentConfig } from '@/lib/supabase/businesses';
@@ -131,8 +132,17 @@ export async function runPostCallExtraction(opts: {
   origin: string;
   /** Call channel — used only for delivery wording. Defaults to 'web' (browser test call). */
   source?: 'web' | 'phone';
+  /**
+   * Canonical per-call reservation key (CallSid / browser session-call UUID). Present ONLY when the
+   * live reservation-tool flow was active for this call. When set, post-call ENRICHES the live-
+   * submitted row (matched by request_ref) instead of creating a duplicate, or — if the caller hung
+   * up before submitting — creates a distinct RECOVERY row (status 'incomplete', origin
+   * 'post_call_recovered'). When ABSENT, the legacy behavior is unchanged.
+   */
+  requestRef?: string | null;
 }): Promise<PostCallResult> {
   const { supabase, apiKey, callId, businessId, bizRow, origin } = opts;
+  const requestRef = opts.requestRef ?? null;
 
   const businessTimezone = (bizRow?.timezone as string) || DEFAULT_BUSINESS_TIMEZONE;
   const today = todayInTimeZone(businessTimezone);
@@ -321,8 +331,19 @@ export async function runPostCallExtraction(opts: {
 
   // ── Duplicate prevention: check existing linked records ───────────────────
 
+  // With a live reservation-tool flow (requestRef set), the caller-submitted row was written DURING
+  // the call with call_id NULL, so match it by request_ref (and pull the columns enrichment needs);
+  // otherwise use the legacy call_id link. service_requests are matched by call_id as before.
+  const apptQuery = requestRef
+    ? supabase
+        .from('appointments')
+        .select('id, call_id, customer_name, customer_phone, appointment_date, appointment_time, service_type, staff_notes, status')
+        .eq('business_id', businessId)
+        .eq('request_ref', requestRef)
+        .maybeSingle()
+    : supabase.from('appointments').select('id').eq('call_id', callId).maybeSingle();
   const [{ data: existingAppt }, { data: existingSR }] = await Promise.all([
-    supabase.from('appointments').select('id').eq('call_id', callId).maybeSingle(),
+    apptQuery,
     supabase.from('service_requests').select('id').eq('call_id', callId).maybeSingle(),
   ]);
 
@@ -331,9 +352,49 @@ export async function runPostCallExtraction(opts: {
   let appointmentError: string | null = null;
   let serviceRequestError: string | null = null;
 
-  // ── Create appointment ────────────────────────────────────────────────────
+  // ── Create / enrich appointment ───────────────────────────────────────────
 
-  if (extraction.appointment?.should_create && !existingAppt) {
+  if (extraction.appointment?.should_create && requestRef) {
+    if (existingAppt) {
+      // ENRICH the live, caller-submitted row — fill only NULLs + metadata + backfill call_id, and
+      // NEVER overwrite a tool-validated value or its status (buildReservationEnrichment enforces this).
+      const update = buildReservationEnrichment(existingAppt as Record<string, unknown>, extraction, callId);
+      if (Object.keys(update).length > 0) {
+        const { error: enrErr } = await supabase
+          .from('appointments')
+          .update(update)
+          .eq('id', (existingAppt as { id: string }).id);
+        if (enrErr) appointmentError = enrErr.message;
+      }
+    } else {
+      // RECOVERY: the tool flow was active but the caller hung up before submitting. Create a distinct
+      // staff-visible record that is NOT a customer submission and NOT pending/awaiting/confirmed.
+      const { error: recErr } = await supabase.from('appointments').insert({
+        business_id: businessId,
+        call_id: callId,
+        request_ref: requestRef,
+        customer_name: extraction.caller_name ?? null,
+        customer_phone: extraction.caller_phone ?? null,
+        appointment_date: extraction.appointment.requested_date ?? null,
+        appointment_time: extraction.appointment.requested_time ?? null,
+        service_type: extraction.appointment.service ?? 'Appointment request',
+        special_request: extraction.appointment.notes ?? null,
+        status: 'incomplete',
+        origin: 'post_call_recovered',
+        staff_notes:
+          `Reconstructed after the caller ended the call before submitting. Needs staff follow-up — ` +
+          `NOT a customer-submitted or confirmed reservation. ${extraction.next_action}`.trim(),
+      });
+      if (!recErr) {
+        appointmentCreated = true;
+        // Reinforce the follow-up signal on the call itself (best-effort; the 'incomplete' status is
+        // the primary mark).
+        await supabase.from('calls').update({ needs_staff_followup: true }).eq('id', callId);
+      } else {
+        appointmentError = recErr.message;
+      }
+    }
+  } else if (extraction.appointment?.should_create && !existingAppt) {
     const agentConfig = (bizRow?.agent_config as AgentConfig | null) ?? null;
     const callerPhone = extraction.caller_phone ?? null;
     // Auto mode: take the reservation but require the caller to confirm via an SMS card link.
@@ -390,7 +451,7 @@ export async function runPostCallExtraction(opts: {
   // Skip if an appointment was already created for this call.
 
   const needsSR =
-    extraction.service_request?.should_create && !existingSR && !appointmentCreated;
+    extraction.service_request?.should_create && !existingSR && !appointmentCreated && !existingAppt;
 
   if (needsSR) {
     const urgentTag = extraction.service_request?.urgency === 'urgent' ? ' [URGENT]' : '';

@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { timingSafeEqual } from 'crypto';
 import { buildSystemPrompt } from '@/lib/agents/core/promptBuilder';
 import { getDemoBusiness } from '@/lib/agents/demoBusinesses';
+import { getVertical } from '@/lib/agents/verticals/registry';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { AgentConfig } from '@/lib/supabase/businesses';
 import type { KnowledgeRow } from '@/lib/agents/core/types';
+import { requiredReservationFields } from '@/lib/call-pipeline/reservationDraft';
 
 // Bridge-only endpoint: returns the Realtime session config (instructions/voice/speed) for an
 // inbound PHONE call. Guarded by the shared TWILIO_BRIDGE_SECRET — this is machine-to-machine
@@ -146,12 +148,17 @@ export async function POST(req: NextRequest) {
       if (typeof agentConfig?.voice_speed === 'number') {
         speed = Math.min(1.25, Math.max(0.85, agentConfig.voice_speed));
       }
+      const businessType = business.business_type as string | null;
       return NextResponse.json({
         instructions: withPhoneNote(instructions, body.from),
         voice,
         speed,
         businessId: business.id as string,
         businessName: (business.name as string) ?? 'the business',
+        // Canonical runtime required-field set for the reservation tool — computed once here (same
+        // helper the browser uses) so the phone and browser paths cannot drift. party_size only for
+        // restaurants.
+        requiredFields: requiredReservationFields(businessType, getVertical(businessType).requiredFields),
       });
     } catch (err) {
       // Any unexpected exception (e.g. buildSystemPrompt throwing) must also fail closed, NOT become a
@@ -175,11 +182,13 @@ export async function POST(req: NextRequest) {
   const demoInstructions = demo
     ? buildSystemPrompt(demo.business, demo.agentConfig, demo.knowledge)
     : buildSystemPrompt(null, null, []);
+  const demoType = demo?.business.business_type ?? null;
   return NextResponse.json({
     instructions: withPhoneNote(demoInstructions, body.from),
     voice: null,
     speed: 1.0,
     businessId: null,
     businessName: demo?.business.name ?? 'the business',
+    requiredFields: requiredReservationFields(demoType, getVertical(demoType).requiredFields),
   });
 }

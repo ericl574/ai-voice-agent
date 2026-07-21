@@ -29,7 +29,7 @@ import { FAQ_PLAYBOOK } from '../src/lib/agents/specialists/faq.ts';
 import { ESCALATION_PLAYBOOK } from '../src/lib/agents/specialists/escalation.ts';
 import { classifyCallHealth } from '../src/lib/call-pipeline/callHealth.ts';
 import { isPastAppointment } from '../src/lib/call-pipeline/pastTime.ts';
-import { REALTIME_VAD, REALTIME_NOISE_REDUCTION } from '../src/lib/realtime/turnDetection.ts';
+import { REALTIME_VAD, REALTIME_VAD_INTERACTIVE, REALTIME_NOISE_REDUCTION } from '../src/lib/realtime/turnDetection.ts';
 import { classifyConnectionState } from '../src/lib/realtime/connectionState.ts';
 import { readFileSync } from 'node:fs';
 import {
@@ -79,6 +79,30 @@ import {
   FALLBACK_INSTRUCTIONS,
   UNAVAILABLE_INSTRUCTIONS,
 } from '../server/twilio-bridge.ts';
+import {
+  emptyDraft,
+  applyDraftUpdate,
+  isReadyToHold,
+  stillNeeded,
+  needsClarification,
+  setCallerConfirmed,
+  canSubmit,
+  validateDate,
+  validateTime,
+  validatePartySize,
+  validateName,
+  validatePhone,
+  requiredReservationFields,
+  draftFromClient,
+  MAX_PARTY_SIZE,
+  type ReservationField,
+} from '../src/lib/call-pipeline/reservationDraft.ts';
+import {
+  reservationStatusFor,
+  buildReservationRow,
+  buildReservationEnrichment,
+} from '../src/lib/call-pipeline/reservationPersist.ts';
+import { RESERVATION_TOOLS, UPDATE_DRAFT_TOOL, SUBMIT_REQUEST_TOOL } from '../src/lib/realtime/reservationTools.ts';
 
 // Vertical profiles imported DIRECTLY (each file's only import is `import type`, stripped at
 // runtime), so the Node QA runner can load them — unlike registry.ts, which has extensionless
@@ -183,6 +207,379 @@ test('effectiveStatus — awaiting with no expires_at → awaiting_customer', ()
 test('effectiveStatus — confirmed/pending pass through', () => {
   eq(effectiveStatus(appt({ status: 'confirmed' })), 'confirmed', 'confirmed');
   eq(effectiveStatus(appt({ status: 'pending' })), 'pending', 'pending');
+});
+
+test('effectiveStatus — awaiting_staff_confirmation passes through (no lapse logic)', () => {
+  eq(effectiveStatus(appt({ status: 'awaiting_staff_confirmation' })), 'awaiting_staff_confirmation', 'passes through');
+});
+
+// ── Card completion is NOT a confirmed booking (no availability source) ───────────────────────────
+// Completing the SMS card link proves customer intent, not slot availability, so the reservation must
+// land on 'awaiting_staff_confirmation' (verified; staff still confirm), never 'confirmed'. Grepped:
+// the RPC is SQL and the confirm page is a client component — neither loads in this bare-node runner.
+test('card completion transitions to awaiting_staff_confirmation, never confirmed', () => {
+  const mig = readFileSync('supabase/migrations/20260716_reservation_card_no_confirm.sql', 'utf8');
+  assert(/set status = 'awaiting_staff_confirmation'/.test(mig), 'card completion sets awaiting_staff_confirmation');
+  assert(!/set status = 'confirmed'/.test(mig), 'card completion never sets confirmed');
+  assert(/return 'verified'/.test(mig), 'returns verified (not confirmed)');
+});
+
+test('confirm page never tells the customer the reservation is confirmed', () => {
+  const page = readFileSync('src/app/confirm/[token]/page.tsx', 'utf8');
+  assert(/phase === 'verified'/.test(page), 'success phase is verified, not confirmed');
+  assert(!/Reservation confirmed|is confirmed/.test(page), 'no "confirmed" claim in the customer-facing copy');
+  assert(/Request received/.test(page), 'success state states the request was received (not confirmed)');
+});
+
+test('reservations active list keeps awaiting_staff_confirmation visible to staff', () => {
+  const page = readFileSync('src/app/dashboard/reservations/page.tsx', 'utf8');
+  assert(/s === 'awaiting_staff_confirmation'/.test(page), 'verified-awaiting-staff reservations stay in the active list');
+});
+
+// ── Reservation draft (Checkpoint 1: deterministic validators + readiness gate) ───────────────────
+// Values come from the MODEL's structured tool args (its audio understanding), never the transcript.
+// These validators reject missing/implausible values and gate submission; they NEVER store a bad value.
+
+test('validateDate — real ISO date valid; bad shape / impossible date / empty handled', () => {
+  eq(validateDate('2026-07-20').status, 'valid', 'ISO date valid');
+  eq(validateDate('2026-07-20').value, '2026-07-20', 'value preserved');
+  eq(validateDate('July 20').status, 'needs_clarification', 'non-ISO → clarify');
+  eq(validateDate('2026-02-30').status, 'needs_clarification', 'impossible calendar date → clarify');
+  eq(validateDate(null).status, 'empty', 'absent → empty');
+});
+
+test('validateTime — 24h HH:MM valid + normalized; out-of-range / empty handled', () => {
+  eq(validateTime('18:30').status, 'valid', 'valid time');
+  eq(validateTime('9:05').value, '09:05', 'normalized to HH:MM');
+  eq(validateTime('25:00').status, 'needs_clarification', 'hour out of range → clarify');
+  eq(validateTime('18:60').status, 'needs_clarification', 'minute out of range → clarify');
+  eq(validateTime('').status, 'empty', 'absent → empty');
+});
+
+test('validatePartySize — positive integer within max valid; garbage → needs_clarification (the defect)', () => {
+  eq(validatePartySize(2).status, 'valid', '2 valid');
+  eq(validatePartySize(0).status, 'needs_clarification', '0 → clarify');
+  eq(validatePartySize(-1).status, 'needs_clarification', 'negative → clarify');
+  eq(validatePartySize(2.5).status, 'needs_clarification', 'non-integer → clarify');
+  eq(validatePartySize('uh').status, 'needs_clarification', 'unclear fragment → clarify (never stored)');
+  eq(validatePartySize('uh').value, null, 'a bad party size is never stored');
+  eq(validatePartySize(MAX_PARTY_SIZE + 1).status, 'needs_clarification', 'implausibly large → clarify (mis-hear)');
+  eq(validatePartySize(null).status, 'empty', 'absent → empty');
+});
+
+test('validateName / validatePhone — plausibility, no bad value stored', () => {
+  eq(validateName('Sarah').status, 'valid', 'name valid');
+  eq(validateName('...').status, 'needs_clarification', 'punctuation-only → clarify');
+  eq(validateName('1234').status, 'needs_clarification', 'no letters → clarify');
+  eq(validatePhone('778-798-5201').status, 'valid', 'plausible phone valid');
+  eq(validatePhone('123').status, 'needs_clarification', 'too few digits → clarify');
+  eq(validatePhone(null).status, 'empty', 'phone absent → empty (optional field)');
+});
+
+test('applyDraftUpdate — validates each field; a value change resets caller_confirmed', () => {
+  let d = emptyDraft();
+  d = applyDraftUpdate(d, { date: '2026-07-20', time: '18:30', name: 'Sarah', party_size: 4 });
+  eq(d.date.status, 'valid', 'date set'); eq(d.party_size.value, 4, 'party set');
+  d.caller_confirmed = true; // simulate a prior confirmation
+  const d2 = applyDraftUpdate(d, { party_size: 6 }); // caller corrects the party size
+  eq(d2.party_size.value, 6, 'correction applied');
+  eq(d2.caller_confirmed, false, 'a content change invalidates the stale confirmation');
+});
+
+test('applyDraftUpdate — an unclear value is flagged, not silently accepted, and is not stored', () => {
+  let d = emptyDraft();
+  d = applyDraftUpdate(d, { party_size: 'two-ish maybe' });
+  eq(d.party_size.status, 'needs_clarification', 'unclear party size → needs_clarification');
+  eq(d.party_size.value, null, 'unclear value is never stored');
+  assert(needsClarification(d).includes('party_size'), 'the model is told to re-ask party size');
+});
+
+test('isReadyToHold / stillNeeded — gate on the INJECTED required set (vertical.requiredFields)', () => {
+  const required: ReservationField[] = ['name', 'date', 'time']; // restaurant requiredFields
+  let d = emptyDraft();
+  eq(isReadyToHold(d, required), false, 'empty draft not ready');
+  d = applyDraftUpdate(d, { name: 'Sarah', date: '2026-07-20' });
+  eq(stillNeeded(d, required).join(','), 'time', 'time still needed');
+  d = applyDraftUpdate(d, { time: '18:30' });
+  eq(isReadyToHold(d, required), true, 'ready once required fields are all valid');
+});
+
+test('party_size can be made a hard submit-blocker by including it in required (never silently skipped)', () => {
+  const required: ReservationField[] = ['name', 'date', 'time', 'party_size'];
+  let d = emptyDraft();
+  d = applyDraftUpdate(d, { name: 'Sarah', date: '2026-07-20', time: '18:30' });
+  eq(isReadyToHold(d, required), false, 'not ready without a valid party size');
+  d = applyDraftUpdate(d, { party_size: 4 });
+  eq(isReadyToHold(d, required), true, 'ready once party size is valid');
+});
+
+test('setCallerConfirmed / canSubmit — confirmation only when ready; submit needs ready + confirmed', () => {
+  const required: ReservationField[] = ['name', 'date', 'time'];
+  let d = emptyDraft();
+  d = setCallerConfirmed(d, required);
+  eq(d.caller_confirmed, false, 'cannot confirm an incomplete draft');
+  d = applyDraftUpdate(d, { name: 'Sarah', date: '2026-07-20', time: '18:30' });
+  eq(canSubmit(d, required), false, 'ready but not yet confirmed → cannot submit');
+  d = setCallerConfirmed(d, required);
+  eq(d.caller_confirmed, true, 'confirmed once ready');
+  eq(canSubmit(d, required), true, 'ready + confirmed → may submit');
+  // A late correction after confirmation re-blocks submission until a new read-back.
+  const d2 = applyDraftUpdate(d, { time: '19:00' });
+  eq(canSubmit(d2, required), false, 'a correction after confirmation re-blocks submit');
+});
+
+// The exact 2026-07-16 phone defect, reproduced deterministically at the validation layer.
+test('DEFECT REGRESSION — unclear party-size audio cannot advance to a submittable, confirmed draft', () => {
+  const required: ReservationField[] = ['name', 'date', 'time', 'party_size'];
+  let d = emptyDraft();
+  d = applyDraftUpdate(d, { date: '2026-07-20', time: '18:30', name: 'Sarah' });
+  // Assistant asked party size; caller hesitated / produced unclear audio → model records a garbled value.
+  d = applyDraftUpdate(d, { party_size: 'اثنان ماybe' });
+  eq(d.party_size.status, 'needs_clarification', 'garbled party size is flagged, not accepted');
+  eq(isReadyToHold(d, required), false, 'draft is NOT ready (party size required + unclear)');
+  eq(setCallerConfirmed(d, required).caller_confirmed, false, 'cannot confirm — must re-ask party size');
+  eq(canSubmit(d, required), false, 'cannot submit until a valid party size is captured');
+});
+
+// ── party_size required for RESTAURANT reservations only ──────────────────────────────────────────
+
+test('requiredReservationFields — restaurant requires party_size; other verticals do NOT', () => {
+  // Restaurant core requiredFields are ['name','date','time'] — party_size is added for restaurants only.
+  eq(requiredReservationFields('restaurant', ['name', 'date', 'time']).includes('party_size'), true, 'restaurant requires party_size');
+  for (const t of ['salon', 'clinic', 'auto_repair', 'tutoring', 'home_services', 'other', null, undefined]) {
+    eq(requiredReservationFields(t as string | null, ['name', 'date', 'time']).includes('party_size'), false, `${t} must NOT require party_size`);
+  }
+  // Core fields are mapped through; 'service' has no reservation slot and is dropped.
+  eq(requiredReservationFields('auto_repair', ['name', 'date', 'time', 'service']).join(','), 'name,date,time', 'service is not a reservation slot');
+});
+
+test('REGRESSION — a RESTAURANT reservation cannot be submitted without a valid party size', () => {
+  const required = requiredReservationFields('restaurant', ['name', 'date', 'time']); // runtime-derived set
+  let d = emptyDraft();
+  d = applyDraftUpdate(d, { name: 'Sarah', date: '2026-07-25', time: '19:00' });
+  eq(isReadyToHold(d, required), false, 'restaurant draft is NOT ready without party_size');
+  eq(setCallerConfirmed(d, required).caller_confirmed, false, 'cannot confirm a restaurant reservation without party_size');
+  eq(canSubmit(d, required), false, 'restaurant reservation is not submittable without party_size');
+  d = applyDraftUpdate(d, { party_size: 4 });
+  d = setCallerConfirmed(d, required);
+  eq(canSubmit(d, required), true, 'submittable once a valid party size is captured and confirmed');
+});
+
+test('a SALON reservation is submittable without party_size (party_size not required there)', () => {
+  const required = requiredReservationFields('salon', ['name', 'date', 'time']);
+  let d = emptyDraft();
+  d = applyDraftUpdate(d, { name: 'Sarah', date: '2026-07-25', time: '19:00' });
+  d = setCallerConfirmed(d, required);
+  eq(canSubmit(d, required), true, 'salon does not require party_size');
+});
+
+test('browser + phone derive the reservation required set from the SAME helper (no drift)', () => {
+  const voiceSession = readFileSync('src/app/api/voice-session/route.ts', 'utf8');
+  const sessionConfig = readFileSync('src/app/api/twilio/session-config/route.ts', 'utf8');
+  assert(/requiredReservationFields\(/.test(voiceSession), 'browser voice-session uses requiredReservationFields');
+  assert(/requiredReservationFields\(/.test(sessionConfig), 'phone session-config uses requiredReservationFields');
+  // Both feed the vertical's requiredFields into the same helper.
+  assert(/getVertical\([^)]*\)\.requiredFields/.test(voiceSession), 'voice-session sources the vertical requiredFields');
+  assert(/getVertical\([^)]*\)\.requiredFields/.test(sessionConfig), 'session-config sources the vertical requiredFields');
+});
+
+// ── Reservation persistence core (Checkpoint 2: pure row-building + enrichment precedence) ─────────
+
+test('reservationStatusFor — auto+phone → awaiting_customer; auto without phone / staff → pending', () => {
+  eq(reservationStatusFor('auto', true), 'awaiting_customer', 'auto + phone');
+  eq(reservationStatusFor('auto', false), 'pending', 'auto without phone → pending (no card link possible)');
+  eq(reservationStatusFor('staff', true), 'pending', 'staff-confirm → pending');
+});
+
+test('buildReservationRow — maps a confirmed draft; caller_submitted; carries party_size; never confirmed', () => {
+  const draft = applyDraftUpdate(emptyDraft(), { date: '2026-07-20', time: '18:30', party_size: 4, name: 'Sarah', phone: '778-798-5201' });
+  const row = buildReservationRow({ businessId: 'b1', requestRef: 'CA1', callId: null, draft, mode: 'staff' });
+  eq(row.status, 'pending', 'staff-confirm → pending');
+  eq(row.origin, 'caller_submitted', 'marked as a live caller submission');
+  eq(row.party_size, 4, 'party size carried from the tool draft (post-call never captured it)');
+  eq(row.appointment_time, '18:30', 'time carried from the draft');
+  eq(row.request_ref, 'CA1', 'idempotency key set');
+  eq(row.call_id, null, 'call_id null at live submit (backfilled post-call)');
+  assert((row.status as string) !== 'confirmed', 'never confirmed (no availability source)');
+});
+
+test('buildReservationRow — auto mode + phone → awaiting_customer with a card-link token/expiry', () => {
+  const draft = applyDraftUpdate(emptyDraft(), { date: '2026-07-20', time: '18:30', name: 'Sarah', phone: '7787985201' });
+  const row = buildReservationRow({ businessId: 'b1', requestRef: 'CA2', callId: null, draft, mode: 'auto', token: 'tok', now: 0 });
+  eq(row.status, 'awaiting_customer', 'auto + phone → awaiting_customer');
+  eq(row.confirmation_token, 'tok', 'token set for the card link');
+  assert(typeof row.expires_at === 'string', 'expiry set');
+});
+
+test('buildReservationRow — auto mode WITHOUT a phone falls back to pending (no card link possible)', () => {
+  const draft = applyDraftUpdate(emptyDraft(), { date: '2026-07-20', time: '18:30', name: 'Sarah' });
+  const row = buildReservationRow({ businessId: 'b1', requestRef: 'CA3', callId: null, draft, mode: 'auto' });
+  eq(row.status, 'pending', 'no phone → pending');
+  assert(row.confirmation_token === undefined, 'no token without the card flow');
+});
+
+test('buildReservationEnrichment — fills only NULLs, never overwrites tool values, backfills call_id, leaves status', () => {
+  const existing = {
+    call_id: null, customer_name: 'Sarah', customer_phone: null,
+    appointment_date: '2026-07-20', appointment_time: '18:30',
+    service_type: 'Reservation request', staff_notes: 'Submitted by caller.', status: 'pending', party_size: 4,
+  };
+  const extraction = {
+    caller_name: 'WRONG', caller_phone: '5551234567',
+    appointment: { requested_date: '2026-01-01', requested_time: '09:00', service: 'Dinner' },
+    next_action: 'Confirm the table.',
+  };
+  const upd = buildReservationEnrichment(existing, extraction, 'call_123');
+  eq(upd.call_id, 'call_123', 'backfills call_id (was null)');
+  eq(upd.customer_phone, '5551234567', 'fills phone (was null)');
+  assert(!('customer_name' in upd), 'never overwrites a non-null tool name');
+  assert(!('appointment_date' in upd), 'never overwrites a non-null tool date');
+  assert(!('appointment_time' in upd), 'never overwrites a non-null tool time');
+  assert(!('status' in upd), 'never changes status');
+  assert(!('party_size' in upd), 'never touches the tool party_size');
+  assert(typeof upd.staff_notes === 'string' && (upd.staff_notes as string).includes('Confirm the table.'), 'appends the analyst next_action');
+});
+
+// ── Post-call enrich-not-duplicate + recovery wiring (source-grepped; postCallCore has no unit seam) ──
+test('postCallCore — enriches by request_ref, recovers as incomplete, and leaves the legacy path intact', () => {
+  const pcc = readFileSync('src/lib/call-pipeline/postCallCore.ts', 'utf8');
+  // Live flow: match the caller-submitted row by request_ref (call_id is NULL at submit).
+  assert(/\.eq\('request_ref', requestRef\)/.test(pcc), 'matches the live row by request_ref');
+  assert(/buildReservationEnrichment\(/.test(pcc), 'enriches the existing row (fill-null, never overwrite)');
+  // Recovery: caller hung up before submit → a distinct, non-submitted, non-confirmed record.
+  assert(/status: 'incomplete'/.test(pcc), 'recovery record uses status incomplete');
+  assert(/origin: 'post_call_recovered'/.test(pcc), 'recovery record is marked post_call_recovered');
+  assert(/needs_staff_followup: true/.test(pcc), 'recovery flags the call for staff follow-up');
+  // Legacy (no requestRef) path preserved: the pending / awaiting_customer create still exists.
+  assert(/status: autoConfirm \? 'awaiting_customer' : 'pending'/.test(pcc), 'legacy pending/awaiting_customer create unchanged');
+  assert(/else if \(extraction\.appointment\?\.should_create && !existingAppt\)/.test(pcc), 'legacy create runs only when no request_ref (else-if guard)');
+});
+
+// Query/result-mapping guard: the dedup Promise.all must run exactly ONE appointment query (apptQuery)
+// and ONE service_requests query, mapped in order to existingAppt / existingSR. Guards against a
+// mis-ordered or extra-query regression (e.g. a stray legacy appointment query as a third element).
+test('postCallCore — dedup maps existingAppt←apptQuery and existingSR←service_requests (no redundant query)', () => {
+  const pcc = readFileSync('src/lib/call-pipeline/postCallCore.ts', 'utf8');
+  assert(/const apptQuery = requestRef/.test(pcc), 'apptQuery is the single request_ref-or-call_id appointment query');
+  assert(/const \[\{ data: existingAppt \}, \{ data: existingSR \}\] = await Promise\.all\(\[/.test(pcc), 'destructures existingAppt then existingSR');
+  assert(/Promise\.all\(\[\s*apptQuery,/.test(pcc), 'first Promise.all element is apptQuery (→ existingAppt)');
+  assert(/apptQuery,\s*supabase\s*\.from\('service_requests'\)/.test(pcc), 'second element is the service_requests query (→ existingSR)');
+  // Exactly ONE appointments query flows into the dedup block: the array element is the apptQuery
+  // VARIABLE, never an inline `.from('appointments')` alongside it.
+  const block = pcc.slice(pcc.indexOf('const apptQuery = requestRef'), pcc.indexOf('let appointmentCreated'));
+  const inlineApptInPromiseAll = /Promise\.all\(\[[\s\S]*?\.from\('appointments'\)[\s\S]*?\]\)/.test(block);
+  assert(!inlineApptInPromiseAll, 'no inline appointments query inside Promise.all (only the apptQuery variable)');
+});
+
+test('incomplete recovery status is registered in the reservations UI (visible + distinct)', () => {
+  const badge = readFileSync('src/components/StatusBadge.tsx', 'utf8');
+  const resv = readFileSync('src/app/dashboard/reservations/page.tsx', 'utf8');
+  const mock = readFileSync('src/lib/mock-data.ts', 'utf8');
+  assert(/incomplete:/.test(badge), 'StatusBadge labels + styles incomplete');
+  assert(/s === 'incomplete'/.test(resv), 'incomplete reservations stay in the staff-visible active list');
+  assert(/'incomplete'/.test(mock), 'incomplete is a known RequestStatus');
+});
+
+// ── Shared Realtime tool schemas (Checkpoint 3: one definition, both transports) ──────────────────
+test('RESERVATION_TOOLS — draft + submit schemas, shared shape, truthful contract', () => {
+  eq(RESERVATION_TOOLS.length, 2, 'exactly two tools');
+  const byName = Object.fromEntries(RESERVATION_TOOLS.map((t) => [t.name, t]));
+  assert(!!byName[UPDATE_DRAFT_TOOL], 'update_reservation_draft present');
+  assert(!!byName[SUBMIT_REQUEST_TOOL], 'submit_reservation_request present');
+  const draftProps = Object.keys(byName[UPDATE_DRAFT_TOOL].parameters.properties);
+  for (const f of ['date', 'time', 'party_size', 'name', 'phone', 'caller_confirmed']) {
+    assert(draftProps.includes(f), `draft tool exposes ${f}`);
+  }
+  // Truthful contract lives in the schema descriptions the model reads.
+  const submitDesc = byName[SUBMIT_REQUEST_TOOL].description;
+  assert(/persisted:true/.test(submitDesc), 'submit tool: no claim before a successful write');
+  assert(/NEVER say the reservation is "confirmed"|never say .*confirmed/i.test(submitDesc), 'submit tool: never say confirmed');
+  assert(/never invent a callback timeframe/i.test(submitDesc), 'submit tool: no invented callback timeline');
+});
+
+test('draftFromClient — rebuilds + re-validates server-side; ignores client-claimed statuses', () => {
+  const required: ReservationField[] = ['name', 'date', 'time', 'party_size'];
+  // A hostile/buggy client claims everything valid + confirmed, but party_size is garbage.
+  const raw = {
+    date: { value: '2026-07-25', status: 'valid' },
+    time: { value: '19:00', status: 'valid' },
+    name: { value: 'Sarah', status: 'valid' },
+    party_size: { value: 'lots', status: 'valid' }, // lie — not a number
+    caller_confirmed: true,
+  };
+  const d = draftFromClient(raw, required);
+  eq(d.party_size.status, 'needs_clarification', 'server re-validates the bad party size (ignores client status)');
+  eq(d.caller_confirmed, false, 'confirmation rejected because the draft is not actually ready');
+});
+
+// ── Reservation tool prompt gate + browser CP3 wiring (source-grep; live-gated behavior) ───────────
+
+test('reservation tool prompt rules are gated default-OFF (never told to call a tool it cannot emit)', () => {
+  const global = readFileSync('src/lib/agents/core/globalRules.ts', 'utf8');
+  const builder = readFileSync('src/lib/agents/core/promptBuilder.ts', 'utf8');
+  assert(/export const RESERVATION_TOOL_RULES\b/.test(global), 'the tool rules live in one exported constant');
+  // buildSystemPrompt takes the gate, DEFAULT false, and only renders the block when it is true.
+  assert(/reservationToolsEnabled:\s*boolean\s*=\s*false/.test(builder), 'gate param defaults to false (off)');
+  assert(/const toolRulesBlock = reservationToolsEnabled \?/.test(builder), 'block rendered only when enabled');
+  assert(builder.includes('${GLOBAL_RULES}${toolRulesBlock}'), 'gated block is appended to the shared core');
+  // The wording must NOT be baked unconditionally into the always-injected core rules.
+  assert(!/RESERVATION \/ BOOKING REQUESTS/.test(global.split('RESERVATION_TOOL_RULES')[0]), 'tool wording is not in GLOBAL_RULES itself');
+});
+
+test('browser voice-session enables the prompt gate + registers the tools as ONE unit; demo/generic do not', () => {
+  const vs = readFileSync('src/app/api/voice-session/route.ts', 'utf8');
+  assert(vs.includes("from '@/lib/realtime/reservationTools'"), 'voice-session imports the shared tool schemas');
+  assert(/let enableReservationTools = false;/.test(vs), 'tools default OFF for a session');
+  // The authenticated (business-resolved) branch is the ONLY place both are turned on.
+  assert(/enableReservationTools = true;/.test(vs), 'authed branch flips the gate on');
+  assert(/\bnull,\s*\n\s*true,.*reservation tools enabled/s.test(vs), 'authed branch passes reservationToolsEnabled=true to buildSystemPrompt');
+  // Tools are registered on the session ONLY under that same flag (never unconditionally).
+  assert(/\.\.\.\(enableReservationTools \? \{ tools: RESERVATION_TOOLS, tool_choice: 'auto' \} : \{\}\)/.test(vs), 'tools registered only when the gate is on');
+  // Coherence: exactly one flag drives both the prompt wording and the tool surface.
+  const flagCount = (vs.match(/enableReservationTools = true;/g) ?? []).length;
+  eq(flagCount, 1, 'the gate is turned on in exactly one branch (authed + business resolved)');
+});
+
+test('browser page handles the reservation tool calls, gates submit, and continues through Layer 2', () => {
+  const page = readFileSync('src/app/dashboard/voice/page.tsx', 'utf8');
+  assert(page.includes("import { UPDATE_DRAFT_TOOL, SUBMIT_REQUEST_TOOL }"), 'page imports the tool-name constants');
+  // A function_call output item is dispatched to a real handler (no registering tools without handlers).
+  assert(/item\?\.type === 'function_call'/.test(page), 'page detects function_call output items');
+  assert(/void handleReservationToolCall\(/.test(page), 'page dispatches to a working handler');
+  assert(/type: 'function_call_output'/.test(page), 'page returns a function_call_output to the model');
+  // Submit is deterministically gated (canSubmit) BEFORE it ever POSTs to the persist route.
+  const submitBranch = page.slice(page.indexOf('name === SUBMIT_REQUEST_TOOL'), page.indexOf('recordVoiceEvent(\'app:reservation submit\''));
+  assert(/canSubmit\(draft, requiredFieldsRef\.current\)/.test(submitBranch), 'submit path checks canSubmit first');
+  assert(/await submitReservation\(draft\)/.test(submitBranch), 'submit path only persists when the gate passes');
+  // Continuation runs THROUGH the Layer 2 gate: deferred while a response/audio is in flight, then
+  // fired exactly once from onAssistantSettled.
+  assert(/pendingToolContinuationRef\.current = true/.test(page), 'continuation defers while not idle');
+  assert(page.includes('tool continuation response.create (settled)'), 'continuation fires once the assistant settles');
+  assert(/if \(endRequestedRef\.current\) \{\s*\n\s*recordVoiceEvent\('app:tool continuation blocked\/ending'/.test(page), 'no continuation while the call is draining');
+});
+
+test('browser mints a per-call requestRef and threads it to post-call (enrich, not duplicate)', () => {
+  const page = readFileSync('src/app/dashboard/voice/page.tsx', 'utf8');
+  assert(/requestRefRef\.current =\s*\n?\s*typeof crypto/.test(page), 'a session UUID requestRef is minted at call start');
+  assert(/crypto\.randomUUID\(\)/.test(page), 'uses crypto.randomUUID for the idempotency key');
+  assert(/request_ref: requestRefRef\.current/.test(page), 'requestRef is sent to /api/post-call');
+  assert(/requiredFieldsRef\.current = Array\.isArray\(requiredFields\)/.test(page), 'page captures the server-computed requiredFields');
+});
+
+test('post-call route accepts request_ref and threads it to the shared extraction core', () => {
+  const route = readFileSync('src/app/api/post-call/route.ts', 'utf8');
+  assert(/request_ref\?: string/.test(route), 'route accepts request_ref in the body type');
+  assert(/const requestRef = typeof body\.request_ref === 'string'/.test(route), 'route reads request_ref');
+  assert(/\brequestRef,\s*\n\s*\}\);/.test(route), 'route passes requestRef to runPostCallExtraction');
+});
+
+test('phone transport stays dormant: no tools registered, no prompt gate on the bridge/session-config', () => {
+  const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
+  const sessionConfig = readFileSync('src/app/api/twilio/session-config/route.ts', 'utf8');
+  assert(!bridge.includes('RESERVATION_TOOLS'), 'phone bridge registers no reservation tools yet');
+  assert(!/function_call/.test(bridge), 'phone bridge has no function-call handling yet');
+  assert(!sessionConfig.includes('reservationToolsEnabled'), 'phone session-config does not enable the prompt gate');
+  assert(!/reservationTools'/.test(sessionConfig), 'phone session-config does not import the tool schemas');
 });
 
 // ── startOfWeek ──────────────────────────────────────────────────────────────
@@ -1099,6 +1496,14 @@ test('REALTIME_VAD — locked safety-critical turn-taking values', () => {
   eq(REALTIME_NOISE_REDUCTION.type, 'far_field', 'far-field noise reduction');
 });
 
+// The browser-only interactive profile: SEMANTIC endpointing (no mid-sentence cutoffs) + barge-in for
+// the near-field WebRTC demo. Deliberately a different mechanism from the phone's silence-timer VAD.
+test('REALTIME_VAD_INTERACTIVE — browser-only: semantic endpointing + barge-in (no mid-sentence cutoffs)', () => {
+  eq(REALTIME_VAD_INTERACTIVE.type, 'semantic_vad', 'semantic VAD — waits for a complete thought');
+  eq(REALTIME_VAD_INTERACTIVE.eagerness, 'medium', 'balanced responsiveness (low = wait more, high = snappier)');
+  eq(REALTIME_VAD_INTERACTIVE.interrupt_response, true, 'barge-in ON for the near-field browser demo');
+});
+
 // ── classifyConnectionState — survive a transient WebRTC blip instead of tearing down ─────────
 // WebRTC 'disconnected' is often momentary and self-heals back to 'connected'; only 'failed'/'closed'
 // are terminal. The browser call must WAIT out a 'disconnected' (grace period) rather than ending
@@ -1131,11 +1536,14 @@ test('voice page waits out a transient disconnect (does not instantly tear down)
   );
 });
 
-test('browser + phone both consume the shared turn-taking config (no drift)', () => {
+test('browser uses interactive VAD; phone keeps the conservative shared VAD (intentional, guarded split)', () => {
   const voiceSession = readFileSync('src/app/api/voice-session/route.ts', 'utf8');
   const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
-  assert(voiceSession.includes('REALTIME_VAD'), 'voice-session uses shared REALTIME_VAD');
-  assert(bridge.includes('REALTIME_VAD'), 'phone bridge uses shared REALTIME_VAD');
+  assert(voiceSession.includes('REALTIME_VAD_INTERACTIVE'), 'browser session uses the interactive profile');
+  assert(bridge.includes('REALTIME_VAD'), 'phone bridge uses the shared turn-taking config');
+  // Barge-in must NOT leak onto the phone path — telephony echo + the bridge idle-timer logic assume
+  // interrupt_response:false. If this trips, someone pointed the bridge at the interactive profile.
+  assert(!bridge.includes('REALTIME_VAD_INTERACTIVE'), 'barge-in must not leak to the phone path');
   assert(bridge.includes('REALTIME_NOISE_REDUCTION'), 'phone bridge uses shared noise reduction');
 });
 

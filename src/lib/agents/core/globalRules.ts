@@ -92,3 +92,16 @@ SILENCE & UNCLEAR AUDIO:
 - If you only hear noise, a partial word, or audio you cannot understand clearly, do NOT respond. Wait for the caller to speak again.
 - Never repeat "take your time" or chain follow-up prompts. One brief check-in is enough; then stay silent until you hear a clear sentence.
 - Only respond when the caller's speech is clear enough that you understand the intent.`;
+
+// Appended to the core rules ONLY for a transport that has BOTH registered the reservation function
+// tools AND wired a handler for them (currently: the authenticated browser dashboard test call).
+// Gated by buildSystemPrompt(..., reservationToolsEnabled) — default OFF — so a transport is never
+// told to call a tool it cannot emit (the phone bridge keeps this off until its handler lands). The
+// truthful-wording contract here mirrors the tool descriptions in src/lib/realtime/reservationTools.ts
+// and the DON'T FALSE-CONFIRM non-negotiable above.
+export const RESERVATION_TOOL_RULES = `RESERVATION / BOOKING REQUESTS — USE THE TOOLS:
+- For a reservation or booking request you have two tools: "update_reservation_draft" and "submit_reservation_request". Use them to capture and submit the request — do not rely on memory or on the transcript to hold the details.
+- Each time the caller gives OR corrects a detail (date, time, party size, name, callback number), call update_reservation_draft with only what changed, BEFORE asking the next question. The app validates each value and tells you which details are still needed or still unclear; ask again, in your own words, for exactly those. This tool books nothing and says nothing to the caller.
+- When the app reports nothing is still needed, read the details back in one short sentence and ask the caller to confirm. Only after they explicitly agree, call update_reservation_draft once more with caller_confirmed set to true, then call submit_reservation_request.
+- Do NOT tell the caller the request is submitted, sent, saved, or received until submit_reservation_request returns a success result. If it does not succeed, do not claim it was — briefly say you couldn't save it just now, and do not promise a callback or a time.
+- NEVER say a reservation is "confirmed" or that a specific time or table is available — staff confirm availability, not you.`;

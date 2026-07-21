@@ -31,9 +31,10 @@ function offsetFor(d: Date): number {
 
 function blockColors(status: string): { bg: string; border: string; fg: string } {
   if (status === 'confirmed') return { bg: 'var(--ok-soft)', border: 'var(--ok)', fg: 'var(--ink)' };
-  if (status === 'awaiting_customer') return { bg: 'var(--info-soft)', border: 'var(--info)', fg: 'var(--ink)' };
+  if (status === 'awaiting_customer' || status === 'awaiting_staff_confirmation') return { bg: 'var(--info-soft)', border: 'var(--info)', fg: 'var(--ink)' };
   if (status === 'expired') return { bg: 'var(--paper-dim)', border: 'var(--hairline-strong)', fg: 'var(--ink-soft)' };
-  return { bg: 'var(--warn-soft)', border: 'var(--warn)', fg: 'var(--ink)' }; // pending
+  // 'incomplete' (post-call recovery) shares the warn treatment with pending — both need staff action.
+  return { bg: 'var(--warn-soft)', border: 'var(--warn)', fg: 'var(--ink)' }; // pending / incomplete
 }
 
 export default function WeekGrid({

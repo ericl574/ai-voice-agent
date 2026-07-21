@@ -78,12 +78,14 @@ export default function ReservationsPage() {
     load();
   }, [isDemo]);
 
-  // Active = pending + confirmed + awaiting_customer (declined/expired excluded). effectiveStatus
-  // turns an awaiting reservation past its window into 'expired', so it drops off automatically.
+  // Active = pending + confirmed + awaiting_customer + awaiting_staff_confirmation (declined/expired
+  // excluded). effectiveStatus turns an awaiting reservation past its window into 'expired', so it
+  // drops off automatically. awaiting_staff_confirmation (customer verified, staff must confirm) MUST
+  // stay active or a verified reservation would silently vanish from the staff list.
   const active = useMemo(
     () => appointments.filter((a) => {
       const s = effectiveStatus(a);
-      return s === 'pending' || s === 'confirmed' || s === 'awaiting_customer';
+      return s === 'pending' || s === 'confirmed' || s === 'awaiting_customer' || s === 'awaiting_staff_confirmation' || s === 'incomplete';
     }),
     [appointments],
   );

@@ -10,6 +10,8 @@ const PILL_CLASS: Record<Status, string> = {
   escalated: 'fd-pill fd-pill-danger',
   missed:    'fd-pill fd-pill-muted',
   awaiting_customer: 'fd-pill fd-pill-info',
+  awaiting_staff_confirmation: 'fd-pill fd-pill-info',
+  incomplete: 'fd-pill fd-pill-warn',
   expired:   'fd-pill fd-pill-muted',
 };
 
@@ -21,6 +23,8 @@ const LABELS: Record<Status, string> = {
   escalated: 'Escalated',
   missed: 'Missed',
   awaiting_customer: 'Awaiting customer',
+  awaiting_staff_confirmation: 'Awaiting confirmation',
+  incomplete: 'Incomplete — follow up',
   expired: 'Expired',
 };
 

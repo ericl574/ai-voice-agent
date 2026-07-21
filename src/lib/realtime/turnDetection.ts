@@ -22,8 +22,30 @@ export const REALTIME_VAD = {
   // Wait a full second of silence before closing the caller's turn (short replies still register).
   silence_duration_ms: 1000,
   // Do NOT let detected caller speech truncate the assistant mid-reply. The assistant finishes its
-  // turn; the caller's turn is handled afterward. Identical on browser and phone — no barge-in.
+  // turn; the caller's turn is handled afterward. This is the PHONE-safe default — see the incident
+  // note above and the interactive profile below. Barge-in stays off on telephony until it's verified
+  // on a real forwarded call (echo on a phone line makes early barge-in risky, and the bridge's
+  // idle-timer logic assumes the assistant finishes its reply).
   interrupt_response: false,
+} as const;
+
+// Interactive (near-field browser) turn-taking — used ONLY by the browser Realtime session
+// (src/app/api/voice-session/route.ts: the dashboard test call + the public "Try our service" demo).
+// NEVER used by the phone bridge.
+//
+// Uses SEMANTIC VAD, not the silence-timer server VAD above. A fixed silence timer cannot tell a
+// mid-sentence thinking pause ("what do you guys… have?") from the end of a turn, so any value short
+// enough to feel responsive also cuts hesitant callers off. Semantic VAD lets the model decide when
+// the caller has actually finished a thought, which removes those mid-sentence cutoffs while staying
+// responsive. `eagerness: 'medium'` is the balance point — drop to 'low' if it still jumps in too
+// early, raise to 'high' if it feels slow. `interrupt_response: true` keeps caller→assistant barge-in
+// (the caller can talk over the assistant; the assistant never cuts off the caller). Safe here because
+// WebRTC gives a near-field mic + echo cancellation; telephony keeps the conservative silence-timer
+// REALTIME_VAD until barge-in + semantic endpointing are verified on a real forwarded call.
+export const REALTIME_VAD_INTERACTIVE = {
+  type: 'semantic_vad',
+  eagerness: 'medium',
+  interrupt_response: true,
 } as const;
 
 // Far-field input noise reduction (suppresses steady background noise before VAD / transcription).

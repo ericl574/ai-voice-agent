@@ -3,11 +3,13 @@ import { createClient } from '@/lib/supabase/server';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
 import type { AgentConfig } from '@/lib/supabase/businesses';
 import { REALTIME_TRANSCRIPTION_MODEL, TRANSCRIPTION_LANGUAGE_HINT } from '@/lib/call-pipeline/constants';
-import { REALTIME_VAD, REALTIME_NOISE_REDUCTION } from '@/lib/realtime/turnDetection';
+import { REALTIME_VAD_INTERACTIVE, REALTIME_NOISE_REDUCTION } from '@/lib/realtime/turnDetection';
 import { buildSystemPrompt } from '@/lib/agents/core/promptBuilder';
 import { getDemoBusiness } from '@/lib/agents/demoBusinesses';
 import { getVertical } from '@/lib/agents/verticals/registry';
 import type { KnowledgeRow } from '@/lib/agents/core/types';
+import { requiredReservationFields } from '@/lib/call-pipeline/reservationDraft';
+import { RESERVATION_TOOLS } from '@/lib/realtime/reservationTools';
 import { rateLimit, clientKey } from '@/lib/rate-limit';
 import { readBusinessEntitlement } from '@/lib/billing/entitlement';
 
@@ -49,6 +51,16 @@ export async function POST(req: Request) {
   } catch {
     // no/invalid JSON body — fine, this endpoint also accepts an empty POST
   }
+  // Business type that drives the canonical reservation required-field set (party_size for restaurant
+  // only). Updated below once the real/demo business is resolved; the SAME helper the phone bridge
+  // uses (via /api/twilio/session-config) computes the set, so the two paths cannot drift.
+  let reservationBusinessType: string | null = requestedVertical;
+  // Reservation function tools are registered + the prompt tool-rules are enabled ONLY for the
+  // authenticated dashboard test call (the transport that HANDLES the tool calls — see
+  // src/app/dashboard/voice/page.tsx). The public landing demo (`demo:true`, create_response:true,
+  // handled by CallSimulatorDemo) and the no-business fallback never register them, so the model is
+  // never told to call a tool that has no handler on that surface. Phone stays off (its own CP).
+  let enableReservationTools = false;
 
   // Build the prompt from the authenticated user's business data. The default (missing profile
   // or DB error) resolves to the requested vertical, else the generic vertical.
@@ -66,6 +78,13 @@ export async function POST(req: Request) {
     systemInstructions = demo
       ? buildSystemPrompt(demo.business, demo.agentConfig, demo.knowledge)
       : buildSystemPrompt(null, null, [], requestedVertical);
+    reservationBusinessType = demo?.business.business_type ?? requestedVertical;
+    // Apply the demo business's chosen voice so the public demo doesn't fall back to the flat server
+    // default (a big part of why it sounded robotic). Same clamp as the authenticated path below.
+    if (demo?.agentConfig?.voice_id) voiceId = demo.agentConfig.voice_id;
+    if (typeof demo?.agentConfig?.voice_speed === 'number') {
+      voiceSpeed = Math.min(1.25, Math.max(0.85, demo.agentConfig.voice_speed));
+    }
     console.log(`[FD] voice session vertical: ${requestedVertical ?? 'generic'} (isolated demo${demo ? '' : ' — no demo business, generic fallback'})`);
   } else {
     // Non-demo sessions require a signed-in user. This closes the anonymous cost surface:
@@ -111,7 +130,11 @@ export async function POST(req: Request) {
           business,
           agentConfig,
           (knowledgeRows as KnowledgeRow[]) ?? [],
+          null,
+          true, // reservation tools enabled: this authenticated dashboard session registers + handles them
         );
+        enableReservationTools = true;
+        reservationBusinessType = business.business_type;
         if (agentConfig?.voice_id) voiceId = agentConfig.voice_id;
         if (typeof agentConfig?.voice_speed === 'number') {
           // Clamp to the product range; API accepts 0.25–1.5.
@@ -144,12 +167,15 @@ export async function POST(req: Request) {
           type: 'realtime',
           model: MODEL,
           instructions: systemInstructions,
-          // Conservative server VAD so background noise / breathing / partial words
-          // do NOT chain-trigger redundant assistant responses.
-          //   threshold: 0.50 (default) → 0.65 — caller must speak more clearly to be heard
-          //   silence_duration_ms: 500 (default) → 1000 — wait a full second of silence
-          //                                              before closing the turn
-          //   prefix_padding_ms: 300 — include 0.3s before speech for natural starts
+          // Reservation function tools — registered ONLY for the authenticated dashboard session that
+          // handles the calls (page.tsx). Gated together with the prompt tool-rules above so the tool
+          // surface and the instructions to use it are always enabled/disabled as one unit.
+          ...(enableReservationTools ? { tools: RESERVATION_TOOLS, tool_choice: 'auto' } : {}),
+          // Browser turn-taking uses the INTERACTIVE profile (REALTIME_VAD_INTERACTIVE): SEMANTIC VAD
+          // so the model waits for a complete thought instead of a fixed silence timer (no cutting
+          // callers off mid-sentence), plus interrupt_response TRUE so the caller can barge in. This
+          // deliberately DIFFERS from the phone bridge's conservative silence-timer REALTIME_VAD — a
+          // near-field WebRTC mic + echo cancellation make it safe here. See turnDetection.ts.
           // Per-turn caller transcription is enabled so each caller utterance arrives as its
           // own `conversation.item.input_audio_transcription.completed` event — needed so
           // Call History shows multiple Caller rows instead of one combined blob.
@@ -157,12 +183,10 @@ export async function POST(req: Request) {
           audio: {
             input: {
               noise_reduction: REALTIME_NOISE_REDUCTION,
-              // Shared turn-taking config (src/lib/realtime/turnDetection) — IDENTICAL on the phone
-              // bridge so the two paths can't drift (that drift was why phone calls felt worse). Only
               // create_response is per-client: APP-CONTROLLED (false) for the dashboard test call (the
               // browser creates one response per turn after the noise/intent gate — Layer 2), and the
               // SERVER auto-response (true) for the landing "Try Our Service" demo. See docs/call-pipeline.md.
-              turn_detection: { ...REALTIME_VAD, create_response: isDemo === true },
+              turn_detection: { ...REALTIME_VAD_INTERACTIVE, create_response: isDemo === true },
               transcription: {
                 model: REALTIME_TRANSCRIPTION_MODEL,
                 // Include `language` only when a hint is set. It is null by default so
@@ -193,7 +217,15 @@ export async function POST(req: Request) {
     }
 
     const data = await res.json();
-    return NextResponse.json({ clientSecret: data.value });
+    return NextResponse.json({
+      clientSecret: data.value,
+      // Canonical reservation required-field set (party_size for restaurant only) — same helper the
+      // phone bridge receives via /api/twilio/session-config, so browser and phone can't drift.
+      requiredFields: requiredReservationFields(
+        reservationBusinessType,
+        getVertical(reservationBusinessType).requiredFields,
+      ),
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: msg }, { status: 500 });
