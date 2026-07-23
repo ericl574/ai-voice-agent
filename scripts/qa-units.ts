@@ -23,10 +23,6 @@ import { deriveNeedsStaffFollowup } from '../src/lib/call-pipeline/followup.ts';
 import { buildCallQualityMetric } from '../src/lib/call-pipeline/callQuality.ts';
 import { routeIntent, SPECIALISTS, CALLER_INTENTS } from '../src/lib/agents/routing/intents.ts';
 import { buildAnalystResult } from '../src/lib/call-pipeline/analyst.ts';
-import { ROUTER_PLAYBOOK } from '../src/lib/agents/specialists/router.ts';
-import { BOOKING_PLAYBOOK } from '../src/lib/agents/specialists/booking.ts';
-import { FAQ_PLAYBOOK } from '../src/lib/agents/specialists/faq.ts';
-import { ESCALATION_PLAYBOOK } from '../src/lib/agents/specialists/escalation.ts';
 import { classifyCallHealth } from '../src/lib/call-pipeline/callHealth.ts';
 import { isPastAppointment } from '../src/lib/call-pipeline/pastTime.ts';
 import { REALTIME_VAD, REALTIME_VAD_INTERACTIVE, REALTIME_NOISE_REDUCTION } from '../src/lib/realtime/turnDetection.ts';
@@ -218,7 +214,7 @@ test('effectiveStatus — awaiting_staff_confirmation passes through (no lapse l
 // land on 'awaiting_staff_confirmation' (verified; staff still confirm), never 'confirmed'. Grepped:
 // the RPC is SQL and the confirm page is a client component — neither loads in this bare-node runner.
 test('card completion transitions to awaiting_staff_confirmation, never confirmed', () => {
-  const mig = readFileSync('supabase/migrations/20260716_reservation_card_no_confirm.sql', 'utf8');
+  const mig = readFileSync('supabase/migrations/20260716000002_reservation_card_no_confirm.sql', 'utf8');
   assert(/set status = 'awaiting_staff_confirmation'/.test(mig), 'card completion sets awaiting_staff_confirmation');
   assert(!/set status = 'confirmed'/.test(mig), 'card completion never sets confirmed');
   assert(/return 'verified'/.test(mig), 'returns verified (not confirmed)');
@@ -830,15 +826,16 @@ test('restaurant collection is request-type-aware — takeout covered; party siz
   assert(cp.includes('pickup time') || cp.includes('items'), 'takeout collects order items / pickup time');
 });
 
-test('prompt frames details as a request-scoped MENU, not a per-call checklist', () => {
+test('buildSystemPrompt stays short + role-based (verbose behavioral coaching removed)', () => {
   const src = readFileSync('src/lib/agents/core/promptBuilder.ts', 'utf8');
-  assert(!src.includes('Details to collect when action is needed'), 'old flat-checklist framing removed');
-  assert(src.includes('a MENU of what it cares about') && src.includes('NOT a checklist'), 'details framed as a menu, not a checklist');
-  assert(src.includes('collect ONLY the details that apply to THAT specific request'), 'request-type-driven selection instruction present');
-  assert(src.includes('never ask for a detail that does not apply'), 'never ask irrelevant details');
-  // The vertical-neutral collection principle is reinforced in the shared global rules.
-  const rules = GLOBAL_RULES.toLowerCase();
-  assert(rules.includes("caller's request type") && rules.includes('does not apply to that request'), 'GLOBAL_RULES ties detail selection to request type');
+  // The prompt is deliberately short now: a concrete role + the business KB + the always-on rules.
+  // The old verbose sections (which made the model terse, deflective, and form-like) are gone.
+  assert(!src.includes('renderSpecialistPlaybooks'), 'specialist playbooks no longer rendered');
+  assert(!src.includes('VERTICAL PROFILE'), 'verbose vertical-profile section removed');
+  assert(!src.includes('OWNER-SELECTED PROFILE CONFIG'), 'owner request-type/detail essay removed');
+  // The knowledge base + the concrete greeting still anchor every business prompt.
+  assert(src.includes('What we know about this business'), 'business knowledge is still injected');
+  assert(src.includes('Open the call with'), 'concrete English greeting is still rendered (phone relies on it)');
 });
 
 test('business-type switch RESETS vertical chips (fixes restaurant-holds-auto-repair contamination)', () => {
@@ -859,16 +856,12 @@ test('GLOBAL_RULES — safety-critical lines are present', () => {
   const fragments: Array<[string, string]> = [
     ['never claim to be human', 'identity honesty'],
     ['phone number is always optional', 'phone never blocks a request'],
-    ['never invent, pad, correct, reformat', 'phone digits are exact'],
     ['credit card numbers', 'sensitive-data decline (cards)'],
     ['passwords', 'sensitive-data decline (passwords)'],
-    ['stay in english', 'language default stability'],
-    ['until the caller clearly switches again', 'language switch hysteresis'],
-    // Behavior-upgrade contract — the load-bearing decision framework + non-negotiables.
-    ['how to handle every call', 'front-loaded decision contract'],
-    ['non-negotiables', 'non-negotiables block'],
-    ['pass this to the team', 'capture as request, never false-confirm'],
-    ['unanswered question is a follow-up', 'unknown question becomes staff follow-up'],
+    ['speak english by default', 'language default stability'],
+    ["don't invent", 'never invent facts (hours/prices/services)'],
+    ['the team will confirm', 'never false-confirm — the team confirms'],
+    ['pass the request to the team', 'capture the request for staff / the daily report'],
   ];
   for (const [needle, label] of fragments) {
     assert(rules.includes(needle), `GLOBAL_RULES must contain "${needle}" (${label})`);
@@ -882,15 +875,13 @@ test('GLOBAL_RULES — stays vertical-neutral (industry words live only in verti
   }
 });
 
-test('GLOBAL_RULES — no language MENU (never read a list of languages / ask the caller to choose)', () => {
+test('GLOBAL_RULES — English default, no hard-coded language menu', () => {
   const rules = GLOBAL_RULES.toLowerCase();
-  // The old "I can help in English, Chinese, Korean, or Japanese — which would you prefer?" menu is gone.
+  // Never read a list of languages aloud or ask the caller to pick one.
   assert(!rules.includes('which would you prefer'), 'no "which would you prefer" language menu');
   assert(!rules.includes('english, chinese, korean, or japanese'), 'no hard-coded language list to read aloud');
-  // The replacement directive is present: keep helping in the current language, offer no menu.
-  assert(rules.includes('do not offer a list of languages') || rules.includes('language menu'), 'no-menu directive present');
-  // Default-English + hysteresis (safety-critical) must still hold.
-  assert(rules.includes('stay in english'), 'default-English stability retained');
+  // Default-English (safety-critical — guards against the random-language greeting regression) still holds.
+  assert(rules.includes('speak english by default'), 'default-English retained');
 });
 
 test('twilio/voice disclosure is the shortest transcription notice — no AI/service intro or filler', () => {
@@ -1498,7 +1489,7 @@ test('REALTIME_VAD — locked safety-critical turn-taking values', () => {
 
 // The browser-only interactive profile: SEMANTIC endpointing (no mid-sentence cutoffs) + barge-in for
 // the near-field WebRTC demo. Deliberately a different mechanism from the phone's silence-timer VAD.
-test('REALTIME_VAD_INTERACTIVE — browser-only: semantic endpointing + barge-in (no mid-sentence cutoffs)', () => {
+test('REALTIME_VAD_INTERACTIVE — retained (currently unused) semantic-VAD profile for easy re-add', () => {
   eq(REALTIME_VAD_INTERACTIVE.type, 'semantic_vad', 'semantic VAD — waits for a complete thought');
   eq(REALTIME_VAD_INTERACTIVE.eagerness, 'medium', 'balanced responsiveness (low = wait more, high = snappier)');
   eq(REALTIME_VAD_INTERACTIVE.interrupt_response, true, 'barge-in ON for the near-field browser demo');
@@ -1536,15 +1527,22 @@ test('voice page waits out a transient disconnect (does not instantly tear down)
   );
 });
 
-test('browser uses interactive VAD; phone keeps the conservative shared VAD (intentional, guarded split)', () => {
+test('browser uses OpenAI default server VAD; phone keeps the conservative shared VAD (intentional split)', () => {
   const voiceSession = readFileSync('src/app/api/voice-session/route.ts', 'utf8');
   const bridge = readFileSync('server/twilio-bridge.ts', 'utf8');
-  assert(voiceSession.includes('REALTIME_VAD_INTERACTIVE'), 'browser session uses the interactive profile');
-  assert(bridge.includes('REALTIME_VAD'), 'phone bridge uses the shared turn-taking config');
-  // Barge-in must NOT leak onto the phone path — telephony echo + the bridge idle-timer logic assume
-  // interrupt_response:false. If this trips, someone pointed the bridge at the interactive profile.
+  // Browser was stripped to OpenAI defaults (near-field mic + echo cancellation make them feel great);
+  // it must NOT override VAD / noise / voice / speed anymore.
+  assert(!voiceSession.includes('REALTIME_VAD_INTERACTIVE'), 'browser no longer forces the semantic VAD profile');
+  assert(!voiceSession.includes('noise_reduction'), 'browser no longer overrides noise reduction');
+  assert(voiceSession.includes("type: 'server_vad'"), 'browser uses plain server VAD (OpenAI defaults)');
+  // The phone bridge KEEPS its conservative shared VAD — telephony echo + the bridge idle/reconnect
+  // logic assume interrupt_response:false. If this trips, someone pointed the bridge at barge-in.
+  assert(bridge.includes('REALTIME_VAD'), 'phone bridge keeps the conservative turn-taking config (no barge-in)');
   assert(!bridge.includes('REALTIME_VAD_INTERACTIVE'), 'barge-in must not leak to the phone path');
-  assert(bridge.includes('REALTIME_NOISE_REDUCTION'), 'phone bridge uses shared noise reduction');
+  // voice / speed / noise_reduction were dropped on the phone (2026-07-23) → OpenAI defaults, matching
+  // the browser. The conservative VAD is deliberately KEPT (the bridge assumes interrupt_response:false).
+  assert(!bridge.includes('REALTIME_NOISE_REDUCTION'), 'phone no longer overrides noise reduction');
+  assert(!bridge.includes('speed: cfg.speed'), 'phone no longer overrides speaking speed');
 });
 
 test('phone greeting uses the session prompt (bare response.create), not a per-response override', () => {
@@ -2118,46 +2116,10 @@ test('buildAnalystResult — staff_summary is a capped summary, never the transc
   assert(!r.staff_summary.includes('Front desk:') && !r.staff_summary.includes('Caller:'), 'not a transcript');
 });
 
-// ── Specialist playbooks — content + silent-routing contract ──────────────────────────────────
-
-test('specialist playbooks — instruct SILENT routing (one smooth front desk, no announced hand-off)', () => {
-  const router = ROUTER_PLAYBOOK.toLowerCase();
-  assert(router.includes('silently') || router.includes('silent'), 'router routes silently');
-  assert(router.includes('one front desk'), 'reinforces one-assistant experience');
-  assert(router.includes('never announce') || router.includes('never say you are transferring'), 'no announced transfer');
-  for (const [name, text] of Object.entries({ ROUTER_PLAYBOOK, BOOKING_PLAYBOOK, FAQ_PLAYBOOK, ESCALATION_PLAYBOOK })) {
-    assert(text.length > 60, `${name} non-trivial`);
-  }
-});
-
-test('booking playbook — collects required details, validates, never false-confirms', () => {
-  const t = BOOKING_PLAYBOOK.toLowerCase();
-  for (const needle of ['name', 'date and time', 'reschedule', 'cancellation', 'past']) {
-    assert(t.includes(needle), `booking mentions "${needle}"`);
-  }
-  assert(t.includes('staff confirm') || /never say it is[\s\S]{0,30}booked/.test(t), 'never false-confirms');
-});
-
-test('faq playbook — answers only from KB, never invents, offers a note', () => {
-  const t = FAQ_PLAYBOOK.toLowerCase();
-  assert(t.includes('knowledge base'), 'references KB');
-  assert(t.includes('do not invent'), 'no invention');
-  assert(t.includes('note'), 'offers a note for staff');
-});
-
-test('escalation playbook — collects a staff message, promises follow-up, no fake resolution', () => {
-  const t = ESCALATION_PLAYBOOK.toLowerCase();
-  assert(t.includes('message for the team'), 'collects a concise staff message');
-  assert(t.includes('follow up'), 'promises follow-up');
-  assert(t.includes('do not promise') || t.includes('not claim to have fixed'), 'no fake resolution');
-});
-
-test('buildSystemPrompt wires the specialist playbooks into BOTH prompt branches', () => {
-  const src = readFileSync('src/lib/agents/core/promptBuilder.ts', 'utf8');
-  const idx = readFileSync('src/lib/agents/specialists/index.ts', 'utf8');
-  eq((src.match(/renderSpecialistPlaybooks\(\)/g) || []).length, 2, 'rendered in both no-business + business branches');
-  assert(idx.includes('SPECIALIST PLAYBOOKS') && idx.includes('SILENTLY'), 'composer emits the section + silent-routing rule');
-});
+// NOTE: the specialist PLAYBOOK prompt strings (router/booking/faq/escalation) were removed when the
+// prompt was cut down to a short role + guardrails — the model handles routing naturally without a
+// scripted internal-mode essay. The caller-intent → specialist REGISTRY (routing/intents.ts) stays as
+// the post-call analyst's source of truth and is covered by the "SPECIALISTS registry" test above.
 
 // ── classifyCallHealth — operator failed/low-quality call visibility (pure) ────────────────────
 

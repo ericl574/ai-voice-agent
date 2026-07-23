@@ -28,7 +28,7 @@ import { pathToFileURL } from 'url';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 // Shared turn-taking config — the SAME source the browser session uses, so phone and browser can't
 // drift. Relative .ts import (resolved by `node --experimental-strip-types`, like the QA scripts).
-import { REALTIME_VAD, REALTIME_NOISE_REDUCTION } from '../src/lib/realtime/turnDetection.ts';
+import { REALTIME_VAD } from '../src/lib/realtime/turnDetection.ts';
 // Same conservative, context-free goodbye/end-cue detector the browser path uses, so a "goodbye"
 // is recognized identically on both paths. It is deliberately pure + self-contained (no imports),
 // so it is safe to load into this standalone bridge runtime via a relative .ts import.
@@ -383,7 +383,6 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
             silence_duration_ms: REALTIME_VAD.silence_duration_ms,
           },
           input_audio_transcription: { model: TRANSCRIPTION_MODEL },
-          ...(cfg.voice ? { voice: cfg.voice } : {}),
         },
       });
     } else {
@@ -395,18 +394,16 @@ function handleTwilioConnection(twilioWs: WebSocket): void {
           audio: {
             input: {
               format: { type: 'audio/pcmu' },
-              // Shared turn-taking config — IDENTICAL to the browser (src/lib/realtime/turnDetection):
-              // tuned VAD + interrupt_response:false, so the assistant finishes its turn instead of
-              // being talked over / truncated. create_response stays at the server default
-              // (auto-response) for the phone path; app-controlled responses are Phase 2.
+              // Conservative phone VAD (REALTIME_VAD): tuned server VAD + interrupt_response:false, so the
+              // assistant finishes its turn instead of being talked over / truncated — the bridge's
+              // greeting + idle logic assumes NO barge-in, so this stays. create_response stays at the
+              // server default (auto-response); app-controlled responses are Phase 2. voice / speed /
+              // noise_reduction were dropped (2026-07-23) so the phone uses OpenAI's own defaults.
               turn_detection: { ...REALTIME_VAD },
-              noise_reduction: REALTIME_NOISE_REDUCTION,
               transcription: { model: TRANSCRIPTION_MODEL },
             },
             output: {
               format: { type: 'audio/pcmu' },
-              speed: cfg.speed,
-              ...(cfg.voice ? { voice: cfg.voice } : {}),
             },
           },
         },

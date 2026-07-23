@@ -1,4 +1,4 @@
-# FrontDesk — Claude Code Project Guide
+# FrontDesk — Codex Project Guide
 
 FrontDesk is a real SaaS MVP: an **after-hours / missed-call capture** service for local service
 businesses. It answers the calls a business was already missing (after hours, no-answer, busy),
@@ -6,7 +6,7 @@ captures the caller's request naturally using business knowledge, saves the call
 owner **one clean daily report**. It is a lightweight answering service — **not** a full daytime
 staff replacement.
 
-Claude Code is the implementation agent. Eric / ChatGPT are PM, QA, and final approval.
+Codex is the implementation agent. Eric / ChatGPT are PM, QA, and final approval.
 
 **This file is the root constitution and index — keep it lean.** It holds permanent rules, safety,
 workflow, and pointers. Deep detail lives in `docs/` (linked below). Do not use this file as a

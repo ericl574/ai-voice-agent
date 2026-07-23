@@ -29,9 +29,12 @@ export const REALTIME_VAD = {
   interrupt_response: false,
 } as const;
 
-// Interactive (near-field browser) turn-taking — used ONLY by the browser Realtime session
-// (src/app/api/voice-session/route.ts: the dashboard test call + the public "Try our service" demo).
-// NEVER used by the phone bridge.
+// Interactive (near-field browser) turn-taking — SEMANTIC VAD + barge-in.
+//
+// CURRENTLY UNUSED: the browser Realtime session was reverted to OpenAI's default server VAD (the
+// near-field mic + echo cancellation make the defaults feel great, and we chose to trust the model's
+// own settings rather than layer our own). This profile is kept here, documented and tested, so it is
+// a one-line re-add if the browser ever needs semantic endpointing again. NEVER used by the phone bridge.
 //
 // Uses SEMANTIC VAD, not the silence-timer server VAD above. A fixed silence timer cannot tell a
 // mid-sentence thinking pause ("what do you guys… have?") from the end of a turn, so any value short

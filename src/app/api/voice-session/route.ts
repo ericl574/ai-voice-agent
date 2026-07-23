@@ -3,7 +3,6 @@ import { createClient } from '@/lib/supabase/server';
 import { getActiveBusiness } from '@/lib/supabase/businesses';
 import type { AgentConfig } from '@/lib/supabase/businesses';
 import { REALTIME_TRANSCRIPTION_MODEL, TRANSCRIPTION_LANGUAGE_HINT } from '@/lib/call-pipeline/constants';
-import { REALTIME_VAD_INTERACTIVE, REALTIME_NOISE_REDUCTION } from '@/lib/realtime/turnDetection';
 import { buildSystemPrompt } from '@/lib/agents/core/promptBuilder';
 import { getDemoBusiness } from '@/lib/agents/demoBusinesses';
 import { getVertical } from '@/lib/agents/verticals/registry';
@@ -14,8 +13,7 @@ import { rateLimit, clientKey } from '@/lib/rate-limit';
 import { readBusinessEntitlement } from '@/lib/billing/entitlement';
 
 const MODEL = 'gpt-realtime';
-const maxSpeed = 1.5;
-const minSpeed = 1;
+
 export async function GET() {
   return NextResponse.json({ configured: !!process.env.OPENAI_API_KEY });
 }
@@ -40,14 +38,17 @@ export async function POST(req: Request) {
     );
   }
 
-  // Body: `{ demo, businessType }`. The public landing "Try our service" demo sends `demo: true`
-  // plus the picked service. Safely ignored if the body is empty/invalid (dashboard test posts
-  // nothing).
+  // Body: `{ demo, businessType, raw }`. The public landing "Try our service" demo sends `demo: true`
+  // plus the picked service. The "API" control button additionally sends `raw: true` — same demo
+  // surface (no auth, nothing saved), but the model is shipped with NONE of FrontDesk's layers (see
+  // the raw session below). Safely ignored if the body is empty/invalid (dashboard test posts nothing).
   let isDemo = false;
+  let isRaw = false;
   let requestedVertical: string | null = null;
   try {
     const body = await req.json();
     if (body && body.demo === true) isDemo = true;
+    if (body && body.raw === true) isRaw = true;
     if (body && typeof body.businessType === 'string') requestedVertical = body.businessType;
   } catch {
     // no/invalid JSON body — fine, this endpoint also accepts an empty POST
@@ -66,27 +67,21 @@ export async function POST(req: Request) {
   // Build the prompt from the authenticated user's business data. The default (missing profile
   // or DB error) resolves to the requested vertical, else the generic vertical.
   let systemInstructions = buildSystemPrompt(null, null, [], requestedVertical);
-  // Voice settings applied to the Realtime session's audio.output. Defaults preserve current
-  // behavior: no voice override (server default) and normal (1.3) speed.
-  let voiceId: string | undefined;
-  let voiceSpeed = 1.3;
-
 
   // Landing demo: ALWAYS use the selected service's demo business and NEVER read the visitor's
   // account — even if they happen to be signed in. This keeps each service isolated and correct
   // (a Clinic demo must not adopt a signed-in restaurant's identity or mention takeout).
-  if (isDemo) {
+  if (isRaw) {
+    // "API" control experiment: ship the model RAW — no instructions, no tools, no voice/noise/VAD
+    // overrides (built below). No account read, nothing saved, still rate-limited above. Lets us A/B
+    // whether FrontDesk's ~5–6k-token prompt layer, not the model, is what feels less capable.
+    console.log('[FD] voice session: RAW (no prompt / OpenAI defaults) — control experiment');
+  } else if (isDemo) {
     const demo = getDemoBusiness(requestedVertical);
     systemInstructions = demo
       ? buildSystemPrompt(demo.business, demo.agentConfig, demo.knowledge)
       : buildSystemPrompt(null, null, [], requestedVertical);
     reservationBusinessType = demo?.business.business_type ?? requestedVertical;
-    // Apply the demo business's chosen voice so the public demo doesn't fall back to the flat server
-    // default (a big part of why it sounded robotic). Same clamp as the authenticated path below.
-    if (demo?.agentConfig?.voice_id) voiceId = demo.agentConfig.voice_id;
-    if (typeof demo?.agentConfig?.voice_speed === 'number') {
-      voiceSpeed = Math.min(maxSpeed, Math.max(minSpeed, demo.agentConfig.voice_speed));
-    }
     console.log(`[FD] voice session vertical: ${requestedVertical ?? 'generic'} (isolated demo${demo ? '' : ' — no demo business, generic fallback'})`);
   } else {
     // Non-demo sessions require a signed-in user. This closes the anonymous cost surface:
@@ -137,11 +132,6 @@ export async function POST(req: Request) {
         );
         enableReservationTools = true;
         reservationBusinessType = business.business_type;
-        if (agentConfig?.voice_id) voiceId = agentConfig.voice_id;
-        if (typeof agentConfig?.voice_speed === 'number') {
-          // Clamp to the product range; API accepts 0.25–1.5.
-          voiceSpeed = Math.min(maxSpeed, Math.max(minSpeed, agentConfig.voice_speed));
-        }
         console.log(
           `[FD] voice session vertical: ${getVertical(business.business_type).id} (business_type: ${business.business_type})`,
         );
@@ -154,7 +144,48 @@ export async function POST(req: Request) {
     }
   }
 
-  console.log(`[FD] voice session audio.output → voice: ${voiceId ?? '(server default)'}, speed: ${voiceSpeed} (applied via API config)`);
+  // RAW control ("API" button): the model on OpenAI's own defaults — NO instructions, NO tools, NO
+  // voice/speed/noise overrides. Only server VAD with auto-response so it replies when the caller
+  // stops. This is the deliberate A/B against the full FrontDesk session below.
+  const rawSession = {
+    type: 'realtime',
+    model: MODEL,
+    audio: {
+      input: {
+        turn_detection: { type: 'server_vad', create_response: true, interrupt_response: true },
+      },
+    },
+  };
+
+  const fullSession = {
+    type: 'realtime',
+    model: MODEL,
+    instructions: systemInstructions,
+    // Reservation function tools — registered ONLY for the authenticated dashboard session that
+    // handles the calls (page.tsx). Gated together with the prompt tool-rules above so the tool
+    // surface and the instructions to use it are always enabled/disabled as one unit.
+    ...(enableReservationTools ? { tools: RESERVATION_TOOLS, tool_choice: 'auto' } : {}),
+    // Browser turn-taking is now OpenAI's DEFAULT server VAD (no threshold/silence/noise/voice/speed
+    // overrides) — the near-field WebRTC mic + echo cancellation make the defaults feel great, and the
+    // custom semantic-VAD/voice/speed layer was removed as part of trusting the model's own settings.
+    // (The phone bridge keeps its conservative REALTIME_VAD — its idle/reconnect logic assumes no
+    // barge-in; see server/twilio-bridge.ts.) `create_response` is the ONE thing we still set here: it
+    // is the Layer-2 architecture switch, not a tuning knob — APP-CONTROLLED (false) for the dashboard
+    // test call (one response per turn after the noise/intent gate), SERVER auto-response (true) for the
+    // landing demo. See docs/call-pipeline.md. Per-turn transcription stays on for Call History.
+    audio: {
+      input: {
+        turn_detection: { type: 'server_vad', create_response: isDemo === true },
+        transcription: {
+          model: REALTIME_TRANSCRIPTION_MODEL,
+          // Include `language` only when a hint is set. It is null by default so transcription
+          // auto-detects the caller's language. Never pass an empty string. The assistant's default
+          // response language is English via the prompt — independent of this transcription setting.
+          ...(TRANSCRIPTION_LANGUAGE_HINT ? { language: TRANSCRIPTION_LANGUAGE_HINT } : {}),
+        },
+      },
+    },
+  };
 
   try {
     const res = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
@@ -165,47 +196,7 @@ export async function POST(req: Request) {
       },
       body: JSON.stringify({
         expires_after: { anchor: 'created_at', seconds: 300 },
-        session: {
-          type: 'realtime',
-          model: MODEL,
-          instructions: systemInstructions,
-          // Reservation function tools — registered ONLY for the authenticated dashboard session that
-          // handles the calls (page.tsx). Gated together with the prompt tool-rules above so the tool
-          // surface and the instructions to use it are always enabled/disabled as one unit.
-          ...(enableReservationTools ? { tools: RESERVATION_TOOLS, tool_choice: 'auto' } : {}),
-          // Browser turn-taking uses the INTERACTIVE profile (REALTIME_VAD_INTERACTIVE): SEMANTIC VAD
-          // so the model waits for a complete thought instead of a fixed silence timer (no cutting
-          // callers off mid-sentence), plus interrupt_response TRUE so the caller can barge in. This
-          // deliberately DIFFERS from the phone bridge's conservative silence-timer REALTIME_VAD — a
-          // near-field WebRTC mic + echo cancellation make it safe here. See turnDetection.ts.
-          // Per-turn caller transcription is enabled so each caller utterance arrives as its
-          // own `conversation.item.input_audio_transcription.completed` event — needed so
-          // Call History shows multiple Caller rows instead of one combined blob.
-          // `language` is a soft hint (default English, auto-switches on clearly non-English speech).
-          audio: {
-            input: {
-              noise_reduction: REALTIME_NOISE_REDUCTION,
-              // create_response is per-client: APP-CONTROLLED (false) for the dashboard test call (the
-              // browser creates one response per turn after the noise/intent gate — Layer 2), and the
-              // SERVER auto-response (true) for the landing "Try Our Service" demo. See docs/call-pipeline.md.
-              turn_detection: { ...REALTIME_VAD_INTERACTIVE, create_response: isDemo === true },
-              transcription: {
-                model: REALTIME_TRANSCRIPTION_MODEL,
-                // Include `language` only when a hint is set. It is null by default so
-                // transcription auto-detects the caller's language (English, Chinese, code-switched,
-                // …). Never pass an empty string. The assistant's default response language is
-                // English via the prompt — independent of this transcription setting.
-                ...(TRANSCRIPTION_LANGUAGE_HINT ? { language: TRANSCRIPTION_LANGUAGE_HINT } : {}),
-              },
-            },
-            // Voice + speaking speed are real Realtime params (applied via API, not the prompt).
-            // voice omitted → server default voice (preserves prior behavior).
-            output: {
-              ...(voiceId ? { voice: voiceId } : {}),
-              speed: voiceSpeed,
-            },
-          },
-        },
+        session: isRaw ? rawSession : fullSession,
       }),
     });
 

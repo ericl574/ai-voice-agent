@@ -33,6 +33,8 @@ export default function CallSimulatorDemo() {
   const [selectedService, setSelectedService] = useState(SERVICES[0]?.value ?? 'restaurant');
   const [callStatus, setCallStatus] = useState<CallStatus>('idle');
   const [callError, setCallError] = useState('');
+  // True when the current live call is the "API" control (raw OpenAI Realtime, none of our prompt).
+  const [rawCall, setRawCall] = useState(false);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -125,7 +127,10 @@ export default function CallSimulatorDemo() {
   }
 
   // ── Live call ─────────────────────────────────────────────────────────────
-  async function startCall() {
+  // `raw` = the "API" control: the server ships the model with no FrontDesk prompt/config (see
+  // /api/voice-session). Same transport otherwise, so the ONLY variable is our prompt layer.
+  async function startCall(raw = false) {
+    setRawCall(raw);
     setCallError('');
     setMode('live');
     setCallStatus('requesting');
@@ -155,7 +160,7 @@ export default function CallSimulatorDemo() {
       const tokenRes = await fetch('/api/voice-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ demo: true, businessType: selectedService }),
+        body: JSON.stringify({ demo: true, businessType: selectedService, raw }),
       });
       if (!tokenRes.ok) {
         const body = await tokenRes.json().catch(() => ({ error: 'Server error' }));
@@ -322,7 +327,7 @@ export default function CallSimulatorDemo() {
               })}
             </div>
             <button
-              onClick={startCall}
+              onClick={() => startCall(false)}
               className="w-full sm:w-auto flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold px-6 py-3 rounded-lg transition-colors"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -333,6 +338,22 @@ export default function CallSimulatorDemo() {
             <p className="mt-3 text-xs text-gray-400">
               A real live call answered by an automated front desk. Microphone access required. Nothing is saved.
             </p>
+
+            {/* ── Control experiment: raw OpenAI Realtime API, none of FrontDesk's prompt/config ── */}
+            <div className="mt-5 pt-5 border-t border-dashed border-gray-200">
+              <button
+                onClick={() => startCall(true)}
+                className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-700 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                </svg>
+                API
+              </button>
+              <p className="mt-2 text-xs text-gray-400">
+                Control test — talks to the raw OpenAI Realtime API with <strong>no prompt or config from FrontDesk</strong>. Service selection is ignored.
+              </p>
+            </div>
           </div>
         )}
 
@@ -348,7 +369,7 @@ export default function CallSimulatorDemo() {
                 </div>
                 <p className="text-sm text-gray-700 max-w-xs mb-5">{callError}</p>
                 <div className="flex gap-3">
-                  <button onClick={startCall} className="bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors">
+                  <button onClick={() => startCall(rawCall)} className="bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors">
                     Try again
                   </button>
                   <button onClick={endCall} className="border border-gray-200 hover:border-gray-300 text-gray-700 text-sm font-medium px-5 py-2.5 rounded-lg transition-colors">
@@ -375,7 +396,9 @@ export default function CallSimulatorDemo() {
                 <p className="text-sm font-semibold text-gray-900 mb-1">
                   {callStatus === 'connected' ? `Listening — speak now` : callStatus === 'connecting' ? 'Connecting…' : 'Requesting microphone…'}
                 </p>
-                <p className="text-xs text-gray-500 mb-6">{selectedLabel} front desk · live demo, not saved</p>
+                <p className="text-xs text-gray-500 mb-6">
+                  {rawCall ? 'Raw OpenAI Realtime API · no prompt attached' : `${selectedLabel} front desk`} · live demo, not saved
+                </p>
                 <div className="flex gap-3">
                   <button onClick={endCall} className="bg-red-500 hover:bg-red-600 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors">
                     End call

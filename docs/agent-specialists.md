@@ -4,6 +4,16 @@ How the live phone agent is organized as a **router + specialists + post-call an
 caller experiences **one smooth front desk**. This is the modular architecture; native OpenAI Agents
 SDK handoffs are a documented later migration (see the last section).
 
+> **UPDATE (2026-07-23): the specialist *prompt playbooks* were removed.** The live prompt was cut down
+> to a short role + a handful of guardrails (see `docs/agent-behavior.md` and `promptBuilder.ts`). The
+> model now classifies intent and adapts on its own, without an in-prompt router/booking/faq/escalation
+> essay — the four `src/lib/agents/specialists/*` playbook modules and `renderSpecialistPlaybooks()` are
+> **deleted**. **What remains** is the intent → specialist *registry* in
+> `src/lib/agents/routing/intents.ts` (`routeIntent`, `SPECIALISTS`, `CALLER_INTENTS`), which is the
+> **post-call analyst's** source of truth (dashboard analysis), **not** a prompt mechanism. Read the
+> registry + analyst material below as current; treat the "specialist playbook" / prompt-composition
+> parts as historical.
+
 ## Why modular (not native SDK handoffs, yet)
 
 The live call is a **single OpenAI Realtime speech-to-speech session** (`gpt-realtime`) — raw Realtime

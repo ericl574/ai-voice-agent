@@ -5,6 +5,12 @@ The behavior spec for how the front-desk assistant should converse. This guides 
 (`tests/voice-agent-evals/frontdesk-ai-eval-cases.json`). The prompt is the implementation; this
 doc is the intent.
 
+> **Note (2026-07-23):** the prompt was deliberately cut to a short role + ~5 core guardrails
+> (don't false-confirm, don't invent, capture the request, not-a-human, English default). It no longer
+> spells out every rule below — the model (`gpt-realtime`) handles pacing, turn-taking, and phrasing
+> naturally, and heavy coaching was making it terse and deflective. The rules below remain the
+> behavioral **intent** and the **eval targets**, not a literal prompt transcript.
+
 ## MVP framing — what a good call achieves
 
 FrontDesk answers the calls a business was already missing (after hours / no-answer / busy; **pilot #1 is after-hours only**). The

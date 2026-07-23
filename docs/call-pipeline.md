@@ -58,13 +58,16 @@ Server mints an ephemeral client secret (`POST /v1/realtime/client_secrets`). Th
 key never leaves the server. Session payload includes:
 
 - `model: gpt-realtime`, `instructions: <system prompt>` (built by `buildSystemPrompt`).
-- `audio.input.turn_detection` — **server VAD tuned conservatively** so background noise /
-  breathing / partial words don't chain-trigger responses:
-  - `threshold: 0.70` (default ~0.5 — caller must speak more clearly; raised for noisy calls)
-  - `silence_duration_ms: 1000` (default ~500 — wait a full second before closing a turn)
-  - `prefix_padding_ms: 300`, **`create_response: false`** (Layer 2 — the app creates responses, see
-    §2a), `interrupt_response: false`
-- `audio.input.noise_reduction: { type: 'far_field' }`.
+- `audio.input.turn_detection` — **OpenAI's DEFAULT `server_vad`** (2026-07-23): the browser no longer
+  overrides threshold / silence / noise / voice / speed. The near-field WebRTC mic + echo cancellation
+  make the defaults feel great, and the custom semantic-VAD/voice/speed layer was removed to trust the
+  model's own settings. The one field still set is **`create_response`**: `false` on the authenticated
+  dashboard test call (Layer 2 — the app creates responses, see §2a) and `true` on the landing demo
+  (server auto-response). The retained (currently unused) `REALTIME_VAD_INTERACTIVE` profile in
+  `turnDetection.ts` is a one-line re-add if semantic endpointing is ever wanted again.
+- **No `noise_reduction`** on the browser anymore (removed with the strip). *The phone bridge keeps its
+  conservative `REALTIME_VAD` + `far_field` noise reduction — its idle/reconnect logic assumes
+  `interrupt_response: false`; see `server/twilio-bridge.ts`.*
 - `audio.input.transcription: { model: 'gpt-4o-transcribe' }` (no `language`) — **enables per-turn
   caller transcription**, so each caller utterance arrives as its own event (see §2). This
   **prioritizes transcript accuracy over instant live-text speed**: `gpt-4o-transcribe` is close to
