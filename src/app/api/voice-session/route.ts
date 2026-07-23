@@ -14,7 +14,8 @@ import { rateLimit, clientKey } from '@/lib/rate-limit';
 import { readBusinessEntitlement } from '@/lib/billing/entitlement';
 
 const MODEL = 'gpt-realtime';
-
+const maxSpeed = 1.5;
+const minSpeed = 1;
 export async function GET() {
   return NextResponse.json({ configured: !!process.env.OPENAI_API_KEY });
 }
@@ -66,9 +67,10 @@ export async function POST(req: Request) {
   // or DB error) resolves to the requested vertical, else the generic vertical.
   let systemInstructions = buildSystemPrompt(null, null, [], requestedVertical);
   // Voice settings applied to the Realtime session's audio.output. Defaults preserve current
-  // behavior: no voice override (server default) and normal (1.0) speed.
+  // behavior: no voice override (server default) and normal (1.3) speed.
   let voiceId: string | undefined;
-  let voiceSpeed = 1.0;
+  let voiceSpeed = 1.3;
+
 
   // Landing demo: ALWAYS use the selected service's demo business and NEVER read the visitor's
   // account — even if they happen to be signed in. This keeps each service isolated and correct
@@ -83,7 +85,7 @@ export async function POST(req: Request) {
     // default (a big part of why it sounded robotic). Same clamp as the authenticated path below.
     if (demo?.agentConfig?.voice_id) voiceId = demo.agentConfig.voice_id;
     if (typeof demo?.agentConfig?.voice_speed === 'number') {
-      voiceSpeed = Math.min(1.25, Math.max(0.85, demo.agentConfig.voice_speed));
+      voiceSpeed = Math.min(maxSpeed, Math.max(minSpeed, demo.agentConfig.voice_speed));
     }
     console.log(`[FD] voice session vertical: ${requestedVertical ?? 'generic'} (isolated demo${demo ? '' : ' — no demo business, generic fallback'})`);
   } else {
@@ -138,7 +140,7 @@ export async function POST(req: Request) {
         if (agentConfig?.voice_id) voiceId = agentConfig.voice_id;
         if (typeof agentConfig?.voice_speed === 'number') {
           // Clamp to the product range; API accepts 0.25–1.5.
-          voiceSpeed = Math.min(1.25, Math.max(0.85, agentConfig.voice_speed));
+          voiceSpeed = Math.min(maxSpeed, Math.max(minSpeed, agentConfig.voice_speed));
         }
         console.log(
           `[FD] voice session vertical: ${getVertical(business.business_type).id} (business_type: ${business.business_type})`,
