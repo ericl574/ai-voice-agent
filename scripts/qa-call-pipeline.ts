@@ -15,6 +15,8 @@ import {
 
 import { roleLabel } from '../src/lib/call-pipeline/roles.ts';
 import { buildTranscript, CALLER_LABEL, FRONT_DESK_LABEL } from '../src/lib/call-pipeline/transcript.ts';
+import { autoRepairProfile } from '../src/lib/agents/verticals/autoRepair.ts';
+import { restaurantProfile } from '../src/lib/agents/verticals/restaurant.ts';
 
 // ── Minimal test runner ──────────────────────────────────────────────────────
 
@@ -46,6 +48,50 @@ function eq<T>(actual: T, expected: T, label: string): void {
   }
 }
 
+function assertValidExtraction(
+  result: ExtractionResult,
+  options: { fallbackIdentityMustBeNull?: boolean } = {},
+): void {
+  const appointmentCreated = result.appointment?.should_create === true;
+  const serviceRequestCreated = result.service_request?.should_create === true;
+  assert(
+    !(appointmentCreated && serviceRequestCreated),
+    'appointment and service_request must not both be created',
+  );
+  if (appointmentCreated) {
+    eq(result.intent, 'appointment_request', 'created appointment must use appointment_request');
+  }
+  if (serviceRequestCreated) {
+    assert(
+      !['appointment_request', 'general_question', 'other'].includes(result.intent),
+      `created service request contradicts intent ${JSON.stringify(result.intent)}`,
+    );
+  }
+
+  const optionalStrings = [
+    result.caller_name,
+    result.caller_phone,
+    result.appointment?.requested_date,
+    result.appointment?.requested_time,
+    result.appointment?.service,
+    result.appointment?.notes,
+    result.service_request?.title,
+    result.service_request?.description,
+  ];
+  for (const value of optionalStrings) {
+    assert(value == null || value.trim().length > 0, 'optional fields must not be whitespace-only');
+  }
+  const urgency = result.service_request?.urgency;
+  assert(
+    urgency == null || urgency === 'normal' || urgency === 'urgent',
+    `invalid service request urgency ${JSON.stringify(urgency)}`,
+  );
+  if (options.fallbackIdentityMustBeNull) {
+    assert(result.caller_name === null, 'fallback must not invent caller_name');
+    assert(result.caller_phone === null, 'fallback must not invent caller_phone');
+  }
+}
+
 // ── Pipeline helper ───────────────────────────────────────────────────────────
 // Simulates the fallback path (no OpenAI available).
 // This is the deterministic half of the pipeline that runs in production
@@ -62,7 +108,9 @@ function runFallback(transcript: string): ExtractionResult {
     service_request: null,
     next_action: 'Review call transcript manually.',
   };
-  return applyKeywordFallbacks(base, callerText, 'fallback');
+  const result = applyKeywordFallbacks(base, callerText, 'fallback');
+  assertValidExtraction(result, { fallbackIdentityMustBeNull: true });
+  return result;
 }
 
 // ── Suite 1: Appointment classification ──────────────────────────────────────
@@ -308,6 +356,56 @@ test('"come in" in caller line triggers hasAppointmentKeywords (no explicit "app
   assert(hasAppointmentKeywords(callerText), 'hasAppointmentKeywords must match "come in"');
 });
 
+const NON_CREATION_APPOINTMENT_CASES = [
+  'I do not want to make an appointment.',
+  'I already have an appointment.',
+  'I need to cancel my appointment.',
+  'I need to reschedule my appointment.',
+  'Do I need an appointment?',
+  "I don't want to book a new appointment.",
+  'I already have another appointment.',
+  'Do I need another appointment?',
+  'I need to reschedule another appointment.',
+  'I need to cancel another appointment.',
+  '我不想预约。',
+  '我已经有预约了。',
+  '我想取消预约。',
+  '我想把预约改期。',
+  '我需要预约吗？',
+] as const;
+
+for (const utterance of NON_CREATION_APPOINTMENT_CASES) {
+  test(`${JSON.stringify(utterance)} does not create a new appointment or service request`, () => {
+    const r = runFallback(`Front desk: How can I help?\nCaller: ${utterance}`);
+    assert(!r.appointment?.should_create, 'appointment.should_create must be false');
+    assert(!r.service_request?.should_create, 'service_request.should_create must be false');
+  });
+}
+
+test('Purely informational "book" and "service" mentions create no record', () => {
+  const r = runFallback(
+    'Front desk: How can I help?\nCaller: I was reading a book about car service.',
+  );
+  assert(!r.appointment?.should_create, 'appointment.should_create must be false');
+  assert(!r.service_request?.should_create, 'service_request.should_create must be false');
+});
+
+test('An explicit request for another appointment still creates one', () => {
+  const r = runFallback(
+    'Front desk: How can I help?\nCaller: I already have an appointment, but I want to book another appointment for Friday.',
+  );
+  assert(r.appointment?.should_create === true, 'appointment.should_create must be true');
+  assert(!r.service_request?.should_create, 'service_request.should_create must be false');
+});
+
+test('An explicit Chinese request for another appointment still creates one', () => {
+  const r = runFallback(
+    'Front desk: 请问有什么可以帮您？\nCaller: 我已经有预约了，但我想再预约一个周五的时间。',
+  );
+  assert(r.appointment?.should_create === true, 'appointment.should_create must be true');
+  assert(!r.service_request?.should_create, 'service_request.should_create must be false');
+});
+
 // ── Suite 7: Multilingual — Chinese and mixed-language transcripts ─────────────
 
 console.log('\nSuite 7: Multilingual — Chinese and mixed-language');
@@ -387,7 +485,9 @@ function runSemanticPath(
       : null,
     next_action: 'Follow up with caller.',
   };
-  return applyKeywordFallbacks(base, callerText, 'openai');
+  const result = applyKeywordFallbacks(base, callerText, 'openai');
+  assertValidExtraction(result);
+  return result;
 }
 
 test('"Can I come by tomorrow around five?" — model detects implicit visit+time → appointment preserved', () => {
@@ -499,8 +599,8 @@ test('callerLinesOnly isolates exactly the caller lines from buildTranscript out
 });
 
 // ── Suite 11: assessCollection — post-call completeness check (deterministic) ────
-// requiredFields are injected (the vertical schema) so the helper stays self-contained. These tests
-// mirror the vertical schemas without importing them — the unit boundary is the helper itself.
+// requiredFields are injected from the production vertical registry. This keeps the helper pure
+// while preventing this QA suite from drifting away from the schemas postCallCore actually uses.
 console.log('\nSuite 11: assessCollection — required-field completeness');
 
 function extractionWith(over: Partial<ExtractionResult>): ExtractionResult {
@@ -519,7 +619,7 @@ test('appointment with name+date+time → nothing missing (restaurant-style)', (
       caller_name: 'Eric',
       appointment: { should_create: true, requested_date: '2026-06-12', requested_time: '19:00', service: null, notes: null },
     }),
-    ['name', 'date', 'time'],
+    restaurantProfile.requiredFields,
   );
   eq(a.missingRequired.length, 0, 'no missing');
   eq(a.hasEnoughToAct, true, 'enough to act');
@@ -531,7 +631,7 @@ test('appointment missing time → time flagged, phone NOT flagged when not requ
       caller_name: 'Eric', caller_phone: null,
       appointment: { should_create: true, requested_date: '2026-06-12', requested_time: null, service: null, notes: null },
     }),
-    ['name', 'date', 'time'],
+    restaurantProfile.requiredFields,
   );
   eq(a.missingRequired.join(','), 'time', 'only time missing');
   eq(a.hasEnoughToAct, false, 'not enough');
@@ -543,19 +643,19 @@ test('service_request title satisfies the "service" requirement (auto/clinic-sty
       intent: 'service_request', caller_name: 'Sam',
       service_request: { should_create: true, title: 'Brake repair', description: null, urgency: 'normal' },
     }),
-    ['name', 'service'],
+    autoRepairProfile.requiredFields,
   );
   eq(a.missingRequired.length, 0, 'name+service present');
   eq(a.hasEnoughToAct, true, 'enough');
 });
 
-test('appointment.service also satisfies "service"; missing name flagged', () => {
+test('appointment.service satisfies auto-repair "service"; missing name flagged', () => {
   const a = assessCollection(
     extractionWith({
       caller_name: null,
       appointment: { should_create: true, requested_date: null, requested_time: null, service: 'Haircut', notes: null },
     }),
-    ['name', 'service'],
+    autoRepairProfile.requiredFields,
   );
   eq(a.collected.join(','), 'service', 'service collected');
   eq(a.missingRequired.join(','), 'name', 'name missing');
@@ -566,6 +666,107 @@ test('empty requiredFields → always enough; duplicates de-duped', () => {
   const a = assessCollection(extractionWith({ caller_name: 'A' }), ['name', 'name']);
   eq(a.collected.join(','), 'name', 'deduped collected');
   eq(a.missingRequired.length, 0, 'no missing');
+});
+
+// ── Suite 12: Messy transcript input ──────────────────────────────────────────
+
+console.log('\nSuite 12: Messy transcript input');
+
+test('filler and missing punctuation still preserve an explicit visit request', () => {
+  const r = runFallback(
+    'Front desk: How can I help?\nCaller: uh yeah I was wondering maybe can I come by tomorrow like around five',
+  );
+  assert(r.appointment?.should_create === true, 'appointment.should_create must be true');
+});
+
+test('lowercase caller labels are supported', () => {
+  const r = runFallback(
+    'front desk: How can I help?\ncaller: I would like to book a time next week',
+  );
+  assert(r.appointment?.should_create === true, 'appointment.should_create must be true');
+});
+
+test('Chinese filler without explicit fallback keywords preserves semantic model output', () => {
+  const r = runSemanticPath(
+    '我想那个……明天……可能五点过去',
+    'appointment_request',
+    true,
+  );
+  assert(r.appointment?.should_create === true, 'semantic appointment must remain true');
+});
+
+test('model-resolved caller correction is not overwritten by keyword fallback', () => {
+  const base = extractionWith({
+    caller_name: 'Sam',
+    appointment: {
+      should_create: true,
+      requested_date: '2026-06-17',
+      requested_time: '17:00',
+      service: 'Oil change',
+      notes: 'Caller corrected Tuesday to Wednesday.',
+    },
+  });
+  const r = applyKeywordFallbacks(
+    base,
+    'Tuesday at five — sorry, I mean Wednesday at five for an oil change.',
+    'openai',
+  );
+  assertValidExtraction(r);
+  eq(r.appointment?.requested_date, '2026-06-17', 'corrected date remains model result');
+  eq(r.appointment?.requested_time, '17:00', 'corrected time remains model result');
+});
+
+test('messy corrected phone turn is located for replacement by the confirmed value', () => {
+  assert(
+    looksLikePhone('778 798… sorry, 795… no, 5201'),
+    'digit-dominant turn must be located; looksLikePhone does not validate the final number',
+  );
+});
+
+test('duplicated caller lines still create only one appointment result', () => {
+  const line = 'Caller: I want to book an oil change Friday.';
+  const r = runFallback(`Front desk: How can I help?\n${line}\n${line}`);
+  assert(r.appointment?.should_create === true, 'appointment.should_create must be true');
+  assert(!r.service_request?.should_create, 'service_request.should_create must be false');
+});
+
+test('incomplete caller turn without an actionable keyword creates no record', () => {
+  const r = runFallback('Front desk: How can I help?\nCaller: uh I was wondering if maybe');
+  assert(!r.appointment?.should_create, 'appointment.should_create must be false');
+  assert(!r.service_request?.should_create, 'service_request.should_create must be false');
+});
+
+// ── Suite 13: Ambiguous and multi-intent calls ────────────────────────────────
+
+console.log('\nSuite 13: Ambiguous and multi-intent calls');
+
+test('brake concern plus explicit oil-change booking creates only the appointment', () => {
+  const r = runFallback(
+    'Caller: My brakes are making noise and I also want to book an oil change.',
+  );
+  assert(r.appointment?.should_create === true, 'appointment.should_create must be true');
+  assert(!r.service_request?.should_create, 'appointment must win over service request');
+});
+
+test('existing appointment plus BMW repair question does not create a new appointment', () => {
+  const r = runFallback(
+    'Caller: I already have an appointment tomorrow, but do you repair BMWs?',
+  );
+  assert(!r.appointment?.should_create, 'new appointment must not be created');
+  assert(
+    r.service_request?.should_create === true,
+    'keyword-only fallback currently records the repair inquiry for staff review',
+  );
+});
+
+test('semantic primary makes Friday availability the appointment and avoids a duplicate callback record', () => {
+  const r = runSemanticPath(
+    'Can someone call me back, and do you have time Friday?',
+    'appointment_request',
+    true,
+  );
+  assert(r.appointment?.should_create === true, 'appointment.should_create must be true');
+  assert(!r.service_request?.should_create, 'service_request.should_create must be false');
 });
 
 // ── Results ───────────────────────────────────────────────────────────────────

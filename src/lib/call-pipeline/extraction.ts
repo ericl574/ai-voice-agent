@@ -95,14 +95,72 @@ export function callerLinesOnly(transcript: string): string {
     .join(' ');
 }
 
+function hasExplicitNewAppointmentRequest(callerText: string): boolean {
+  const enMatch =
+    /\b(?:but|and|however|actually|instead)\b[^.!?]{0,40}\bI\s+(?!(?:do\s+not|don't|dont|never)\b)(?:want|need|would\s+like|'d\s+like)\s+to\s+(?:book|make|schedule|reserve)\s+(?:an?\s+)?(?:new|another|second|additional)\s+(?:appointment|booking|reservation)\b/i.test(
+      callerText,
+    );
+  const zhMatch =
+    /(?:但|但是|不过|然后)(?:我)?(?:想|要|需要)(?:再|重新|另外|另行)(?:预约|预订|预定)/.test(
+      callerText,
+    );
+  return enMatch || zhMatch;
+}
+
+function hasNonCreationAppointmentContext(callerText: string): boolean {
+  const normalizedEnglish = callerText.replace(
+    /\b(?:new|another|second|additional)\s+(?=(?:appointment|booking|reservation)\b)/gi,
+    '',
+  );
+  const enMatch =
+    /\b(?:do\s+not|don't|dont|never)\s+(?:want|need|intend|plan)(?:\s+to)?\s+(?:(?:make|book|schedule|reserve)\s+)?(?:an?\s+)?(?:appointment|booking|reservation)\b/i.test(
+      normalizedEnglish,
+    ) ||
+    /\b(?:already|currently)\s+(?:have|got)\s+(?:an?\s+)?(?:appointment|booking|reservation)\b/i.test(
+      normalizedEnglish,
+    ) ||
+    /\b(?:cancel|reschedule|re-schedule|move|change)\s+(?:(?:my|an?|the)\s+)?(?:appointment|booking|reservation)\b/i.test(
+      normalizedEnglish,
+    ) ||
+    /\bdo\s+i\s+need\s+(?:to\s+(?:make|book|schedule)\s+)?(?:an?\s+)?(?:appointment|booking|reservation)\b/i.test(
+      normalizedEnglish,
+    ) ||
+    /\b(?:is|are)\s+(?:an?\s+)?(?:appointment|booking|reservation)\s+(?:needed|required|necessary)\b/i.test(
+      normalizedEnglish,
+    );
+  const zhMatch =
+    /不想(?:要)?(?:预约|预订|预定)|不(?:需要|用)(?:预约|预订|预定)|不要(?:预约|预订|预定)/.test(
+      callerText,
+    ) ||
+    /(?:已经|早已)(?:有(?:一个|个)?(?:预约|预订|预定)|(?:预约|预订|预定)(?:了|过))|已有(?:预约|预订|预定)/.test(
+      callerText,
+    ) ||
+    /(?:取消|改期|更改|改动)(?:我的|这个|原来的)?(?:预约|预订|预定)|(?:预约|预订|预定)(?:取消|改期|更改)/.test(
+      callerText,
+    ) ||
+    /(?:需要|要|必须)(?:预约|预订|预定)吗|是否(?:需要|要)(?:预约|预订|预定)/.test(
+      callerText,
+    );
+  return enMatch || zhMatch;
+}
+
+function isPurelyInformationalKeywordContext(callerText: string): boolean {
+  return /\b(?:read|reading)\s+(?:an?\s+)?book\s+about\b/i.test(callerText);
+}
+
 // GUARDRAIL: explicit booking-intent words the model might miss when overloaded or hallucinating.
 // This is NOT the primary detection layer — semantic extraction by the model comes first.
-// "come by" / "stop by" are included because they unambiguously mean a visit in business context.
+// Existing/cancel/reschedule/negated/informational mentions are not new appointment requests.
+// A caller who explicitly asks for a new or another appointment still wins over that exclusion.
 export function hasAppointmentKeywords(callerText: string): boolean {
   const enMatch = /\b(appointment|book(?:ing)?|schedule|reserve|reservation|come in|come by|stop by|slot|available)\b/i.test(callerText);
   // Chinese: 预约/预订/预定 (appointment/reservation), 来一下 (come in a moment)
   const zhMatch = /预约|预订|预定|来一下/.test(callerText);
-  return enMatch || zhMatch;
+  const hasKeyword = enMatch || zhMatch;
+  if (!hasKeyword) return false;
+  if (isPurelyInformationalKeywordContext(callerText)) return false;
+  if (!hasNonCreationAppointmentContext(callerText)) return true;
+  return hasExplicitNewAppointmentRequest(callerText);
 }
 
 // GUARDRAIL: explicit service/follow-up signals the model might miss.
@@ -156,6 +214,7 @@ export function applyKeywordFallbacks(
   if (
     !result.appointment?.should_create &&
     !result.service_request?.should_create &&
+    !isPurelyInformationalKeywordContext(callerText) &&
     hasServiceKeywords(callerText)
   ) {
     if (!result.service_request) {
