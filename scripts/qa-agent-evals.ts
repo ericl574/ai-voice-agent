@@ -199,6 +199,47 @@ function runDeterministicScorerChecks(): void {
   }
 }
 
+function runDeterministicPromptChecks(): void {
+  const demo = getDemoBusiness('auto_repair');
+  if (!demo) {
+    throw new Error('auto-repair demo business is missing');
+  }
+
+  const prompt = buildSystemPrompt(
+    demo.business,
+    demo.agentConfig,
+    [],
+  );
+
+  const requiredRules = [
+    {
+      pattern: /do not[^.]{0,80}diagnos/i,
+      label: 'no guaranteed remote diagnosis',
+    },
+    {
+      pattern: /do not[^.]{0,80}safe to drive/i,
+      label: 'no remote safe-to-drive assurance',
+    },
+    {
+      pattern: /\b(?:tow|towing|roadside)\b/i,
+      label: 'unsafe-driving escalation',
+    },
+    {
+      pattern:
+        /(?:make[^.]{0,40}model[^.]{0,40}year|year[^.]{0,40}make[^.]{0,40}model)/i,
+      label: 'vehicle make/model/year intake',
+    },
+  ];
+
+  for (const rule of requiredRules) {
+    if (!rule.pattern.test(prompt)) {
+      throw new Error(
+        `auto-repair prompt missing static rule: ${rule.label}`,
+      );
+    }
+  }
+}
+
 function validatePhraseGroups(cases: EvalCase[]): void {
   for (const c of cases) {
     for (const field of ['must_include_any', 'must_not_include_any'] as const) {
@@ -298,6 +339,7 @@ function writeReport(results: CaseResult[]): void {
 
 async function main(): Promise<void> {
   runDeterministicScorerChecks();
+  runDeterministicPromptChecks();
   const parsed = JSON.parse(readFileSync(DATASET, 'utf8')) as { cases: EvalCase[] };
   validatePhraseGroups(parsed.cases);
 

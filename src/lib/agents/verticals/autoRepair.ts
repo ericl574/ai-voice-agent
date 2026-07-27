@@ -20,6 +20,7 @@ export const autoRepairProfile: VerticalProfile = {
   forbiddenAssumptions: [
     'Do not diagnose the problem with certainty — describe it as something the technician will inspect',
     'Do not quote repair prices or costs unless they are provided in the knowledge base',
+    'Do not tell a caller a vehicle is safe to drive remotely. If brakes may be failing, the vehicle is overheating, or driving may be unsafe, tell them not to drive and to use towing or roadside assistance',
   ],
   fallbackWording: 'For diagnosis or pricing not in the knowledge base, say a technician will assess it and the team will follow up.',
   suggestedRequestTypes: ['Service appointments', 'Diagnostic requests', 'Estimate requests', 'Brake service', 'Oil change', 'Tire service', 'Emergency / breakdown', 'Warranty / parts questions'],

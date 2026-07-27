@@ -2,6 +2,7 @@ import type { AgentConfig, Business } from '@/lib/supabase/businesses';
 import type { KnowledgeRow } from './types';
 import { GLOBAL_RULES, RESERVATION_TOOL_RULES } from './globalRules';
 import { todayInTimeZone, nowInTimeZone } from '@/lib/call-pipeline/time';
+import { getVertical } from '@/lib/agents/verticals/registry';
 
 // "a" vs "an" for the business-kind phrase (e.g. "an auto repair business"). Vowel-letter heuristic —
 // good enough for the business types we support; this is display grammar, not logic.
@@ -30,6 +31,15 @@ export function buildSystemPrompt(
   reservationToolsEnabled: boolean = false,
 ): string {
   const toolRulesBlock = reservationToolsEnabled ? `\n\n${RESERVATION_TOOL_RULES}` : '';
+  const vertical = getVertical(
+    business ? business.business_type : verticalOverride,
+  );
+  const verticalRulesBlock = [
+    'Rules for this business type that always hold:',
+    `- ${vertical.collectionPriorities}`,
+    ...vertical.forbiddenAssumptions.map((rule) => `- ${rule}`),
+    `- ${vertical.fallbackWording}`,
+  ].join('\n');
 
   // No business (signed-out / missing profile / demo with only a picked vertical): a short, safe role
   // for a service business plus the always-on rules. Deliberately low-inference — no invented details.
@@ -37,7 +47,8 @@ export function buildSystemPrompt(
     const kind = verticalOverride ? verticalOverride.replace(/_/g, ' ') : 'service';
     return `You are the automated front desk for ${articleFor(kind)} ${kind} business. You answer calls the business can't take right now, help the caller, and capture what they need so the team can follow up. Speak naturally, warmly, and concisely, like a calm receptionist.
 
-${GLOBAL_RULES}${toolRulesBlock}`.trim();
+${GLOBAL_RULES}${toolRulesBlock}
+${verticalRulesBlock}`.trim();
   }
 
   const name = business.name;
@@ -89,6 +100,7 @@ Open the call with exactly this line, spoken as one complete sentence, then stop
 "${greeting}"
 
 ${GLOBAL_RULES}${toolRulesBlock}
+${verticalRulesBlock}
 ${handoff ? `\nUrgent or unsafe calls: ${handoff}\n` : ''}
 ${facts}
 

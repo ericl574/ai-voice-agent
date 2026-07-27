@@ -595,6 +595,50 @@ test('retrieveKnowledge — missing tenant scope fails before external calls', a
 
   eq(externalCalls, 0, 'embedding and RPC are never called without tenant scope');
 });
+
+test('knowledge retrieval route — authenticated, tenant-resolved, scoped, and safely formatted', () => {
+  const route = readFileSync(
+    'src/app/api/knowledge/retrieve/route.ts',
+    'utf8',
+  );
+
+  assert(route.includes('auth.getUser()'), 'requires authentication');
+  assert(route.includes('getActiveBusiness(supabase)'), 'resolves tenant membership');
+  assert(
+    !/body\.(?:businessId|verticalId)/.test(route),
+    'never accepts tenant scope from the request body',
+  );
+
+  const businessIndex = route.indexOf('getActiveBusiness(supabase)');
+  const adminIndex = route.indexOf('createAdminClient()');
+  assert(
+    businessIndex >= 0 && adminIndex > businessIndex,
+    'service-role client is created only after tenant resolution',
+  );
+
+  assert(
+    route.includes("verticalId !== 'auto_repair'"),
+    'first milestone is gated to auto repair',
+  );
+  assert(
+    /businessId:\s*business\.id/.test(route),
+    'retrieval uses the server-resolved business id',
+  );
+  assert(
+    route.includes('formatKnowledgeForRealtime(chunks)'),
+    'returns safely formatted Realtime context',
+  );
+
+  assert(route.includes('rateLimit('), 'paid retrieval is rate-limited');
+  assert(
+    route.includes('clientKey(req, user.id)'),
+    'rate limit is scoped to the authenticated user',
+  );
+  assert(
+    !/NextResponse\.json\(\s*\{\s*chunks\b/.test(route),
+    'raw chunks are not returned to the browser',
+  );
+});
 // ── parseApptDateTime ────────────────────────────────────────────────────────
 
 test('parseApptDateTime — ISO date + time', () => {
