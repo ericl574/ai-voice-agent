@@ -22,6 +22,7 @@ import {
   type ReservationField,
 } from '@/lib/call-pipeline/reservationDraft';
 import { UPDATE_DRAFT_TOOL, SUBMIT_REQUEST_TOOL } from '@/lib/realtime/reservationTools';
+import {RETRIEVE_KNOWLEDGE_TOOL_NAME, KNOWLEDGE_TOOL} from '@/lib/realtime/knowledgeTools';
 
 type CallStatus =
   | 'idle'
@@ -522,6 +523,52 @@ export default function VoicePage() {
     }
   }
 
+  async function retrieveKnowledgeForCall(
+    argsRaw: string | undefined,
+  ): Promise<Record<string, unknown>> {
+    const unavailable = {
+      context:
+      'Knowledge retrieval is unavailable. Do not invent an answer; offer to have the team follow up.',
+      match_count:0,
+      error: 'retrieval_unavailable',
+    };
+    let args: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = argsRaw ? JSON.parse(argsRaw):{};
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        args = parsed as Record<string, unknown>;
+      }
+    }catch{
+      return unavailable;
+    }
+
+    const query = typeof args.query ==='string' ? args.query.trim():'';
+    if (!query || query.length > 1000) return unavailable;
+    
+    try {
+      const res = await fetch('/api/knowledge/retrieve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      });
+      const data = (await res.json().catch(() => null)) as {
+        context?: unknown;
+        matchCount?: unknown;
+      } | null;
+
+      if (!res.ok || typeof data?.context !== 'string') return unavailable;
+
+      return {
+        context: data.context,
+        match_count:
+          typeof data.matchCount === 'number' ? data.matchCount : 0,
+      };
+    } catch {
+      return unavailable;
+    }
+  }
+  
+
   // Dispatch a completed function call from the model. update_reservation_draft mutates the local draft
   // (resetting a stale confirmation on any value change) and reports what is still needed/unclear;
   // submit_reservation_request re-checks canSubmit then persists via the server. ALWAYS returns a tool
@@ -548,7 +595,7 @@ export default function VoicePage() {
         recordVoiceEvent('app:reservation draft updated', {
           note: `need:${needed.join(',') || '-'} unclear:${unclear.join(',') || '-'}`,
         });
-      } else if (name === SUBMIT_REQUEST_TOOL) {
+        } else if (name === SUBMIT_REQUEST_TOOL) {
         const draft = reservationDraftRef.current;
         if (!requestRefRef.current || !businessId) {
           // No idempotency key or no saveable business (demo / no active business) — cannot persist.

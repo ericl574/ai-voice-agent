@@ -9,6 +9,7 @@ import {
   type DbAppointment,
 } from '../src/lib/appointments.ts';
 
+
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import {
@@ -120,6 +121,10 @@ import {
   buildReservationEnrichment,
 } from '../src/lib/call-pipeline/reservationPersist.ts';
 import { RESERVATION_TOOLS, UPDATE_DRAFT_TOOL, SUBMIT_REQUEST_TOOL } from '../src/lib/realtime/reservationTools.ts';
+import {
+  KNOWLEDGE_TOOL,
+  RETRIEVE_KNOWLEDGE_TOOL_NAME,
+} from '../src/lib/realtime/knowledgeTools.ts';
 
 // Vertical profiles imported DIRECTLY (each file's only import is `import type`, stripped at
 // runtime), so the Node QA runner can load them — unlike registry.ts, which has extensionless
@@ -978,6 +983,49 @@ test('RESERVATION_TOOLS — draft + submit schemas, shared shape, truthful contr
   assert(/never invent a callback timeframe/i.test(submitDesc), 'submit tool: no invented callback timeline');
 });
 
+test('KNOWLEDGE_TOOL — query-only schema keeps tenant scope and live data out', () => {
+  eq(KNOWLEDGE_TOOL.type, 'function', 'Realtime function tool type');
+  eq(
+    KNOWLEDGE_TOOL.name,
+    RETRIEVE_KNOWLEDGE_TOOL_NAME,
+    'shared retrieval tool name',
+  );
+
+  const parameters = KNOWLEDGE_TOOL.parameters;
+  eq(
+    Object.keys(parameters.properties).join(','),
+    'query',
+    'query is the only model-supplied argument',
+  );
+  eq(parameters.required.join(','), 'query', 'query is required');
+  eq(parameters.additionalProperties, false, 'unknown arguments are rejected');
+
+  const guidance =
+    `${KNOWLEDGE_TOOL.description} ${parameters.properties.query.description}`.toLowerCase();
+
+  for (const prohibitedUse of [
+    'live availability',
+    'appointments',
+    'inventory',
+    'customer records',
+    'actions',
+  ]) {
+    assert(
+      guidance.includes(prohibitedUse),
+      `tool guidance excludes ${prohibitedUse}`,
+    );
+  }
+
+  assert(
+    guidance.includes('tenant and vertical scope are resolved by the server'),
+    'tenant and vertical scope stay server-owned',
+  );
+  assert(
+    guidance.includes('do not include tenant ids'),
+    'query guidance excludes tenant identifiers',
+  );
+});
+
 test('draftFromClient — rebuilds + re-validates server-side; ignores client-claimed statuses', () => {
   const required: ReservationField[] = ['name', 'date', 'time', 'party_size'];
   // A hostile/buggy client claims everything valid + confirmed, but party_size is garbage.
@@ -1038,7 +1086,56 @@ test('browser page handles the reservation tool calls, gates submit, and continu
   assert(page.includes('tool continuation response.create (settled)'), 'continuation fires once the assistant settles');
   assert(/if \(endRequestedRef\.current\) \{\s*\n\s*recordVoiceEvent\('app:tool continuation blocked\/ending'/.test(page), 'no continuation while the call is draining');
 });
+test('browser page handles knowledge retrieval through the scoped server route', () => {
+  const page = readFileSync('src/app/dashboard/voice/page.tsx', 'utf8');
 
+  assert(
+    page.includes('RETRIEVE_KNOWLEDGE_TOOL_NAME'),
+    'page uses the shared retrieval tool name',
+  );
+  assert(
+    /name === RETRIEVE_KNOWLEDGE_TOOL_NAME/.test(page),
+    'function-call dispatcher has a knowledge branch',
+  );
+  assert(
+    /await retrieveKnowledgeForCall\(argsRaw\)/.test(page),
+    'knowledge branch calls its browser transport helper',
+  );
+
+  const helperStart = page.indexOf(
+    'async function retrieveKnowledgeForCall',
+  );
+  const helperEnd = page.indexOf(
+    '// Dispatch a completed function call',
+    helperStart,
+  );
+  const helper = page.slice(helperStart, helperEnd);
+
+  assert(
+    helper.includes("fetch('/api/knowledge/retrieve'"),
+    'helper uses the authenticated retrieval route',
+  );
+  assert(
+    /body:\s*JSON\.stringify\(\{\s*query\s*\}\)/.test(helper),
+    'browser sends only the query',
+  );
+  assert(
+    !/\bbusiness(?:Id|_id)\b|\bvertical(?:Id|_id)\b/.test(helper),
+    'browser never supplies tenant or vertical scope',
+  );
+  assert(
+    helper.includes('Do not invent an answer'),
+    'retrieval failures produce safe fallback guidance',
+  );
+  assert(
+    /sendFunctionCallOutput\(callId, output\)/.test(page),
+    'knowledge result returns through function_call_output',
+  );
+  assert(
+    /sendToolContinuation\(name\)/.test(page),
+    'knowledge result continues through the Layer 2 gate',
+  );
+});
 test('browser mints a per-call requestRef and threads it to post-call (enrich, not duplicate)', () => {
   const page = readFileSync('src/app/dashboard/voice/page.tsx', 'utf8');
   assert(/requestRefRef\.current =\s*\n?\s*typeof crypto/.test(page), 'a session UUID requestRef is minted at call start');
